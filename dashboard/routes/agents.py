@@ -1,5 +1,6 @@
 """REST API endpoints for agent status monitoring."""
 
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -9,6 +10,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from dashboard.config import LOG_FILE
+from dashboard.exceptions import LogFileError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -30,17 +34,29 @@ LOG_PATTERN = re.compile(
     r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(\d+)\] (.+)"
 )
 
+# Valid agent roles
+VALID_ROLES = {"developer", "qa", "reviewer", "tech_lead", "manager", "unknown"}
+
 
 def _parse_log_file() -> list[dict[str, Any]]:
-    """Parse claude.log and return list of log entries."""
+    """Parse claude.log and return list of log entries.
+
+    Returns:
+        List of parsed log entry dictionaries.
+
+    Raises:
+        LogFileError: If the log file cannot be read or parsed.
+    """
     log_path = Path(LOG_FILE)
+
     if not log_path.exists():
+        logger.debug("Log file does not exist: %s", log_path)
         return []
 
     entries = []
     try:
         with open(log_path, encoding="utf-8") as f:
-            for line in f:
+            for line_num, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
                     continue
@@ -48,14 +64,31 @@ def _parse_log_file() -> list[dict[str, Any]]:
                 match = LOG_PATTERN.match(line)
                 if match:
                     timestamp_str, pid_str, content = match.groups()
-                    entries.append({
-                        "timestamp": timestamp_str,
-                        "pid": int(pid_str),
-                        "content": content,
-                    })
-    except OSError:
-        return []
+                    try:
+                        entries.append({
+                            "timestamp": timestamp_str,
+                            "pid": int(pid_str),
+                            "content": content,
+                        })
+                    except ValueError as e:
+                        logger.warning("Invalid PID on line %d: %s", line_num, e)
+                        continue
 
+    except PermissionError:
+        logger.error("Permission denied reading log file: %s", log_path)
+        raise LogFileError(
+            message="Permission denied when reading log file",
+            file_path=str(log_path),
+        ) from None
+
+    except OSError as e:
+        logger.error("Error reading log file: %s - %s", log_path, e)
+        raise LogFileError(
+            message=f"Failed to read log file: {e}",
+            file_path=str(log_path),
+        ) from None
+
+    logger.debug("Parsed %d log entries from %s", len(entries), log_path)
     return entries
 
 
@@ -138,11 +171,19 @@ def _format_iso_timestamp(timestamp_str: str) -> str:
         dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # noqa: DTZ007
         return dt.isoformat() + "Z"
     except ValueError:
+        logger.warning("Invalid timestamp format: %s", timestamp_str)
         return timestamp_str
 
 
 def _get_active_agents() -> list[dict[str, Any]]:
-    """Get list of currently active (non-ended) agents."""
+    """Get list of currently active (non-ended) agents.
+
+    Returns:
+        List of active agent dictionaries.
+
+    Raises:
+        LogFileError: If the log file cannot be read.
+    """
     entries = _parse_log_file()
     agents = _extract_agents_from_logs(entries)
 
@@ -158,6 +199,7 @@ def _get_active_agents() -> list[dict[str, Any]]:
     # Sort by last activity (most recent first)
     active.sort(key=lambda a: a["last_activity"], reverse=True)
 
+    logger.debug("Found %d active agents", len(active))
     return active
 
 
@@ -167,6 +209,9 @@ async def list_agents() -> list[dict[str, Any]]:
 
     Returns agents that have started but not yet ended their session.
     Each agent shows their current bead (if claimed) and status.
+
+    Raises:
+        LogFileError: If the log file cannot be read.
     """
     return _get_active_agents()
 
@@ -180,15 +225,21 @@ async def list_agents_by_role(role: str) -> list[dict[str, Any]]:
 
     Returns:
         List of agents matching the specified role.
+
+    Raises:
+        HTTPException: If the role is invalid.
+        LogFileError: If the log file cannot be read.
     """
-    valid_roles = {"developer", "qa", "reviewer", "tech_lead", "manager", "unknown"}
     role_normalized = role.lower().replace("-", "_")
 
-    if role_normalized not in valid_roles:
+    if role_normalized not in VALID_ROLES:
+        logger.warning("Invalid role requested: %s", role)
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid role: {role}. Valid roles: {', '.join(sorted(valid_roles))}",
+            detail=f"Invalid role: {role}. Valid roles: {', '.join(sorted(VALID_ROLES))}",
         )
 
     agents = _get_active_agents()
-    return [a for a in agents if a["role"] == role_normalized]
+    filtered = [a for a in agents if a["role"] == role_normalized]
+    logger.debug("Found %d agents with role %s", len(filtered), role_normalized)
+    return filtered

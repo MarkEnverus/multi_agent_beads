@@ -1,7 +1,6 @@
 """Multi-Agent Dashboard - FastAPI application."""
 
-import json
-import subprocess
+import logging
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -11,10 +10,24 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from dashboard.config import CORS_ORIGINS, STATIC_DIR, TEMPLATES_DIR
+from dashboard.exceptions import (
+    BeadError,
+    BeadNotFoundError,
+    DashboardError,
+    LogFileError,
+)
 from dashboard.routes.agents import _get_active_agents
 from dashboard.routes.agents import router as agents_router
 from dashboard.routes.beads import router as beads_router
 from dashboard.routes.logs import router as logs_router
+from dashboard.services import BeadService
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # Create FastAPI application
 app = FastAPI(
@@ -22,6 +35,36 @@ app = FastAPI(
     description="Real-time dashboard for multi-agent SDLC orchestration",
     version="0.1.0",
 )
+
+
+# Global exception handlers
+@app.exception_handler(DashboardError)
+async def dashboard_error_handler(request: Request, exc: DashboardError) -> JSONResponse:
+    """Handle all DashboardError exceptions with consistent JSON responses."""
+    logger.error(
+        "Dashboard error: %s - %s (status=%d)",
+        exc.__class__.__name__,
+        exc.message,
+        exc.status_code,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Handle unexpected exceptions with a generic error response."""
+    logger.exception("Unexpected error: %s", exc)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "InternalServerError",
+            "message": "An unexpected error occurred. Please try again later.",
+        },
+    )
+
 
 # Configure CORS middleware (localhost only)
 app.add_middleware(
@@ -50,42 +93,6 @@ async def health_check() -> JSONResponse:
     return JSONResponse(content={"status": "ok"})
 
 
-def _run_bd_command(args: list[str]) -> tuple[bool, str]:
-    """Run a bd command and return (success, output)."""
-    try:
-        result = subprocess.run(
-            ["bd", *args],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            return False, result.stderr or result.stdout
-        return True, result.stdout
-    except subprocess.TimeoutExpired:
-        return False, "Command timed out"
-    except FileNotFoundError:
-        return False, "bd command not found"
-    except Exception as e:
-        return False, str(e)
-
-
-def _parse_beads_json(output: str) -> list[dict[str, Any]]:
-    """Parse JSON output from bd command."""
-    try:
-        result = json.loads(output)
-        if isinstance(result, list):
-            return result  # type: ignore[return-value]
-        return []
-    except json.JSONDecodeError:
-        return []
-
-
-def _sort_by_priority(beads: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Sort beads by priority (P0 first)."""
-    return sorted(beads, key=lambda b: b.get("priority", 4))
-
-
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request) -> HTMLResponse:
     """Render the main Kanban board dashboard."""
@@ -98,22 +105,31 @@ async def dashboard(request: Request) -> HTMLResponse:
 @app.get("/partials/kanban", response_class=HTMLResponse)
 async def kanban_partial(request: Request) -> HTMLResponse:
     """Render the Kanban board partial with current bead data."""
-    # Fetch ready beads (open, no blockers)
-    success, output = _run_bd_command(["ready", "--json"])
-    ready_beads = _sort_by_priority(_parse_beads_json(output)) if success else []
+    ready_beads: list[dict[str, Any]] = []
+    in_progress_beads: list[dict[str, Any]] = []
+    done_beads: list[dict[str, Any]] = []
+    total_count = 0
+    error_message: str | None = None
 
-    # Fetch in-progress beads
-    success, output = _run_bd_command(["list", "--json", "--status", "in_progress", "--limit", "0"])
-    in_progress_beads = _sort_by_priority(_parse_beads_json(output)) if success else []
+    try:
+        # Fetch ready beads (open, no blockers)
+        ready_beads = BeadService.sort_by_priority(BeadService.list_ready())
 
-    # Fetch closed beads (last 20)
-    success, output = _run_bd_command(["list", "--json", "--status", "closed", "--limit", "20"])
-    done_beads = _parse_beads_json(output) if success else []
+        # Fetch in-progress beads
+        in_progress_beads = BeadService.sort_by_priority(
+            BeadService.list_beads(status="in_progress")
+        )
 
-    # Calculate total count
-    success, output = _run_bd_command(["list", "--json", "--limit", "0"])
-    all_beads = _parse_beads_json(output) if success else []
-    total_count = len(all_beads)
+        # Fetch closed beads (last 20)
+        done_beads = BeadService.list_beads(status="closed", limit=20)
+
+        # Calculate total count
+        all_beads = BeadService.list_beads()
+        total_count = len(all_beads)
+
+    except BeadError as e:
+        logger.warning("Failed to fetch beads for kanban: %s", e.message)
+        error_message = e.message
 
     return templates.TemplateResponse(
         "partials/kanban.html",
@@ -123,6 +139,7 @@ async def kanban_partial(request: Request) -> HTMLResponse:
             "in_progress_beads": in_progress_beads,
             "done_beads": done_beads,
             "total_count": total_count,
+            "error_message": error_message,
         },
     )
 
@@ -130,13 +147,24 @@ async def kanban_partial(request: Request) -> HTMLResponse:
 @app.get("/partials/agents", response_class=HTMLResponse)
 async def agents_partial(request: Request) -> HTMLResponse:
     """Render the agent sidebar partial with current agent data."""
-    agents = _get_active_agents()
+    agents: list[dict[str, Any]] = []
+    error_message: str | None = None
+
+    try:
+        agents = _get_active_agents()
+    except LogFileError as e:
+        logger.warning("Failed to get active agents: %s", e.message)
+        error_message = e.message
+    except Exception as e:
+        logger.exception("Unexpected error getting agents: %s", e)
+        error_message = "Failed to load agent status"
 
     return templates.TemplateResponse(
         "partials/agent_sidebar.html",
         {
             "request": request,
             "agents": agents,
+            "error_message": error_message,
         },
     )
 
@@ -227,20 +255,28 @@ def _generate_mermaid_graph(beads: list[dict[str, Any]]) -> tuple[str, int, int]
 @app.get("/partials/depgraph", response_class=HTMLResponse)
 async def depgraph_partial(request: Request) -> HTMLResponse:
     """Render the dependency graph partial."""
-    # Fetch all beads with blocked_by info
-    success, output = _run_bd_command(["blocked", "--json"])
-    blocked_beads = _parse_beads_json(output) if success else []
+    mermaid_code = ""
+    node_count = 0
+    edge_count = 0
+    error_message: str | None = None
 
-    # Also get all beads to have complete status info
-    success, output = _run_bd_command(["list", "--json", "--limit", "0"])
-    all_beads = _parse_beads_json(output) if success else []
+    try:
+        # Fetch all beads with blocked_by info
+        blocked_beads = BeadService.list_blocked()
 
-    # Merge blocked_by info into all_beads
-    blocked_map = {b["id"]: b.get("blocked_by", []) for b in blocked_beads}
-    for bead in all_beads:
-        bead["blocked_by"] = blocked_map.get(bead["id"], [])
+        # Also get all beads to have complete status info
+        all_beads = BeadService.list_beads()
 
-    mermaid_code, node_count, edge_count = _generate_mermaid_graph(all_beads)
+        # Merge blocked_by info into all_beads
+        blocked_map = {b["id"]: b.get("blocked_by", []) for b in blocked_beads}
+        for bead in all_beads:
+            bead["blocked_by"] = blocked_map.get(bead["id"], [])
+
+        mermaid_code, node_count, edge_count = _generate_mermaid_graph(all_beads)
+
+    except BeadError as e:
+        logger.warning("Failed to fetch beads for dependency graph: %s", e.message)
+        error_message = e.message
 
     return templates.TemplateResponse(
         "partials/depgraph.html",
@@ -249,55 +285,60 @@ async def depgraph_partial(request: Request) -> HTMLResponse:
             "mermaid_code": mermaid_code,
             "node_count": node_count,
             "edge_count": edge_count,
+            "error_message": error_message,
         },
     )
+
+
+def _render_error_modal(message: str, title: str = "Error") -> str:
+    """Render an error modal HTML snippet."""
+    escaped_message = message.replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+    return f"""
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/80">
+        <div class="bg-gray-800 rounded-lg p-6 text-center max-w-md">
+            <h3 class="text-lg font-semibold text-red-400 mb-2">{title}</h3>
+            <p class="text-gray-300 mb-4">{escaped_message}</p>
+            <button onclick="document.getElementById('bead-detail-modal').innerHTML = ''"
+                    class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm">
+                Close
+            </button>
+        </div>
+    </div>
+    """
 
 
 @app.get("/partials/beads/{bead_id}", response_class=HTMLResponse)
 async def bead_detail_partial(request: Request, bead_id: str) -> HTMLResponse:
     """Render the bead detail modal partial."""
-    success, output = _run_bd_command(["show", bead_id, "--json"])
+    try:
+        bead = BeadService.get_bead(bead_id)
+        return templates.TemplateResponse(
+            "partials/bead_modal.html",
+            {
+                "request": request,
+                "bead": bead,
+            },
+        )
 
-    if not success:
+    except BeadNotFoundError:
+        logger.info("Bead not found: %s", bead_id)
         return HTMLResponse(
-            content="""
-            <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/80">
-                <div class="bg-gray-800 rounded-lg p-6 text-center">
-                    <p class="text-red-400 mb-4">Failed to load bead details</p>
-                    <button onclick="document.getElementById('bead-detail-modal').innerHTML = ''"
-                            class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm">
-                        Close
-                    </button>
-                </div>
-            </div>
-            """,
+            content=_render_error_modal(
+                f"Bead '{bead_id}' was not found. It may have been deleted.",
+                title="Bead Not Found",
+            ),
             status_code=200,
         )
 
-    beads = _parse_beads_json(output)
-    if not beads:
+    except BeadError as e:
+        logger.warning("Failed to load bead %s: %s", bead_id, e.message)
         return HTMLResponse(
-            content="""
-            <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/80">
-                <div class="bg-gray-800 rounded-lg p-6 text-center">
-                    <p class="text-gray-400 mb-4">Bead not found</p>
-                    <button onclick="document.getElementById('bead-detail-modal').innerHTML = ''"
-                            class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm">
-                        Close
-                    </button>
-                </div>
-            </div>
-            """,
+            content=_render_error_modal(
+                f"Failed to load bead details: {e.message}",
+                title="Load Error",
+            ),
             status_code=200,
         )
-
-    return templates.TemplateResponse(
-        "partials/bead_modal.html",
-        {
-            "request": request,
-            "bead": beads[0],
-        },
-    )
 
 
 if __name__ == "__main__":

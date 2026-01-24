@@ -4,11 +4,14 @@ This module tests the main app endpoints including health check,
 root dashboard, and HTMX partials.
 """
 
+import subprocess
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from dashboard.app import app
+from dashboard.exceptions import BeadCommandError, BeadNotFoundError
+from dashboard.services.beads import BeadService
 
 client = TestClient(app)
 
@@ -49,18 +52,23 @@ class TestKanbanPartial:
 
     def test_kanban_partial_returns_html(self) -> None:
         """Test that kanban partial returns HTML."""
-        with patch("dashboard.app._run_bd_command") as mock_run:
-            mock_run.return_value = (True, "[]")
+        with patch.object(BeadService, "list_ready") as mock_ready, \
+             patch.object(BeadService, "list_beads") as mock_list:
+            mock_ready.return_value = []
+            mock_list.return_value = []
             response = client.get("/partials/kanban")
             assert response.status_code == 200
             assert "text/html" in response.headers["content-type"]
 
     def test_kanban_partial_handles_bd_failure(self) -> None:
         """Test kanban partial handles bd command failure gracefully."""
-        with patch("dashboard.app._run_bd_command") as mock_run:
-            mock_run.return_value = (False, "bd not found")
+        with patch.object(BeadService, "list_ready") as mock_ready:
+            mock_ready.side_effect = BeadCommandError(
+                message="bd not found",
+                command=["ready"],
+            )
             response = client.get("/partials/kanban")
-            # Should still return 200 with empty data
+            # Should still return 200 with error message in template
             assert response.status_code == 200
 
 
@@ -81,16 +89,20 @@ class TestDepgraphPartial:
 
     def test_depgraph_partial_returns_html(self) -> None:
         """Test that dependency graph partial returns HTML."""
-        with patch("dashboard.app._run_bd_command") as mock_run:
-            mock_run.return_value = (True, "[]")
+        with patch.object(BeadService, "list_blocked") as mock_blocked, \
+             patch.object(BeadService, "list_beads") as mock_list:
+            mock_blocked.return_value = []
+            mock_list.return_value = []
             response = client.get("/partials/depgraph")
             assert response.status_code == 200
             assert "text/html" in response.headers["content-type"]
 
     def test_depgraph_handles_no_dependencies(self) -> None:
         """Test depgraph handles case with no dependencies."""
-        with patch("dashboard.app._run_bd_command") as mock_run:
-            mock_run.return_value = (True, "[]")
+        with patch.object(BeadService, "list_blocked") as mock_blocked, \
+             patch.object(BeadService, "list_beads") as mock_list:
+            mock_blocked.return_value = []
+            mock_list.return_value = []
             response = client.get("/partials/depgraph")
             assert response.status_code == 200
 
@@ -100,30 +112,29 @@ class TestBeadDetailPartial:
 
     def test_bead_detail_returns_html(self) -> None:
         """Test that bead detail partial returns HTML."""
-        sample_bead = [{
+        sample_bead = {
             "id": "multi_agent_beads-test",
             "title": "Test bead",
             "description": "Test description",
             "status": "open",
             "priority": 2,
             "issue_type": "task",
-        }]
-        import json
+        }
 
-        with patch("dashboard.app._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps(sample_bead))
+        with patch.object(BeadService, "get_bead") as mock_get:
+            mock_get.return_value = sample_bead
             response = client.get("/partials/beads/multi_agent_beads-test")
             assert response.status_code == 200
             assert "text/html" in response.headers["content-type"]
 
     def test_bead_detail_not_found(self) -> None:
         """Test bead detail when bead not found."""
-        with patch("dashboard.app._run_bd_command") as mock_run:
-            mock_run.return_value = (False, "Bead not found")
+        with patch.object(BeadService, "get_bead") as mock_get:
+            mock_get.side_effect = BeadNotFoundError("nonexistent")
             response = client.get("/partials/beads/nonexistent")
             # Returns 200 with error HTML, not 404
             assert response.status_code == 200
-            assert "Failed to load" in response.text or "not found" in response.text.lower()
+            assert "not found" in response.text.lower()
 
 
 class TestMermaidGraphGeneration:
@@ -166,65 +177,55 @@ class TestMermaidGraphGeneration:
         assert "1 --> 2" in mermaid
 
 
-class TestAppHelpers:
-    """Tests for app helper functions."""
+class TestBeadServiceHelpers:
+    """Tests for BeadService helper methods."""
 
-    def test_parse_beads_json_valid(self) -> None:
+    def test_parse_json_output_valid(self) -> None:
         """Test parsing valid JSON."""
-        from dashboard.app import _parse_beads_json
-
-        result = _parse_beads_json('[{"id": "test"}]')
+        result = BeadService.parse_json_output('[{"id": "test"}]')
         assert result == [{"id": "test"}]
 
-    def test_parse_beads_json_invalid(self) -> None:
-        """Test parsing invalid JSON."""
-        from dashboard.app import _parse_beads_json
-
-        result = _parse_beads_json("not json")
+    def test_parse_json_output_empty(self) -> None:
+        """Test parsing empty string."""
+        result = BeadService.parse_json_output("")
         assert result == []
 
-    def test_parse_beads_json_non_array(self) -> None:
-        """Test parsing non-array JSON."""
-        from dashboard.app import _parse_beads_json
-
-        result = _parse_beads_json('{"single": "object"}')
-        assert result == []
+    def test_parse_json_output_single_object(self) -> None:
+        """Test parsing single JSON object (wrapped in list)."""
+        result = BeadService.parse_json_output('{"id": "test"}')
+        assert result == [{"id": "test"}]
 
     def test_sort_by_priority(self) -> None:
         """Test sorting beads by priority."""
-        from dashboard.app import _sort_by_priority
-
         beads = [
             {"id": "1", "priority": 3},
             {"id": "2", "priority": 1},
             {"id": "3", "priority": 0},
         ]
-        sorted_beads = _sort_by_priority(beads)
+        sorted_beads = BeadService.sort_by_priority(beads)
         assert sorted_beads[0]["priority"] == 0
         assert sorted_beads[1]["priority"] == 1
         assert sorted_beads[2]["priority"] == 3
 
-    def test_run_bd_command_timeout(self) -> None:
+    def test_run_command_timeout(self) -> None:
         """Test bd command timeout handling."""
-        import subprocess
+        import pytest
 
-        from dashboard.app import _run_bd_command
-
-        with patch("dashboard.app.subprocess.run") as mock_run:
+        with patch("dashboard.services.beads.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(cmd="bd", timeout=30)
-            success, output = _run_bd_command(["slow"])
-            assert success is False
-            assert "timed out" in output.lower()
+            with pytest.raises(BeadCommandError) as exc_info:
+                BeadService.run_command(["slow"])
+            assert "timed out" in exc_info.value.message.lower()
 
-    def test_run_bd_command_not_found(self) -> None:
+    def test_run_command_not_found(self) -> None:
         """Test bd command not found handling."""
-        from dashboard.app import _run_bd_command
+        import pytest
 
-        with patch("dashboard.app.subprocess.run") as mock_run:
+        with patch("dashboard.services.beads.subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError()
-            success, output = _run_bd_command(["test"])
-            assert success is False
-            assert "not found" in output.lower()
+            with pytest.raises(BeadCommandError) as exc_info:
+                BeadService.run_command(["test"])
+            assert "not installed" in exc_info.value.message.lower()
 
 
 class TestCORS:

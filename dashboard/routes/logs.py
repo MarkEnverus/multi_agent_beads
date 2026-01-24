@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import re
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -12,6 +13,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from dashboard.config import LOG_FILE
+from dashboard.exceptions import LogFileError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
 
@@ -32,9 +36,22 @@ LOG_PATTERN = re.compile(
     r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(\d+)\] (.+)"
 )
 
+# Bead ID pattern for extraction
+BEAD_ID_PATTERN = re.compile(r"(multi_agent_beads-\w+)")
+
+# SSE retry interval in milliseconds (sent to client for reconnection)
+SSE_RETRY_MS = 3000
+
 
 def _parse_log_line(line: str) -> dict[str, Any] | None:
-    """Parse a single log line into a structured dict."""
+    """Parse a single log line into a structured dict.
+
+    Args:
+        line: Raw log line to parse.
+
+    Returns:
+        Parsed log entry dict, or None if line is invalid.
+    """
     line = line.strip()
     if not line:
         return None
@@ -44,6 +61,12 @@ def _parse_log_line(line: str) -> dict[str, Any] | None:
         return None
 
     timestamp_str, pid_str, content = match.groups()
+
+    try:
+        pid = int(pid_str)
+    except ValueError:
+        logger.warning("Invalid PID in log line: %s", pid_str)
+        return None
 
     # Parse event type and message
     if ":" in content:
@@ -57,8 +80,7 @@ def _parse_log_line(line: str) -> dict[str, Any] | None:
     # Extract bead ID if present
     bead_id = None
     if message:
-        # Pattern: bead-id - title or just bead-id
-        bead_match = re.match(r"(multi_agent_beads-\w+)", message)
+        bead_match = BEAD_ID_PATTERN.search(message)
         if bead_match:
             bead_id = bead_match.group(1)
 
@@ -67,7 +89,7 @@ def _parse_log_line(line: str) -> dict[str, Any] | None:
 
     return {
         "timestamp": timestamp_str,
-        "pid": int(pid_str),
+        "pid": pid,
         "event": event,
         "message": message,
         "role": role,
@@ -97,7 +119,11 @@ def _infer_role_from_content(event: str, message: str | None) -> str | None:
     return None
 
 
-def _read_recent_logs(limit: int = 100, role: str | None = None, bead_id: str | None = None) -> list[dict[str, Any]]:
+def _read_recent_logs(
+    limit: int = 100,
+    role: str | None = None,
+    bead_id: str | None = None,
+) -> list[dict[str, Any]]:
     """Read recent log entries from file.
 
     Args:
@@ -107,9 +133,14 @@ def _read_recent_logs(limit: int = 100, role: str | None = None, bead_id: str | 
 
     Returns:
         List of log entries, most recent first.
+
+    Raises:
+        LogFileError: If the log file cannot be read.
     """
     log_path = Path(LOG_FILE)
+
     if not log_path.exists():
+        logger.debug("Log file does not exist: %s", log_path)
         return []
 
     entries = []
@@ -124,28 +155,97 @@ def _read_recent_logs(limit: int = 100, role: str | None = None, bead_id: str | 
                     if bead_id and entry.get("bead_id") != bead_id:
                         continue
                     entries.append(entry)
-    except OSError:
-        return []
+
+    except PermissionError:
+        logger.error("Permission denied reading log file: %s", log_path)
+        raise LogFileError(
+            message="Permission denied when reading log file",
+            file_path=str(log_path),
+        ) from None
+
+    except OSError as e:
+        logger.error("Error reading log file: %s - %s", log_path, e)
+        raise LogFileError(
+            message=f"Failed to read log file: {e}",
+            file_path=str(log_path),
+        ) from None
 
     # Return most recent entries first
     entries.reverse()
     return entries[:limit]
 
 
-async def _tail_log_file(role: str | None = None, bead_id: str | None = None) -> AsyncIterator[str]:
+def _format_sse_event(
+    data: dict[str, Any],
+    event_type: str = "message",
+) -> str:
+    """Format data as a Server-Sent Event.
+
+    Args:
+        data: Data to serialize as JSON.
+        event_type: SSE event type (default: "message").
+
+    Returns:
+        Formatted SSE event string.
+    """
+    json_data = json.dumps(data)
+    if event_type == "message":
+        return f"data: {json_data}\n\n"
+    return f"event: {event_type}\ndata: {json_data}\n\n"
+
+
+def _format_sse_error(message: str, error_type: str = "error") -> str:
+    """Format an error as a Server-Sent Event.
+
+    Args:
+        message: Error message.
+        error_type: Type of error for client handling.
+
+    Returns:
+        Formatted SSE error event string.
+    """
+    return _format_sse_event(
+        {"type": error_type, "message": message},
+        event_type="error",
+    )
+
+
+async def _tail_log_file(
+    role: str | None = None,
+    bead_id: str | None = None,
+) -> AsyncIterator[str]:
     """Async generator that yields new log entries as SSE events.
 
     Uses polling approach for cross-platform compatibility.
     Handles log file rotation gracefully by reopening if file is truncated.
+    Sends error events to clients when issues occur.
+
+    Args:
+        role: Filter by agent role.
+        bead_id: Filter by bead ID.
+
+    Yields:
+        SSE-formatted event strings.
     """
     log_path = Path(LOG_FILE)
     last_position = 0
     last_inode: int | None = None
+    error_count = 0
+    max_consecutive_errors = 5
+
+    # Send initial retry interval to client
+    yield f"retry: {SSE_RETRY_MS}\n\n"
 
     # If file exists, start from end (don't replay old entries)
     if log_path.exists():
-        last_position = log_path.stat().st_size
-        last_inode = log_path.stat().st_ino
+        try:
+            stat = log_path.stat()
+            last_position = stat.st_size
+            last_inode = stat.st_ino
+            logger.debug("Starting SSE stream from position %d", last_position)
+        except OSError as e:
+            logger.warning("Could not stat log file: %s", e)
+            yield _format_sse_error(f"Could not access log file: {e}", "warning")
 
     while True:
         try:
@@ -159,10 +259,17 @@ async def _tail_log_file(role: str | None = None, bead_id: str | None = None) ->
             current_size = current_stat.st_size
 
             # Check for log rotation (inode changed or file truncated)
-            if last_inode is not None and (current_inode != last_inode or current_size < last_position):
+            if last_inode is not None and (
+                current_inode != last_inode or current_size < last_position
+            ):
                 # File was rotated or truncated, start from beginning
+                logger.info("Log file rotated, restarting from beginning")
                 last_position = 0
                 last_inode = current_inode
+                yield _format_sse_event(
+                    {"type": "rotation", "message": "Log file rotated"},
+                    event_type="info",
+                )
 
             # Check if new content available
             if current_size > last_position:
@@ -182,17 +289,45 @@ async def _tail_log_file(role: str | None = None, bead_id: str | None = None) ->
                             continue
 
                         # Yield as SSE event
-                        yield f"data: {json.dumps(entry)}\n\n"
+                        yield _format_sse_event(entry)
+
+                # Reset error count on successful read
+                error_count = 0
 
             # Small delay between polls
             await asyncio.sleep(0.5)
 
-        except OSError:
-            # File access error, retry after delay
+        except PermissionError:
+            error_count += 1
+            logger.warning("Permission denied reading log file (attempt %d)", error_count)
+            if error_count >= max_consecutive_errors:
+                yield _format_sse_error("Permission denied - stream stopping", "fatal")
+                break
+            yield _format_sse_error("Permission denied reading log file", "warning")
+            await asyncio.sleep(2.0)
+
+        except OSError as e:
+            error_count += 1
+            logger.warning("OS error reading log file (attempt %d): %s", error_count, e)
+            if error_count >= max_consecutive_errors:
+                yield _format_sse_error(f"Persistent error - stream stopping: {e}", "fatal")
+                break
+            yield _format_sse_error(f"Error reading log file: {e}", "warning")
             await asyncio.sleep(1.0)
+
         except asyncio.CancelledError:
             # Client disconnected
+            logger.debug("SSE client disconnected")
             break
+
+        except Exception as e:
+            error_count += 1
+            logger.exception("Unexpected error in SSE stream: %s", e)
+            if error_count >= max_consecutive_errors:
+                yield _format_sse_error("Unexpected error - stream stopping", "fatal")
+                break
+            yield _format_sse_error("An unexpected error occurred", "warning")
+            await asyncio.sleep(1.0)
 
 
 @router.get("/recent", response_model=list[LogEntry])
@@ -205,7 +340,11 @@ async def get_recent_logs(
 
     Returns log entries from the claude.log file, most recent first.
     Supports filtering by role and/or bead ID.
+
+    Raises:
+        LogFileError: If the log file cannot be read.
     """
+    logger.debug("Fetching recent logs: limit=%d, role=%s, bead_id=%s", limit, role, bead_id)
     return _read_recent_logs(limit=limit, role=role, bead_id=bead_id)
 
 
@@ -222,9 +361,18 @@ async def stream_logs(
     SSE Format:
         data: {"timestamp": "...", "pid": 123, "event": "CLAIM", ...}
 
+    Error events are sent as:
+        event: error
+        data: {"type": "warning|fatal", "message": "..."}
+
+    Info events are sent as:
+        event: info
+        data: {"type": "rotation", "message": "Log file rotated"}
+
     Handles log file rotation gracefully - if the log file is truncated
     or rotated, streaming continues from the beginning of the new file.
     """
+    logger.info("Starting SSE log stream: role=%s, bead_id=%s", role, bead_id)
     return StreamingResponse(
         _tail_log_file(role=role, bead_id=bead_id),
         media_type="text/event-stream",

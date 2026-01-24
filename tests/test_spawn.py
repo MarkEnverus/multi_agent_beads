@@ -18,6 +18,7 @@ from spawn_agent import (
     ROLE_TO_LABEL,
     ROLE_TO_PROMPT,
     VALID_ROLES,
+    AgentSpawnError,
     get_prompt_path,
     validate_prompt_exists,
 )
@@ -131,16 +132,16 @@ class TestPromptPathExists:
         prompt_file = tmp_path / "test_prompt.md"
         prompt_file.write_text("# Test Prompt")
         # Should not raise
-        validate_prompt_exists(prompt_file)
+        validate_prompt_exists(prompt_file, "developer")
 
-    def test_validate_prompt_exists_exits_when_file_missing(
+    def test_validate_prompt_exists_raises_when_file_missing(
         self, tmp_path: Path
     ) -> None:
-        """Test validate_prompt_exists exits when file is missing."""
+        """Test validate_prompt_exists raises when file is missing."""
         missing_file = tmp_path / "nonexistent.md"
-        with pytest.raises(SystemExit) as exc_info:
-            validate_prompt_exists(missing_file)
-        assert exc_info.value.code == 1
+        with pytest.raises(AgentSpawnError) as exc_info:
+            validate_prompt_exists(missing_file, "developer")
+        assert "not found" in exc_info.value.message.lower()
 
 
 class TestEnvironmentVariablesSet:
@@ -154,7 +155,7 @@ class TestEnvironmentVariablesSet:
         prompt_file = prompts_dir / "DEVELOPER.md"
         prompt_file.write_text("# Developer Prompt")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("scripts.spawn_agent.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
             # Import and call spawn function
@@ -176,7 +177,7 @@ class TestEnvironmentVariablesSet:
         prompt_file = prompts_dir / "QA.md"
         prompt_file.write_text("# QA Prompt")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("scripts.spawn_agent.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
             from spawn_agent import spawn_agent_macos
@@ -195,7 +196,7 @@ class TestEnvironmentVariablesSet:
         prompt_file = prompts_dir / "MANAGER.md"
         prompt_file.write_text("# Manager Prompt")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("scripts.spawn_agent.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
             from spawn_agent import spawn_agent_macos
@@ -219,7 +220,7 @@ class TestOsascriptCommand:
         prompt_file = prompts_dir / "DEVELOPER.md"
         prompt_file.write_text("# Developer Prompt")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("scripts.spawn_agent.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
             from spawn_agent import spawn_agent_macos
@@ -239,7 +240,7 @@ class TestOsascriptCommand:
         prompt_file = prompts_dir / "TECH_LEAD.md"
         prompt_file.write_text("# Tech Lead Prompt")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("scripts.spawn_agent.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
             from spawn_agent import spawn_agent_macos
@@ -253,24 +254,25 @@ class TestOsascriptCommand:
             assert "activate" in applescript
             assert "do script" in applescript
 
-    def test_subprocess_error_causes_exit(self, tmp_path: Path) -> None:
-        """Test that subprocess error causes sys.exit."""
+    def test_subprocess_error_raises_exception(self, tmp_path: Path) -> None:
+        """Test that subprocess error raises AgentSpawnError."""
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
         prompt_file = prompts_dir / "REVIEWER.md"
         prompt_file.write_text("# Reviewer Prompt")
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = subprocess.CalledProcessError(
-                1, "osascript", stderr=b"AppleScript error"
+        with patch("scripts.spawn_agent.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=1,
+                stderr="AppleScript error",
             )
 
             from spawn_agent import spawn_agent_macos
 
-            with pytest.raises(SystemExit) as exc_info:
+            with pytest.raises(AgentSpawnError) as exc_info:
                 spawn_agent_macos("reviewer", 1, tmp_path, prompt_file)
 
-            assert exc_info.value.code == 1
+            assert "failed" in exc_info.value.message.lower()
 
 
 class TestRoleLabels:

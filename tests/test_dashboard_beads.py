@@ -1,16 +1,16 @@
 """Tests for the dashboard beads API endpoints."""
 
 import json
+import subprocess
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from dashboard.app import app
-from dashboard.routes.beads import (
-    BeadCreate,
-    _parse_beads_json,
-    _run_bd_command,
-)
+from dashboard.exceptions import BeadCommandError, BeadNotFoundError, BeadParseError
+from dashboard.routes.beads import BeadCreate
+from dashboard.services.beads import BeadService
 
 client = TestClient(app)
 
@@ -61,8 +61,8 @@ class TestListBeadsEndpoint:
 
     def test_list_beads_returns_valid_json(self) -> None:
         """Test that GET /api/beads returns valid JSON array."""
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps(SAMPLE_BEADS))
+        with patch.object(BeadService, "list_beads") as mock_list:
+            mock_list.return_value = SAMPLE_BEADS
 
             response = client.get("/api/beads")
 
@@ -80,8 +80,8 @@ class TestListBeadsEndpoint:
         """Test GET /api/beads?status=open filters correctly."""
         open_beads = [b for b in SAMPLE_BEADS if b["status"] == "open"]
 
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps(open_beads))
+        with patch.object(BeadService, "list_beads") as mock_list:
+            mock_list.return_value = open_beads
 
             response = client.get("/api/beads?status=open")
 
@@ -90,18 +90,16 @@ class TestListBeadsEndpoint:
             # All returned beads should have open status
             for bead in data:
                 assert bead["status"] == "open"
-            # Verify the command was called with --status flag
-            mock_run.assert_called_once()
-            args = mock_run.call_args[0][0]
-            assert "--status" in args
-            assert "open" in args
+            # Verify the service was called with status filter
+            mock_list.assert_called_once()
+            assert mock_list.call_args.kwargs.get("status") == "open"
 
     def test_list_beads_filter_by_status_in_progress(self) -> None:
         """Test GET /api/beads?status=in_progress filters correctly."""
         in_progress_beads = [b for b in SAMPLE_BEADS if b["status"] == "in_progress"]
 
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps(in_progress_beads))
+        with patch.object(BeadService, "list_beads") as mock_list:
+            mock_list.return_value = in_progress_beads
 
             response = client.get("/api/beads?status=in_progress")
 
@@ -114,8 +112,8 @@ class TestListBeadsEndpoint:
         """Test GET /api/beads?label=dev filters correctly."""
         dev_beads = [b for b in SAMPLE_BEADS if "dev" in b["labels"]]
 
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps(dev_beads))
+        with patch.object(BeadService, "list_beads") as mock_list:
+            mock_list.return_value = dev_beads
 
             response = client.get("/api/beads?label=dev")
 
@@ -124,18 +122,16 @@ class TestListBeadsEndpoint:
             # All returned beads should have dev label
             for bead in data:
                 assert "dev" in bead["labels"]
-            # Verify the command was called with -l flag
-            mock_run.assert_called_once()
-            args = mock_run.call_args[0][0]
-            assert "-l" in args
-            assert "dev" in args
+            # Verify the service was called with label filter
+            mock_list.assert_called_once()
+            assert mock_list.call_args.kwargs.get("label") == "dev"
 
     def test_list_beads_filter_by_priority(self) -> None:
         """Test GET /api/beads?priority=2 filters correctly."""
         p2_beads = [b for b in SAMPLE_BEADS if b["priority"] == 2]
 
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps(p2_beads))
+        with patch.object(BeadService, "list_beads") as mock_list:
+            mock_list.return_value = p2_beads
 
             response = client.get("/api/beads?priority=2")
 
@@ -143,29 +139,27 @@ class TestListBeadsEndpoint:
             data = response.json()
             for bead in data:
                 assert bead["priority"] == 2
-            # Verify the command was called with -p flag
-            args = mock_run.call_args[0][0]
-            assert "-p" in args
-            assert "2" in args
+            # Verify priority filter
+            assert mock_list.call_args.kwargs.get("priority") == 2
 
     def test_list_beads_combined_filters(self) -> None:
         """Test multiple filters can be combined."""
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps([SAMPLE_BEADS[0]]))
+        with patch.object(BeadService, "list_beads") as mock_list:
+            mock_list.return_value = [SAMPLE_BEADS[0]]
 
             response = client.get("/api/beads?status=open&label=dev&priority=2")
 
             assert response.status_code == 200
-            args = mock_run.call_args[0][0]
-            # All filters should be present
-            assert "--status" in args
-            assert "-l" in args
-            assert "-p" in args
+            # All filters should be passed
+            kwargs = mock_list.call_args.kwargs
+            assert kwargs.get("status") == "open"
+            assert kwargs.get("label") == "dev"
+            assert kwargs.get("priority") == 2
 
     def test_list_beads_empty_result(self) -> None:
         """Test that empty result returns empty JSON array."""
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps([]))
+        with patch.object(BeadService, "list_beads") as mock_list:
+            mock_list.return_value = []
 
             response = client.get("/api/beads")
 
@@ -174,13 +168,16 @@ class TestListBeadsEndpoint:
 
     def test_list_beads_bd_command_failure(self) -> None:
         """Test error handling when bd command fails."""
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (False, "bd command not found")
+        with patch.object(BeadService, "list_beads") as mock_list:
+            mock_list.side_effect = BeadCommandError(
+                message="bd command not found",
+                command=["list"],
+            )
 
             response = client.get("/api/beads")
 
             assert response.status_code == 500
-            assert "Failed to list beads" in response.json()["detail"]
+            assert "bd command not found" in response.json()["message"]
 
 
 class TestReadyBeadsEndpoint:
@@ -190,36 +187,30 @@ class TestReadyBeadsEndpoint:
         """Test GET /api/beads/ready returns only unblocked beads."""
         ready_beads = [SAMPLE_BEADS[0]]  # Only first bead is ready
 
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps(ready_beads))
+        with patch.object(BeadService, "list_ready") as mock_ready:
+            mock_ready.return_value = ready_beads
 
             response = client.get("/api/beads/ready")
 
             assert response.status_code == 200
             data = response.json()
             assert len(data) == 1
-            # Verify bd ready command was called
-            args = mock_run.call_args[0][0]
-            assert args[0] == "ready"
-            assert "--json" in args
+            mock_ready.assert_called_once()
 
     def test_ready_beads_filter_by_label(self) -> None:
         """Test GET /api/beads/ready?label=dev filters by label."""
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps([SAMPLE_BEADS[0]]))
+        with patch.object(BeadService, "list_ready") as mock_ready:
+            mock_ready.return_value = [SAMPLE_BEADS[0]]
 
             response = client.get("/api/beads/ready?label=dev")
 
             assert response.status_code == 200
-            args = mock_run.call_args[0][0]
-            assert args[0] == "ready"
-            assert "-l" in args
-            assert "dev" in args
+            assert mock_ready.call_args.kwargs.get("label") == "dev"
 
     def test_ready_beads_empty_when_all_blocked(self) -> None:
         """Test empty result when all beads are blocked."""
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps([]))
+        with patch.object(BeadService, "list_ready") as mock_ready:
+            mock_ready.return_value = []
 
             response = client.get("/api/beads/ready")
 
@@ -234,8 +225,8 @@ class TestInProgressBeadsEndpoint:
         """Test GET /api/beads/in-progress returns only in_progress beads."""
         in_progress = [b for b in SAMPLE_BEADS if b["status"] == "in_progress"]
 
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps(in_progress))
+        with patch.object(BeadService, "list_beads") as mock_list:
+            mock_list.return_value = in_progress
 
             response = client.get("/api/beads/in-progress")
 
@@ -252,8 +243,8 @@ class TestGetBeadEndpoint:
         """Test GET /api/beads/{id} returns the correct bead."""
         target_bead = SAMPLE_BEADS[0]
 
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps([target_bead]))
+        with patch.object(BeadService, "get_bead") as mock_get:
+            mock_get.return_value = target_bead
 
             response = client.get(f"/api/beads/{target_bead['id']}")
 
@@ -262,34 +253,25 @@ class TestGetBeadEndpoint:
             assert data["id"] == target_bead["id"]
             assert data["title"] == target_bead["title"]
             assert data["status"] == target_bead["status"]
-            # Verify bd show command was called with correct ID
-            args = mock_run.call_args[0][0]
-            assert args[0] == "show"
-            assert target_bead["id"] in args
+            mock_get.assert_called_once_with(target_bead["id"])
 
     def test_get_bead_invalid_id_returns_404(self) -> None:
         """Test GET /api/beads/{invalid_id} returns 404."""
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (False, "Bead not found: invalid-bead-id")
+        with patch.object(BeadService, "get_bead") as mock_get:
+            mock_get.side_effect = BeadNotFoundError("invalid-bead-id")
 
             response = client.get("/api/beads/invalid-bead-id")
 
             assert response.status_code == 404
-            assert "Bead not found" in response.json()["detail"]
-
-    def test_get_bead_empty_result_returns_404(self) -> None:
-        """Test 404 when bd returns empty result."""
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (True, json.dumps([]))
-
-            response = client.get("/api/beads/nonexistent-id")
-
-            assert response.status_code == 404
+            assert "invalid-bead-id" in response.json()["message"]
 
     def test_get_bead_server_error(self) -> None:
         """Test 500 on general bd command failure."""
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (False, "Connection timeout")
+        with patch.object(BeadService, "get_bead") as mock_get:
+            mock_get.side_effect = BeadCommandError(
+                message="Connection timeout",
+                command=["show"],
+            )
 
             response = client.get("/api/beads/some-id")
 
@@ -315,13 +297,8 @@ class TestCreateBeadEndpoint:
             "labels": [],
         }
 
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            # First call: create returns ID
-            # Second call: show returns full bead
-            mock_run.side_effect = [
-                (True, new_bead_id),
-                (True, json.dumps([created_bead])),
-            ]
+        with patch.object(BeadService, "create_bead") as mock_create:
+            mock_create.return_value = created_bead
 
             response = client.post(
                 "/api/beads",
@@ -349,11 +326,8 @@ class TestCreateBeadEndpoint:
             "labels": ["dev", "urgent"],
         }
 
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.side_effect = [
-                (True, new_bead_id),
-                (True, json.dumps([created_bead])),
-            ]
+        with patch.object(BeadService, "create_bead") as mock_create:
+            mock_create.return_value = created_bead
 
             response = client.post(
                 "/api/beads",
@@ -396,93 +370,123 @@ class TestCreateBeadEndpoint:
 
     def test_create_bead_bd_failure(self) -> None:
         """Test error handling when bd create fails."""
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (False, "Failed to create bead")
+        with patch.object(BeadService, "create_bead") as mock_create:
+            mock_create.side_effect = BeadCommandError(
+                message="Failed to create bead",
+                command=["create"],
+            )
 
             response = client.post("/api/beads", json={"title": "Test"})
 
             assert response.status_code == 500
-            assert "Failed to create bead" in response.json()["detail"]
+            assert "Failed to create bead" in response.json()["message"]
 
 
-class TestBdCommandRunner:
-    """Tests for _run_bd_command helper function."""
+class TestBeadServiceRunCommand:
+    """Tests for BeadService.run_command method."""
 
-    def test_run_bd_command_success(self) -> None:
+    def test_run_command_success(self) -> None:
         """Test successful bd command execution."""
-        with patch("dashboard.routes.beads.subprocess.run") as mock_subprocess:
+        with patch("dashboard.services.beads.subprocess.run") as mock_subprocess:
             mock_subprocess.return_value = MagicMock(
                 returncode=0,
                 stdout="output",
                 stderr="",
             )
 
-            success, output = _run_bd_command(["list", "--json"])
+            output = BeadService.run_command(["list", "--json"])
 
-            assert success is True
             assert output == "output"
             mock_subprocess.assert_called_once()
 
-    def test_run_bd_command_failure(self) -> None:
+    def test_run_command_failure(self) -> None:
         """Test bd command failure handling."""
-        with patch("dashboard.routes.beads.subprocess.run") as mock_subprocess:
+        with patch("dashboard.services.beads.subprocess.run") as mock_subprocess:
             mock_subprocess.return_value = MagicMock(
                 returncode=1,
                 stdout="",
                 stderr="Error message",
             )
 
-            success, output = _run_bd_command(["invalid"])
+            with pytest.raises(BeadCommandError) as exc_info:
+                BeadService.run_command(["invalid"])
 
-            assert success is False
-            assert output == "Error message"
+            assert "Error message" in str(exc_info.value.message)
 
-    def test_run_bd_command_timeout(self) -> None:
+    def test_run_command_timeout(self) -> None:
         """Test timeout handling."""
-        import subprocess
-
-        with patch("dashboard.routes.beads.subprocess.run") as mock_subprocess:
+        with patch("dashboard.services.beads.subprocess.run") as mock_subprocess:
             mock_subprocess.side_effect = subprocess.TimeoutExpired(cmd="bd", timeout=30)
 
-            success, output = _run_bd_command(["slow-command"])
+            with pytest.raises(BeadCommandError) as exc_info:
+                BeadService.run_command(["slow-command"])
 
-            assert success is False
-            assert "timed out" in output.lower()
+            assert "timed out" in exc_info.value.message.lower()
 
-    def test_run_bd_command_not_found(self) -> None:
+    def test_run_command_not_found(self) -> None:
         """Test handling when bd is not installed."""
-        with patch("dashboard.routes.beads.subprocess.run") as mock_subprocess:
+        with patch("dashboard.services.beads.subprocess.run") as mock_subprocess:
             mock_subprocess.side_effect = FileNotFoundError()
 
-            success, output = _run_bd_command(["list"])
+            with pytest.raises(BeadCommandError) as exc_info:
+                BeadService.run_command(["list"])
 
-            assert success is False
-            assert "not found" in output.lower()
+            assert "not installed" in exc_info.value.message.lower()
 
 
-class TestParseBeadsJson:
-    """Tests for _parse_beads_json helper function."""
+class TestBeadServiceParseJson:
+    """Tests for BeadService.parse_json_output method."""
 
     def test_parse_valid_json_array(self) -> None:
         """Test parsing valid JSON array."""
-        result = _parse_beads_json(json.dumps(SAMPLE_BEADS))
+        result = BeadService.parse_json_output(json.dumps(SAMPLE_BEADS))
         assert len(result) == 3
         assert result[0]["id"] == "multi_agent_beads-abc"
 
     def test_parse_empty_array(self) -> None:
         """Test parsing empty JSON array."""
-        result = _parse_beads_json("[]")
+        result = BeadService.parse_json_output("[]")
         assert result == []
 
     def test_parse_invalid_json(self) -> None:
         """Test handling invalid JSON."""
-        result = _parse_beads_json("not valid json")
+        with pytest.raises(BeadParseError):
+            BeadService.parse_json_output("not valid json")
+
+    def test_parse_single_object(self) -> None:
+        """Test parsing single JSON object (wrapped in list)."""
+        result = BeadService.parse_json_output(json.dumps(SAMPLE_BEADS[0]))
+        assert len(result) == 1
+        assert result[0]["id"] == "multi_agent_beads-abc"
+
+    def test_parse_empty_string(self) -> None:
+        """Test parsing empty string returns empty list."""
+        result = BeadService.parse_json_output("")
         assert result == []
 
-    def test_parse_non_array_json(self) -> None:
-        """Test handling non-array JSON."""
-        result = _parse_beads_json('{"single": "object"}')
-        assert result == []
+
+class TestBeadServiceValidation:
+    """Tests for BeadService validation methods."""
+
+    def test_validate_bead_id_valid(self) -> None:
+        """Test valid bead ID passes validation."""
+        # Should not raise
+        BeadService.validate_bead_id("multi_agent_beads-abc123")
+        BeadService.validate_bead_id("project-xyz")
+
+    def test_validate_bead_id_empty(self) -> None:
+        """Test empty bead ID fails validation."""
+        from dashboard.exceptions import BeadValidationError
+
+        with pytest.raises(BeadValidationError):
+            BeadService.validate_bead_id("")
+
+    def test_validate_bead_id_invalid_format(self) -> None:
+        """Test invalid bead ID format fails validation."""
+        from dashboard.exceptions import BeadValidationError
+
+        with pytest.raises(BeadValidationError):
+            BeadService.validate_bead_id("no-dash-at-end-")
 
 
 class TestBeadCreateModel:
@@ -516,21 +520,22 @@ class TestResponseConsistency:
 
     def test_error_response_format(self) -> None:
         """Test that error responses follow consistent format."""
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (False, "Bead not found")
+        with patch.object(BeadService, "get_bead") as mock_get:
+            mock_get.side_effect = BeadNotFoundError("invalid")
 
             response = client.get("/api/beads/invalid")
 
             assert response.status_code == 404
             data = response.json()
-            # FastAPI error format
-            assert "detail" in data
+            # Custom exception format
+            assert "error" in data
+            assert "message" in data
 
     def test_404_contains_bead_id(self) -> None:
         """Test that 404 error contains the requested bead ID."""
-        with patch("dashboard.routes.beads._run_bd_command") as mock_run:
-            mock_run.return_value = (False, "Bead not found: test-id-123")
+        with patch.object(BeadService, "get_bead") as mock_get:
+            mock_get.side_effect = BeadNotFoundError("test-id-123")
 
             response = client.get("/api/beads/test-id-123")
 
-            assert "test-id-123" in response.json()["detail"]
+            assert "test-id-123" in response.json()["message"]
