@@ -1,0 +1,18 @@
+labels:
+  # Role labels
+  dev: "Development work"
+  qa: "QA/testing work"
+  architecture: "Design/architecture"
+  review: "Code review"
+
+  # Type labels
+  bug: "Bug fix"
+  feature: "New feature"
+  infra: "Infrastructure"
+  docs: "Documentation"
+
+  # Component labels
+  dashboard: "Web dashboard"
+  prompts: "Agent prompts"
+  scripts: "Orchestration scripts"
+  config: "Configuration"
