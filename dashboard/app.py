@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from dashboard.config import CORS_ORIGINS, STATIC_DIR, TEMPLATES_DIR
+from dashboard.routes.beads import router as beads_router
 
 # Create FastAPI application
 app = FastAPI(
@@ -29,6 +30,9 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Configure Jinja2 templates
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+# Include API routers
+app.include_router(beads_router)
 
 
 @app.get("/health")
