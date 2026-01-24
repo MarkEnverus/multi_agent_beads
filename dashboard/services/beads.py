@@ -3,14 +3,20 @@
 This module provides a centralized interface for interacting with the bd CLI.
 All bd subprocess calls should go through this service to ensure consistent
 error handling and logging.
+
+Performance optimizations:
+- Cache layer with 5-second TTL for list operations
+- Batch fetching to reduce subprocess calls
 """
 
 import json
 import logging
 import re
 import subprocess
-from typing import Any
+import time
+from typing import Any, cast
 
+from dashboard.config import CACHE_TTL_SECONDS
 from dashboard.exceptions import (
     BeadCommandError,
     BeadNotFoundError,
@@ -25,6 +31,46 @@ BEAD_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_]+-[a-zA-Z0-9]+$")
 
 # Command timeout in seconds
 DEFAULT_TIMEOUT = 30
+
+
+class _BeadCache:
+    """Simple time-based cache for bead list operations.
+
+    Thread-safe for FastAPI's async context since we use simple dict operations.
+    """
+
+    def __init__(self, ttl: float = CACHE_TTL_SECONDS) -> None:
+        self._cache: dict[str, tuple[float, Any]] = {}
+        self._ttl = ttl
+
+    def get(self, key: str) -> Any | None:
+        """Get cached value if not expired."""
+        if key not in self._cache:
+            return None
+        timestamp, value = self._cache[key]
+        if time.monotonic() - timestamp > self._ttl:
+            del self._cache[key]
+            return None
+        return value
+
+    def set(self, key: str, value: Any) -> None:
+        """Cache a value with current timestamp."""
+        self._cache[key] = (time.monotonic(), value)
+
+    def invalidate(self, key: str | None = None) -> None:
+        """Invalidate a specific key or all keys."""
+        if key is None:
+            self._cache.clear()
+        elif key in self._cache:
+            del self._cache[key]
+
+    def make_key(self, *args: Any) -> str:
+        """Create a cache key from arguments."""
+        return ":".join(str(a) for a in args)
+
+
+# Global cache instance
+_cache = _BeadCache()
 
 
 class BeadService:
@@ -183,6 +229,7 @@ class BeadService:
         label: str | None = None,
         priority: int | None = None,
         limit: int = 0,
+        use_cache: bool = True,
     ) -> list[dict[str, Any]]:
         """List beads with optional filters.
 
@@ -191,6 +238,7 @@ class BeadService:
             label: Filter by label.
             priority: Filter by priority (0-4).
             limit: Maximum number of beads (0 = unlimited).
+            use_cache: Whether to use cached results (default True).
 
         Returns:
             List of bead dictionaries.
@@ -199,6 +247,14 @@ class BeadService:
             BeadCommandError: If the bd command fails.
             BeadParseError: If output parsing fails.
         """
+        cache_key = _cache.make_key("list", status, label, priority, limit)
+
+        if use_cache:
+            cached = _cache.get(cache_key)
+            if cached is not None:
+                logger.debug("Cache hit for list_beads: %s", cache_key)
+                return cast(list[dict[str, Any]], cached)
+
         args = ["list", "--json", "--limit", str(limit)]
 
         if status:
@@ -209,14 +265,23 @@ class BeadService:
             args.extend(["-p", str(priority)])
 
         output = cls.run_command(args)
-        return cls.parse_json_output(output)
+        result = cls.parse_json_output(output)
+
+        _cache.set(cache_key, result)
+        return result
 
     @classmethod
-    def list_ready(cls, *, label: str | None = None) -> list[dict[str, Any]]:
+    def list_ready(
+        cls,
+        *,
+        label: str | None = None,
+        use_cache: bool = True,
+    ) -> list[dict[str, Any]]:
         """List beads ready to work on (no blockers).
 
         Args:
             label: Filter by label.
+            use_cache: Whether to use cached results (default True).
 
         Returns:
             List of ready bead dictionaries.
@@ -225,17 +290,31 @@ class BeadService:
             BeadCommandError: If the bd command fails.
             BeadParseError: If output parsing fails.
         """
+        cache_key = _cache.make_key("ready", label)
+
+        if use_cache:
+            cached = _cache.get(cache_key)
+            if cached is not None:
+                logger.debug("Cache hit for list_ready: %s", cache_key)
+                return cast(list[dict[str, Any]], cached)
+
         args = ["ready", "--json"]
 
         if label:
             args.extend(["-l", label])
 
         output = cls.run_command(args)
-        return cls.parse_json_output(output)
+        result = cls.parse_json_output(output)
+
+        _cache.set(cache_key, result)
+        return result
 
     @classmethod
-    def list_blocked(cls) -> list[dict[str, Any]]:
+    def list_blocked(cls, *, use_cache: bool = True) -> list[dict[str, Any]]:
         """List blocked beads.
+
+        Args:
+            use_cache: Whether to use cached results (default True).
 
         Returns:
             List of blocked bead dictionaries.
@@ -244,8 +323,19 @@ class BeadService:
             BeadCommandError: If the bd command fails.
             BeadParseError: If output parsing fails.
         """
+        cache_key = "blocked"
+
+        if use_cache:
+            cached = _cache.get(cache_key)
+            if cached is not None:
+                logger.debug("Cache hit for list_blocked")
+                return cast(list[dict[str, Any]], cached)
+
         output = cls.run_command(["blocked", "--json"])
-        return cls.parse_json_output(output)
+        result = cls.parse_json_output(output)
+
+        _cache.set(cache_key, result)
+        return result
 
     @classmethod
     def get_bead(cls, bead_id: str) -> dict[str, Any]:
@@ -332,6 +422,9 @@ class BeadService:
                 command=args,
             )
 
+        # Invalidate cache after create
+        _cache.invalidate()
+
         # Fetch and return the created bead
         return cls.get_bead(bead_id)
 
@@ -346,3 +439,92 @@ class BeadService:
             Sorted list (does not modify original).
         """
         return sorted(beads, key=lambda b: b.get("priority", 4))
+
+    @classmethod
+    def get_kanban_data(
+        cls,
+        *,
+        done_limit: int = 20,
+        use_cache: bool = True,
+    ) -> dict[str, Any]:
+        """Get all data needed for the kanban board in a single call.
+
+        This batch method fetches all beads once and partitions them locally,
+        reducing subprocess overhead from 4 calls to 1.
+
+        Args:
+            done_limit: Maximum number of closed beads to return.
+            use_cache: Whether to use cached results (default True).
+
+        Returns:
+            Dictionary with keys:
+                - ready_beads: Ready to work (open, no blockers), sorted by priority
+                - in_progress_beads: Currently being worked on, sorted by priority
+                - done_beads: Closed beads (limited), sorted by updated_at desc
+                - total_count: Total number of beads
+
+        Raises:
+            BeadCommandError: If the bd command fails.
+            BeadParseError: If output parsing fails.
+        """
+        cache_key = _cache.make_key("kanban", done_limit)
+
+        if use_cache:
+            cached = _cache.get(cache_key)
+            if cached is not None:
+                logger.debug("Cache hit for get_kanban_data")
+                return cast(dict[str, Any], cached)
+
+        # Fetch all beads in a single call
+        all_beads = cls.list_beads(use_cache=False)
+
+        # Also fetch blocked info to determine what's ready
+        blocked_beads = cls.list_blocked(use_cache=False)
+        blocked_ids = {b["id"] for b in blocked_beads}
+
+        # Partition beads by status
+        ready_beads: list[dict[str, Any]] = []
+        in_progress_beads: list[dict[str, Any]] = []
+        done_beads: list[dict[str, Any]] = []
+
+        for bead in all_beads:
+            status = bead.get("status", "").lower()
+            bead_id = bead.get("id", "")
+
+            if status == "closed":
+                done_beads.append(bead)
+            elif status == "in_progress":
+                in_progress_beads.append(bead)
+            elif status == "open" and bead_id not in blocked_ids:
+                # Open and not blocked = ready
+                ready_beads.append(bead)
+
+        # Sort by priority (P0 first)
+        ready_beads = cls.sort_by_priority(ready_beads)
+        in_progress_beads = cls.sort_by_priority(in_progress_beads)
+
+        # Sort done by updated_at desc, limit results
+        done_beads.sort(
+            key=lambda b: b.get("updated_at", ""),
+            reverse=True,
+        )
+        done_beads = done_beads[:done_limit]
+
+        result = {
+            "ready_beads": ready_beads,
+            "in_progress_beads": in_progress_beads,
+            "done_beads": done_beads,
+            "total_count": len(all_beads),
+        }
+
+        _cache.set(cache_key, result)
+        return result
+
+    @classmethod
+    def invalidate_cache(cls) -> None:
+        """Invalidate all cached data.
+
+        Call this after any mutation operations (create, update, close).
+        """
+        _cache.invalidate()
+        logger.debug("Bead cache invalidated")

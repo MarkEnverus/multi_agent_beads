@@ -81,8 +81,8 @@ class TestBeadLifecycleWorkflow:
         # Update to in_progress
         _run_bd(["update", test_bead, "--status", "in_progress"])
 
-        # Verify it appears in the in-progress section
-        response = client.get("/partials/kanban")
+        # Verify it appears in the in-progress section (refresh=true bypasses cache)
+        response = client.get("/partials/kanban?refresh=true")
         assert response.status_code == 200
         html = response.text
         assert test_bead in html or test_bead.split("-")[-1] in html
@@ -96,8 +96,8 @@ class TestBeadLifecycleWorkflow:
         result = _run_bd(["list", "--json", "--status", "closed", "--limit", "0"])
         assert test_bead in result.stdout, f"Bead {test_bead} should appear in closed list"
 
-        # Verify kanban endpoint works
-        response = client.get("/partials/kanban")
+        # Verify kanban endpoint works (refresh=true bypasses cache)
+        response = client.get("/partials/kanban?refresh=true")
         assert response.status_code == 200
 
     def test_bead_detail_shows_correct_info(self, test_bead: str) -> None:

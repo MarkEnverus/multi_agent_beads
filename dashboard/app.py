@@ -128,8 +128,19 @@ async def dashboard(request: Request) -> HTMLResponse:
 
 
 @app.get("/partials/kanban", response_class=HTMLResponse)
-async def kanban_partial(request: Request) -> HTMLResponse:
-    """Render the Kanban board partial with current bead data."""
+async def kanban_partial(
+    request: Request,
+    refresh: bool = False,
+) -> HTMLResponse:
+    """Render the Kanban board partial with current bead data.
+
+    Uses batch fetching for performance - reduces 4 subprocess calls to 2,
+    with 5-second TTL caching for repeated requests.
+
+    Args:
+        request: FastAPI request object.
+        refresh: If True, bypass cache and fetch fresh data.
+    """
     ready_beads: list[dict[str, Any]] = []
     in_progress_beads: list[dict[str, Any]] = []
     done_beads: list[dict[str, Any]] = []
@@ -137,20 +148,12 @@ async def kanban_partial(request: Request) -> HTMLResponse:
     error_message: str | None = None
 
     try:
-        # Fetch ready beads (open, no blockers)
-        ready_beads = BeadService.sort_by_priority(BeadService.list_ready())
-
-        # Fetch in-progress beads
-        in_progress_beads = BeadService.sort_by_priority(
-            BeadService.list_beads(status="in_progress")
-        )
-
-        # Fetch closed beads (last 20)
-        done_beads = BeadService.list_beads(status="closed", limit=20)
-
-        # Calculate total count
-        all_beads = BeadService.list_beads()
-        total_count = len(all_beads)
+        # Use batch method for efficient data fetching
+        kanban_data = BeadService.get_kanban_data(done_limit=20, use_cache=not refresh)
+        ready_beads = kanban_data["ready_beads"]
+        in_progress_beads = kanban_data["in_progress_beads"]
+        done_beads = kanban_data["done_beads"]
+        total_count = kanban_data["total_count"]
 
     except BeadError as e:
         logger.warning("Failed to fetch beads for kanban: %s", e.message)

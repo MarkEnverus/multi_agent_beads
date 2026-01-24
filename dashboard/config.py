@@ -38,6 +38,10 @@ CORS_ORIGINS = [
 LOG_LEVEL_STR = os.environ.get("DASHBOARD_LOG_LEVEL", "INFO").upper()
 LOG_LEVEL = getattr(logging, LOG_LEVEL_STR, logging.INFO)
 
+# Performance configuration
+# Cache TTL in seconds for bd list results (reduces subprocess overhead)
+CACHE_TTL_SECONDS = float(os.environ.get("DASHBOARD_CACHE_TTL", "5.0"))
+
 # Log format for file and console handlers
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
