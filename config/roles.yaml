@@ -1,0 +1,33 @@
+# Multi-Agent Beads System - Role Definitions
+# Each role has a specific prompt, label filter, color, and instance limit
+
+roles:
+  developer:
+    prompt: prompts/DEVELOPER.md
+    label_filter: dev
+    color: green
+    max_instances: 3
+
+  qa:
+    prompt: prompts/QA.md
+    label_filter: qa
+    color: blue
+    max_instances: 2
+
+  tech_lead:
+    prompt: prompts/TECH_LEAD.md
+    label_filter: architecture
+    color: yellow
+    max_instances: 1
+
+  manager:
+    prompt: prompts/MANAGER.md
+    label_filter: null  # sees all work items
+    color: purple
+    max_instances: 1
+
+  reviewer:
+    prompt: prompts/CODE_REVIEWER.md
+    label_filter: review
+    color: cyan
+    max_instances: 2
