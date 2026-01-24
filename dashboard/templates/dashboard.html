@@ -10,6 +10,19 @@
         <div class="flex items-center space-x-4">
             <span class="text-sm text-gray-400">Auto-refreshing every 10s</span>
             <button
+                id="depgraph-toggle"
+                class="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-md transition-colors flex items-center space-x-2"
+                hx-get="/partials/depgraph"
+                hx-target="#depgraph-container"
+                hx-swap="innerHTML"
+                onclick="toggleGraphView()"
+            >
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span>Dependencies</span>
+            </button>
+            <button
                 class="px-3 py-1.5 text-sm bg-primary-600 hover:bg-primary-700 text-white rounded-md transition-colors"
                 hx-get="/partials/kanban"
                 hx-target="#kanban-board"
@@ -23,6 +36,9 @@
 
 {# Main content area with sidebar #}
 <div class="flex gap-6">
+    {# Dependency Graph Container - Hidden by default #}
+    <div id="depgraph-container" class="flex-1 min-w-0 hidden"></div>
+
     {# Kanban Board Container - Auto refreshes every 10 seconds #}
     <div id="kanban-board"
          class="flex-1 min-w-0"
@@ -74,6 +90,41 @@
 
 {% block scripts %}
 <script>
+    // Track graph view state
+    let graphViewActive = false;
+
+    // Toggle between Kanban and Dependency Graph views
+    function toggleGraphView() {
+        const kanban = document.getElementById('kanban-board');
+        const depgraph = document.getElementById('depgraph-container');
+        const toggleBtn = document.getElementById('depgraph-toggle');
+
+        graphViewActive = !graphViewActive;
+
+        if (graphViewActive) {
+            kanban.classList.add('hidden');
+            depgraph.classList.remove('hidden');
+            toggleBtn.classList.remove('bg-gray-700', 'hover:bg-gray-600');
+            toggleBtn.classList.add('bg-primary-600', 'hover:bg-primary-700');
+        } else {
+            kanban.classList.remove('hidden');
+            depgraph.classList.add('hidden');
+            toggleBtn.classList.remove('bg-primary-600', 'hover:bg-primary-700');
+            toggleBtn.classList.add('bg-gray-700', 'hover:bg-gray-600');
+        }
+    }
+
+    // Handle clicks on graph nodes - open bead detail modal
+    function handleNodeClick(beadId) {
+        htmx.ajax('GET', '/partials/beads/' + beadId, {
+            target: '#bead-detail-modal',
+            swap: 'innerHTML'
+        });
+    }
+
+    // Make handleNodeClick available globally for Mermaid callbacks
+    window.handleNodeClick = handleNodeClick;
+
     // Handle click outside modal to close
     document.addEventListener('click', function(event) {
         const modal = document.getElementById('bead-detail-modal');
@@ -88,6 +139,10 @@
             const modal = document.getElementById('bead-detail-modal');
             if (modal) {
                 modal.innerHTML = '';
+            }
+            // Also close graph view if open
+            if (graphViewActive) {
+                toggleGraphView();
             }
         }
     });

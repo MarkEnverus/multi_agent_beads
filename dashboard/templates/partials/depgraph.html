@@ -1,0 +1,63 @@
+{# Dependency Graph partial - renders Mermaid.js flowchart #}
+<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+    <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold text-gray-100">Dependency Graph</h2>
+        <div class="flex items-center space-x-2">
+            <span class="text-sm text-gray-400">{{ node_count }} nodes, {{ edge_count }} edges</span>
+            <button
+                class="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded"
+                onclick="document.getElementById('depgraph-container').classList.toggle('hidden'); document.getElementById('kanban-board').classList.toggle('hidden');"
+            >
+                Close
+            </button>
+        </div>
+    </div>
+
+    {% if mermaid_code %}
+    <div class="overflow-auto max-h-[600px] bg-gray-900 rounded-lg p-4">
+        <div class="mermaid-graph">
+            <pre class="mermaid">{{ mermaid_code }}</pre>
+        </div>
+    </div>
+
+    {# Legend #}
+    <div class="mt-4 flex flex-wrap gap-4 text-sm">
+        <div class="flex items-center space-x-2">
+            <div class="w-4 h-4 rounded" style="background-color: #3b82f6;"></div>
+            <span class="text-gray-400">Open</span>
+        </div>
+        <div class="flex items-center space-x-2">
+            <div class="w-4 h-4 rounded" style="background-color: #eab308;"></div>
+            <span class="text-gray-400">In Progress</span>
+        </div>
+        <div class="flex items-center space-x-2">
+            <div class="w-4 h-4 rounded" style="background-color: #22c55e;"></div>
+            <span class="text-gray-400">Closed</span>
+        </div>
+        <div class="flex items-center space-x-2">
+            <div class="w-4 h-4 rounded" style="background-color: #ef4444;"></div>
+            <span class="text-gray-400">Blocked</span>
+        </div>
+    </div>
+    {% else %}
+    <div class="flex items-center justify-center h-32 text-gray-500">
+        No dependencies to display
+    </div>
+    {% endif %}
+</div>
+
+<script>
+    // Re-render Mermaid after HTMX swap
+    (function() {
+        const mermaidElements = document.querySelectorAll('.mermaid-graph .mermaid');
+        mermaidElements.forEach((el, index) => {
+            const id = 'mermaid-' + Date.now() + '-' + index;
+            mermaid.render(id, el.textContent).then(({ svg }) => {
+                el.innerHTML = svg;
+            }).catch(err => {
+                console.error('Mermaid render error:', err);
+                el.innerHTML = '<div class="text-red-400">Failed to render graph</div>';
+            });
+        });
+    })();
+</script>

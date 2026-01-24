@@ -141,6 +141,118 @@ async def agents_partial(request: Request) -> HTMLResponse:
     )
 
 
+def _generate_mermaid_graph(beads: list[dict[str, Any]]) -> tuple[str, int, int]:
+    """Generate Mermaid flowchart syntax from beads with dependencies.
+
+    Returns (mermaid_code, node_count, edge_count).
+    """
+    if not beads:
+        return "", 0, 0
+
+    # Build a map of bead id -> bead for quick lookup
+    bead_map = {b["id"]: b for b in beads}
+
+    # Collect all edges and nodes involved in dependencies
+    edges: list[tuple[str, str]] = []
+    nodes_with_deps: set[str] = set()
+
+    for bead in beads:
+        bead_id = bead["id"]
+        # Check if this bead has dependencies (blocked_by)
+        blocked_by = bead.get("blocked_by", [])
+        if blocked_by:
+            nodes_with_deps.add(bead_id)
+            for dep_id in blocked_by:
+                nodes_with_deps.add(dep_id)
+                # Edge: dependency -> dependent (blocker -> blocked)
+                edges.append((dep_id, bead_id))
+
+    if not edges:
+        return "", 0, 0
+
+    # Build Mermaid code
+    lines = ["graph TD"]
+
+    # Add node definitions with labels (truncated title)
+    for node_id in nodes_with_deps:
+        bead = bead_map.get(node_id, {})
+        title = bead.get("title", node_id)
+        # Truncate title for readability
+        if len(title) > 30:
+            title = title[:27] + "..."
+        # Escape special characters for Mermaid
+        title = title.replace('"', "'").replace("[", "(").replace("]", ")")
+        # Use short ID for node name
+        short_id = node_id.split("-")[-1] if "-" in node_id else node_id
+        lines.append(f'    {short_id}["{title}"]')
+
+    # Add edges
+    for from_id, to_id in edges:
+        from_short = from_id.split("-")[-1] if "-" in from_id else from_id
+        to_short = to_id.split("-")[-1] if "-" in to_id else to_id
+        lines.append(f"    {from_short} --> {to_short}")
+
+    # Add styles based on status
+    status_colors = {
+        "open": "#3b82f6",
+        "in_progress": "#eab308",
+        "closed": "#22c55e",
+    }
+
+    for node_id in nodes_with_deps:
+        bead = bead_map.get(node_id, {})
+        status = bead.get("status", "open")
+        # Check if blocked
+        blocked_by = bead.get("blocked_by", [])
+        has_open_blockers = any(
+            bead_map.get(b, {}).get("status") not in ("closed",)
+            for b in blocked_by
+        )
+        if status == "open" and has_open_blockers:
+            color = "#ef4444"  # Red for blocked
+        else:
+            color = status_colors.get(status, "#3b82f6")
+
+        short_id = node_id.split("-")[-1] if "-" in node_id else node_id
+        lines.append(f"    style {short_id} fill:{color}")
+
+    # Add click handlers
+    for node_id in nodes_with_deps:
+        short_id = node_id.split("-")[-1] if "-" in node_id else node_id
+        lines.append(f'    click {short_id} call handleNodeClick("{node_id}")')
+
+    return "\n".join(lines), len(nodes_with_deps), len(edges)
+
+
+@app.get("/partials/depgraph", response_class=HTMLResponse)
+async def depgraph_partial(request: Request) -> HTMLResponse:
+    """Render the dependency graph partial."""
+    # Fetch all beads with blocked_by info
+    success, output = _run_bd_command(["blocked", "--json"])
+    blocked_beads = _parse_beads_json(output) if success else []
+
+    # Also get all beads to have complete status info
+    success, output = _run_bd_command(["list", "--json", "--limit", "0"])
+    all_beads = _parse_beads_json(output) if success else []
+
+    # Merge blocked_by info into all_beads
+    blocked_map = {b["id"]: b.get("blocked_by", []) for b in blocked_beads}
+    for bead in all_beads:
+        bead["blocked_by"] = blocked_map.get(bead["id"], [])
+
+    mermaid_code, node_count, edge_count = _generate_mermaid_graph(all_beads)
+
+    return templates.TemplateResponse(
+        "partials/depgraph.html",
+        {
+            "request": request,
+            "mermaid_code": mermaid_code,
+            "node_count": node_count,
+            "edge_count": edge_count,
+        },
+    )
+
+
 @app.get("/partials/beads/{bead_id}", response_class=HTMLResponse)
 async def bead_detail_partial(request: Request, bead_id: str) -> HTMLResponse:
     """Render the bead detail modal partial."""
