@@ -1,0 +1,238 @@
+{# Modal for displaying full bead details - requires 'bead' variable #}
+<div class="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+    {# Backdrop #}
+    <div class="fixed inset-0 bg-gray-900/80 transition-opacity" aria-hidden="true"></div>
+
+    {# Modal panel #}
+    <div class="flex min-h-full items-center justify-center p-4">
+        <div class="relative transform overflow-hidden rounded-lg bg-gray-800 border border-gray-700 text-left shadow-xl transition-all w-full max-w-2xl">
+            {# Header #}
+            <div class="bg-gray-900 px-6 py-4 border-b border-gray-700">
+                <div class="flex items-start justify-between">
+                    <div class="flex-1 min-w-0">
+                        {# ID and badges row #}
+                        <div class="flex items-center gap-3 mb-2">
+                            <span class="text-sm font-mono text-gray-400">{{ bead.id }}</span>
+
+                            {# Priority badge #}
+                            {% set priority_colors = {
+                                0: 'bg-red-600 text-white',
+                                1: 'bg-orange-500 text-white',
+                                2: 'bg-yellow-500 text-gray-900',
+                                3: 'bg-green-500 text-white',
+                                4: 'bg-gray-500 text-white'
+                            } %}
+                            <span class="px-2 py-0.5 text-xs font-semibold rounded {{ priority_colors.get(bead.priority, 'bg-gray-500 text-white') }}">
+                                P{{ bead.priority }}
+                            </span>
+
+                            {# Status badge #}
+                            {% set status_colors = {
+                                'open': 'bg-blue-900 text-blue-200',
+                                'in_progress': 'bg-yellow-900 text-yellow-200',
+                                'closed': 'bg-green-900 text-green-200'
+                            } %}
+                            <span class="px-2 py-0.5 text-xs font-semibold rounded {{ status_colors.get(bead.status, 'bg-gray-700 text-gray-300') }}">
+                                {{ bead.status.replace('_', ' ').title() }}
+                            </span>
+
+                            {# Issue type #}
+                            {% set type_icons = {
+                                'task': '📋',
+                                'bug': '🐛',
+                                'feature': '✨',
+                                'epic': '🎯'
+                            } %}
+                            <span class="text-xs text-gray-400">
+                                {{ type_icons.get(bead.issue_type, '📋') }} {{ bead.issue_type }}
+                            </span>
+                        </div>
+
+                        {# Title #}
+                        <h3 class="text-lg font-semibold text-gray-100" id="modal-title">
+                            {{ bead.title }}
+                        </h3>
+                    </div>
+
+                    {# Close button #}
+                    <button type="button"
+                            class="ml-4 rounded-md bg-gray-800 text-gray-400 hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-500 p-1"
+                            onclick="document.getElementById('bead-detail-modal').innerHTML = ''">
+                        <span class="sr-only">Close</span>
+                        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            {# Content #}
+            <div class="px-6 py-4 max-h-[60vh] overflow-y-auto">
+                {# Labels #}
+                {% if bead.labels %}
+                <div class="mb-4">
+                    <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Labels</h4>
+                    <div class="flex flex-wrap gap-2">
+                        {% set label_colors = {
+                            'dev': 'bg-blue-900 text-blue-200',
+                            'qa': 'bg-purple-900 text-purple-200',
+                            'architecture': 'bg-indigo-900 text-indigo-200',
+                            'dashboard': 'bg-cyan-900 text-cyan-200',
+                            'docs': 'bg-emerald-900 text-emerald-200',
+                            'epic': 'bg-pink-900 text-pink-200',
+                            'review': 'bg-amber-900 text-amber-200',
+                            'scripts': 'bg-teal-900 text-teal-200',
+                            'bug': 'bg-red-900 text-red-200'
+                        } %}
+                        {% for label in bead.labels %}
+                        <span class="px-2 py-1 text-sm rounded {{ label_colors.get(label, 'bg-gray-700 text-gray-300') }}">
+                            {{ label }}
+                        </span>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                {# Description #}
+                {% if bead.description %}
+                <div class="mb-4">
+                    <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Description</h4>
+                    <div class="prose prose-sm prose-invert max-w-none text-gray-300 bg-gray-900 rounded-lg p-4">
+                        <pre class="whitespace-pre-wrap font-sans text-sm">{{ bead.description }}</pre>
+                    </div>
+                </div>
+                {% endif %}
+
+                {# Metadata grid #}
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    {# Owner/Assignee #}
+                    <div>
+                        <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Assigned To</h4>
+                        {% if bead.owner %}
+                        <span class="text-sm text-primary-400">
+                            {{ bead.owner.split('@')[0] if '@' in bead.owner else bead.owner }}
+                        </span>
+                        {% else %}
+                        <span class="text-sm text-gray-500 italic">Unassigned</span>
+                        {% endif %}
+                    </div>
+
+                    {# Created by #}
+                    <div>
+                        <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Created By</h4>
+                        <span class="text-sm text-gray-300">{{ bead.created_by or 'Unknown' }}</span>
+                    </div>
+
+                    {# Created at #}
+                    <div>
+                        <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Created</h4>
+                        <span class="text-sm text-gray-300">
+                            {{ bead.created_at[:16].replace('T', ' ') if bead.created_at else 'Unknown' }}
+                        </span>
+                    </div>
+
+                    {# Updated at #}
+                    <div>
+                        <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Last Updated</h4>
+                        <span class="text-sm text-gray-300">
+                            {{ bead.updated_at[:16].replace('T', ' ') if bead.updated_at else 'Never' }}
+                        </span>
+                    </div>
+                </div>
+
+                {# Dependencies - what this bead depends on (blockers) #}
+                {% if bead.dependencies %}
+                <div class="mb-4">
+                    <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                        Depends On ({{ bead.dependencies|length }})
+                    </h4>
+                    <div class="space-y-2">
+                        {% for dep in bead.dependencies %}
+                        <div class="flex items-center gap-2 bg-gray-900 rounded-lg p-3 cursor-pointer hover:bg-gray-850 transition-colors"
+                             hx-get="/partials/beads/{{ dep.id }}"
+                             hx-target="#bead-detail-modal"
+                             hx-swap="innerHTML">
+                            {# Status indicator #}
+                            {% if dep.status == 'closed' %}
+                            <span class="text-green-500" title="Completed">✓</span>
+                            {% elif dep.status == 'in_progress' %}
+                            <span class="text-yellow-500" title="In Progress">◐</span>
+                            {% else %}
+                            <span class="text-gray-500" title="Open">○</span>
+                            {% endif %}
+
+                            <span class="text-xs font-mono text-gray-500">{{ dep.id.split('-')[-1][:8] }}</span>
+
+                            <span class="text-sm text-gray-300 flex-1 truncate">{{ dep.title }}</span>
+
+                            {% set dep_priority_colors = {
+                                0: 'text-red-400',
+                                1: 'text-orange-400',
+                                2: 'text-yellow-400',
+                                3: 'text-green-400',
+                                4: 'text-gray-400'
+                            } %}
+                            <span class="text-xs {{ dep_priority_colors.get(dep.priority, 'text-gray-400') }}">
+                                P{{ dep.priority }}
+                            </span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                {# Dependents - what depends on this bead (blocked by this) #}
+                {% if bead.dependents %}
+                <div class="mb-4">
+                    <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                        Blocks ({{ bead.dependents|length }})
+                    </h4>
+                    <div class="space-y-2">
+                        {% for dep in bead.dependents %}
+                        <div class="flex items-center gap-2 bg-gray-900 rounded-lg p-3 cursor-pointer hover:bg-gray-850 transition-colors"
+                             hx-get="/partials/beads/{{ dep.id }}"
+                             hx-target="#bead-detail-modal"
+                             hx-swap="innerHTML">
+                            {# Status indicator #}
+                            {% if dep.status == 'closed' %}
+                            <span class="text-green-500" title="Completed">✓</span>
+                            {% elif dep.status == 'in_progress' %}
+                            <span class="text-yellow-500" title="In Progress">◐</span>
+                            {% else %}
+                            <span class="text-gray-500" title="Open">○</span>
+                            {% endif %}
+
+                            <span class="text-xs font-mono text-gray-500">{{ dep.id.split('-')[-1][:8] }}</span>
+
+                            <span class="text-sm text-gray-300 flex-1 truncate">{{ dep.title }}</span>
+
+                            {% set dep_priority_colors = {
+                                0: 'text-red-400',
+                                1: 'text-orange-400',
+                                2: 'text-yellow-400',
+                                3: 'text-green-400',
+                                4: 'text-gray-400'
+                            } %}
+                            <span class="text-xs {{ dep_priority_colors.get(dep.priority, 'text-gray-400') }}">
+                                P{{ dep.priority }}
+                            </span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            {# Footer with actions (placeholder for future) #}
+            <div class="bg-gray-900 px-6 py-4 border-t border-gray-700">
+                <div class="flex items-center justify-end gap-3">
+                    <button type="button"
+                            class="px-4 py-2 text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded-md transition-colors"
+                            onclick="document.getElementById('bead-detail-modal').innerHTML = ''">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,6 +1,6 @@
 {# Bead card partial - requires 'bead' variable to be passed #}
 <div class="bead-card bg-gray-800 rounded-lg p-4 shadow-md hover:shadow-lg hover:bg-gray-750 transition-all cursor-pointer border border-gray-700"
-     hx-get="/api/beads/{{ bead.id }}"
+     hx-get="/partials/beads/{{ bead.id }}"
      hx-target="#bead-detail-modal"
      hx-swap="innerHTML"
      hx-trigger="click">

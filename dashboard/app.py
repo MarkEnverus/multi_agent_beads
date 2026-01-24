@@ -141,6 +141,53 @@ async def agents_partial(request: Request) -> HTMLResponse:
     )
 
 
+@app.get("/partials/beads/{bead_id}", response_class=HTMLResponse)
+async def bead_detail_partial(request: Request, bead_id: str) -> HTMLResponse:
+    """Render the bead detail modal partial."""
+    success, output = _run_bd_command(["show", bead_id, "--json"])
+
+    if not success:
+        return HTMLResponse(
+            content="""
+            <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/80">
+                <div class="bg-gray-800 rounded-lg p-6 text-center">
+                    <p class="text-red-400 mb-4">Failed to load bead details</p>
+                    <button onclick="document.getElementById('bead-detail-modal').innerHTML = ''"
+                            class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm">
+                        Close
+                    </button>
+                </div>
+            </div>
+            """,
+            status_code=200,
+        )
+
+    beads = _parse_beads_json(output)
+    if not beads:
+        return HTMLResponse(
+            content="""
+            <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/80">
+                <div class="bg-gray-800 rounded-lg p-6 text-center">
+                    <p class="text-gray-400 mb-4">Bead not found</p>
+                    <button onclick="document.getElementById('bead-detail-modal').innerHTML = ''"
+                            class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm">
+                        Close
+                    </button>
+                </div>
+            </div>
+            """,
+            status_code=200,
+        )
+
+    return templates.TemplateResponse(
+        "partials/bead_modal.html",
+        {
+            "request": request,
+            "bead": beads[0],
+        },
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
 
