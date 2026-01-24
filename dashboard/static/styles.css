@@ -1,0 +1,600 @@
+/**
+ * Multi-Agent Beads Dashboard - Custom Styles
+ * Complements Tailwind CSS with dashboard-specific styling
+ */
+
+/* ============================================
+   1. Custom Color Variables (Dark Theme)
+   ============================================ */
+:root {
+    /* Extended gray scale for dark theme */
+    --gray-750: #2d3748;
+    --gray-850: #1a202c;
+
+    /* Priority colors */
+    --priority-p0: #dc2626;  /* red-600 */
+    --priority-p1: #f97316;  /* orange-500 */
+    --priority-p2: #eab308;  /* yellow-500 */
+    --priority-p3: #22c55e;  /* green-500 */
+    --priority-p4: #6b7280;  /* gray-500 */
+
+    /* Status colors */
+    --status-open: #1e3a8a;
+    --status-in-progress: #713f12;
+    --status-closed: #14532d;
+
+    /* Transitions */
+    --transition-fast: 150ms;
+    --transition-normal: 200ms;
+    --transition-slow: 300ms;
+}
+
+/* ============================================
+   2. Bead Card Hover Effects
+   ============================================ */
+.bead-card {
+    transition:
+        transform var(--transition-normal) ease,
+        box-shadow var(--transition-normal) ease,
+        background-color var(--transition-fast) ease,
+        border-color var(--transition-fast) ease;
+}
+
+.bead-card:hover {
+    transform: translateY(-2px);
+    box-shadow:
+        0 10px 15px -3px rgba(0, 0, 0, 0.3),
+        0 4px 6px -2px rgba(0, 0, 0, 0.2);
+    background-color: var(--gray-750);
+    border-color: rgba(99, 102, 241, 0.3); /* primary-500 with opacity */
+}
+
+.bead-card:active {
+    transform: translateY(0);
+    transition-duration: 50ms;
+}
+
+/* Card in dragging state (future drag-drop support) */
+.bead-card.dragging {
+    opacity: 0.7;
+    transform: rotate(2deg) scale(1.02);
+    box-shadow:
+        0 20px 25px -5px rgba(0, 0, 0, 0.4),
+        0 10px 10px -5px rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================
+   3. Priority Badge Styles
+   ============================================ */
+.priority-badge {
+    font-size: 0.625rem;
+    font-weight: 600;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+.priority-badge-p0 {
+    background-color: var(--priority-p0);
+    color: white;
+    animation: pulse-priority 2s ease-in-out infinite;
+}
+
+.priority-badge-p1 {
+    background-color: var(--priority-p1);
+    color: white;
+}
+
+.priority-badge-p2 {
+    background-color: var(--priority-p2);
+    color: #1f2937;
+}
+
+.priority-badge-p3 {
+    background-color: var(--priority-p3);
+    color: white;
+}
+
+.priority-badge-p4 {
+    background-color: var(--priority-p4);
+    color: white;
+}
+
+/* Subtle pulse for P0 critical items */
+@keyframes pulse-priority {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 0 4px rgba(220, 38, 38, 0);
+    }
+}
+
+/* ============================================
+   4. Label Chip Styles
+   ============================================ */
+.label-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    transition:
+        filter var(--transition-fast) ease,
+        transform var(--transition-fast) ease;
+}
+
+.label-chip:hover {
+    filter: brightness(1.1);
+    transform: scale(1.05);
+}
+
+/* Label colors matching template definitions */
+.label-dev { background-color: #1e3a8a; color: #bfdbfe; }
+.label-qa { background-color: #581c87; color: #e9d5ff; }
+.label-architecture { background-color: #312e81; color: #c7d2fe; }
+.label-dashboard { background-color: #164e63; color: #a5f3fc; }
+.label-docs { background-color: #064e3b; color: #a7f3d0; }
+.label-epic { background-color: #831843; color: #fbcfe8; }
+.label-review { background-color: #78350f; color: #fde68a; }
+.label-scripts { background-color: #134e4a; color: #99f6e4; }
+.label-bug { background-color: #7f1d1d; color: #fecaca; }
+
+/* ============================================
+   5. Log Entry Formatting
+   ============================================ */
+.log-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    transition: background-color var(--transition-fast) ease;
+}
+
+.log-entry:hover {
+    background-color: rgba(55, 65, 81, 0.5);
+}
+
+/* Log entry timestamp */
+.log-entry-timestamp {
+    color: #6b7280;
+    flex-shrink: 0;
+    min-width: 5rem;
+}
+
+/* Log entry PID */
+.log-entry-pid {
+    color: #4b5563;
+    flex-shrink: 0;
+    width: 3.5rem;
+}
+
+/* Log entry event types */
+.log-event-session-start,
+.log-event-session-end,
+.log-event-tests-passed,
+.log-event-pr-merged {
+    color: #4ade80; /* green-400 */
+}
+
+.log-event-claim,
+.log-event-read,
+.log-event-work-start {
+    color: #60a5fa; /* blue-400 */
+}
+
+.log-event-close,
+.log-event-bead-create {
+    color: #c084fc; /* purple-400 */
+}
+
+.log-event-tests,
+.log-event-ci {
+    color: #22d3ee; /* cyan-400 */
+}
+
+.log-event-tests-failed,
+.log-event-error {
+    color: #f87171; /* red-400 */
+}
+
+.log-event-blocked,
+.log-event-no-work {
+    color: #fb923c; /* orange-400 */
+}
+
+.log-event-pr-create,
+.log-event-pr-created {
+    color: #818cf8; /* indigo-400 */
+}
+
+/* Log entry message */
+.log-entry-message {
+    color: #d1d5db;
+    flex: 1;
+    word-break: break-word;
+}
+
+/* Role badges in log entries */
+.log-role-badge {
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-size: 0.625rem;
+    font-weight: 500;
+    flex-shrink: 0;
+}
+
+.log-role-developer { background-color: #14532d; color: #86efac; }
+.log-role-qa { background-color: #1e3a8a; color: #93c5fd; }
+.log-role-tech-lead { background-color: #713f12; color: #fde047; }
+.log-role-manager { background-color: #581c87; color: #d8b4fe; }
+.log-role-reviewer { background-color: #164e63; color: #67e8f9; }
+
+/* ============================================
+   6. Modal Styling
+   ============================================ */
+/* Modal backdrop */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(17, 24, 39, 0.85);
+    backdrop-filter: blur(4px);
+    transition: opacity var(--transition-normal) ease;
+}
+
+/* Modal container animations */
+.modal-container {
+    animation: modal-enter var(--transition-slow) ease-out;
+}
+
+@keyframes modal-enter {
+    from {
+        opacity: 0;
+        transform: scale(0.95) translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* Modal panel */
+.modal-panel {
+    background-color: #1f2937;
+    border: 1px solid #374151;
+    border-radius: 0.5rem;
+    box-shadow:
+        0 25px 50px -12px rgba(0, 0, 0, 0.5),
+        0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* Modal header */
+.modal-header {
+    background-color: #111827;
+    border-bottom: 1px solid #374151;
+    padding: 1rem 1.5rem;
+}
+
+/* Modal close button */
+.modal-close-btn {
+    color: #9ca3af;
+    padding: 0.25rem;
+    border-radius: 0.375rem;
+    transition:
+        color var(--transition-fast) ease,
+        background-color var(--transition-fast) ease;
+}
+
+.modal-close-btn:hover {
+    color: #e5e7eb;
+    background-color: rgba(75, 85, 99, 0.3);
+}
+
+/* Modal content scrollable area */
+.modal-content {
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 1rem 1.5rem;
+}
+
+/* Modal footer */
+.modal-footer {
+    background-color: #111827;
+    border-top: 1px solid #374151;
+    padding: 1rem 1.5rem;
+}
+
+/* ============================================
+   7. Scrollbar Styling (Dark Theme)
+   ============================================ */
+/* Webkit browsers (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1f2937;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #4b5563;
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #6b7280;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+    background: #9ca3af;
+}
+
+/* Scrollbar corner */
+::-webkit-scrollbar-corner {
+    background: #1f2937;
+}
+
+/* Firefox */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #4b5563 #1f2937;
+}
+
+/* ============================================
+   8. Kanban Column Styles
+   ============================================ */
+.kanban-column {
+    background-color: var(--gray-850);
+    border: 1px solid #374151;
+    border-radius: 0.5rem;
+    min-height: 400px;
+    transition: border-color var(--transition-fast) ease;
+}
+
+.kanban-column:hover {
+    border-color: #4b5563;
+}
+
+/* Column header indicator dots */
+.kanban-indicator-ready { background-color: #3b82f6; }
+.kanban-indicator-in-progress { background-color: #eab308; }
+.kanban-indicator-done { background-color: #22c55e; }
+
+/* Empty state styling */
+.kanban-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 8rem;
+    color: #6b7280;
+    font-size: 0.875rem;
+    font-style: italic;
+}
+
+/* ============================================
+   9. Stats Card Styles
+   ============================================ */
+.stats-card {
+    background-color: #1f2937;
+    border: 1px solid #374151;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    transition:
+        border-color var(--transition-fast) ease,
+        transform var(--transition-fast) ease;
+}
+
+.stats-card:hover {
+    border-color: #4b5563;
+    transform: translateY(-1px);
+}
+
+.stats-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: white;
+}
+
+.stats-label {
+    font-size: 0.875rem;
+    color: #9ca3af;
+}
+
+/* ============================================
+   10. Agent Sidebar Styles
+   ============================================ */
+.agent-card {
+    background-color: #374151;
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    transition:
+        background-color var(--transition-fast) ease,
+        transform var(--transition-fast) ease;
+}
+
+.agent-card:hover {
+    background-color: #4b5563;
+    transform: translateX(2px);
+}
+
+/* Agent status indicators */
+.agent-status-active {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background-color: #22c55e;
+    animation: pulse-status 2s ease-in-out infinite;
+}
+
+.agent-status-idle {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background-color: #6b7280;
+}
+
+@keyframes pulse-status {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 0 4px rgba(34, 197, 94, 0);
+    }
+}
+
+/* ============================================
+   11. Connection Status Indicator
+   ============================================ */
+.connection-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.connection-dot {
+    position: relative;
+    width: 0.75rem;
+    height: 0.75rem;
+}
+
+.connection-dot-ping {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.connection-dot-solid {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+}
+
+.connection-connected .connection-dot-ping,
+.connection-connected .connection-dot-solid {
+    background-color: #22c55e;
+}
+
+.connection-disconnected .connection-dot-ping,
+.connection-disconnected .connection-dot-solid {
+    background-color: #ef4444;
+}
+
+@keyframes ping {
+    75%, 100% {
+        transform: scale(2);
+        opacity: 0;
+    }
+}
+
+/* ============================================
+   12. HTMX States
+   ============================================ */
+.htmx-indicator {
+    opacity: 0;
+    transition: opacity var(--transition-normal) ease-in;
+}
+
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+    opacity: 1;
+}
+
+/* Loading skeleton */
+.htmx-swapping > *,
+.htmx-settling > * {
+    opacity: 0.5;
+    transition: opacity var(--transition-fast) ease;
+}
+
+/* ============================================
+   13. Utility Classes
+   ============================================ */
+/* Custom background colors */
+.bg-gray-750 { background-color: var(--gray-750); }
+.bg-gray-850 { background-color: var(--gray-850); }
+
+/* Hover variants */
+.hover\:bg-gray-750:hover { background-color: var(--gray-750); }
+.hover\:bg-gray-850:hover { background-color: var(--gray-850); }
+
+/* Focus ring for accessibility */
+.focus-ring:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #1f2937, 0 0 0 4px #0ea5e9;
+}
+
+/* Line clamp utilities */
+.line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Text truncation */
+.truncate-fade {
+    position: relative;
+    overflow: hidden;
+}
+
+.truncate-fade::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 2rem;
+    background: linear-gradient(to right, transparent, #1f2937);
+}
+
+/* ============================================
+   14. Responsive Adjustments
+   ============================================ */
+@media (max-width: 768px) {
+    .bead-card:hover {
+        transform: none;
+    }
+
+    .log-entry {
+        flex-wrap: wrap;
+    }
+
+    .log-entry-timestamp,
+    .log-entry-pid {
+        min-width: auto;
+        width: auto;
+    }
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
