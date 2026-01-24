@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from dashboard.config import CORS_ORIGINS, STATIC_DIR, TEMPLATES_DIR
 from dashboard.routes.agents import router as agents_router
 from dashboard.routes.beads import router as beads_router
+from dashboard.routes.logs import router as logs_router
 
 # Create FastAPI application
 app = FastAPI(
@@ -35,6 +36,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # Include API routers
 app.include_router(agents_router)
 app.include_router(beads_router)
+app.include_router(logs_router)
 
 
 @app.get("/health")
