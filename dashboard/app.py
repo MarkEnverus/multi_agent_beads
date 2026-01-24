@@ -1,6 +1,8 @@
 """Multi-Agent Dashboard - FastAPI application."""
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -9,7 +11,15 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from dashboard.config import CORS_ORIGINS, STATIC_DIR, TEMPLATES_DIR
+from dashboard.config import (
+    CORS_ORIGINS,
+    HOST,
+    LOG_LEVEL_STR,
+    PORT,
+    STATIC_DIR,
+    TEMPLATES_DIR,
+    setup_logging,
+)
 from dashboard.exceptions import (
     BeadError,
     BeadNotFoundError,
@@ -22,18 +32,33 @@ from dashboard.routes.beads import router as beads_router
 from dashboard.routes.logs import router as logs_router
 from dashboard.services import BeadService
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Configure logging using centralized setup
+setup_logging()
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Lifespan context manager for startup and shutdown logging."""
+    # Startup
+    logger.info(
+        "Dashboard starting: host=%s, port=%d, log_level=%s",
+        HOST,
+        PORT,
+        LOG_LEVEL_STR,
+    )
+    logger.info("Routers registered: /api/agents, /api/beads, /api/logs")
+    yield
+    # Shutdown
+    logger.info("Dashboard shutting down")
+
 
 # Create FastAPI application
 app = FastAPI(
     title="Multi-Agent Dashboard",
     description="Real-time dashboard for multi-agent SDLC orchestration",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 
@@ -343,7 +368,5 @@ async def bead_detail_partial(request: Request, bead_id: str) -> HTMLResponse:
 
 if __name__ == "__main__":
     import uvicorn
-
-    from dashboard.config import HOST, PORT
 
     uvicorn.run("dashboard.app:app", host=HOST, port=PORT, reload=True)
