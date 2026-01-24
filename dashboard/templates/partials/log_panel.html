@@ -1,0 +1,319 @@
+{# Live log viewer panel - displays streaming logs with filtering #}
+{# Connects to /api/logs/stream SSE endpoint #}
+
+<div id="log-panel-container" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+    {# Header - Collapsible toggle and controls #}
+    <div class="flex items-center justify-between px-4 py-3 bg-gray-750 border-b border-gray-700 cursor-pointer"
+         onclick="toggleLogPanel()"
+         style="background-color: #2d3748;">
+        <div class="flex items-center space-x-3">
+            {# Expand/Collapse indicator #}
+            <svg id="log-panel-chevron" class="h-5 w-5 text-gray-400 transform transition-transform duration-200"
+                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+            <h3 class="text-sm font-semibold text-gray-200">Live Logs</h3>
+            <span id="log-count" class="px-2 py-0.5 text-xs font-medium bg-gray-700 text-gray-300 rounded-full">0</span>
+            {# Connection status #}
+            <span id="log-connection-status" class="flex items-center space-x-1">
+                <span class="relative flex h-2 w-2">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                <span class="text-xs text-gray-500">Connected</span>
+            </span>
+        </div>
+
+        {# Controls (stop propagation to prevent collapse on click) #}
+        <div class="flex items-center space-x-3" onclick="event.stopPropagation()">
+            {# Role filter #}
+            <select id="log-role-filter" class="text-xs bg-gray-700 text-gray-300 rounded px-2 py-1 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    onchange="updateLogFilters()">
+                <option value="">All Roles</option>
+                <option value="developer">Developer</option>
+                <option value="qa">QA</option>
+                <option value="tech_lead">Tech Lead</option>
+                <option value="manager">Manager</option>
+                <option value="reviewer">Reviewer</option>
+            </select>
+
+            {# Bead ID filter #}
+            <input id="log-bead-filter" type="text" placeholder="Filter by bead ID..."
+                   class="text-xs bg-gray-700 text-gray-300 rounded px-2 py-1 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-primary-500 w-40"
+                   oninput="updateLogFilters()">
+
+            {# Auto-scroll toggle #}
+            <label class="flex items-center space-x-1 text-xs text-gray-400 cursor-pointer">
+                <input id="log-autoscroll" type="checkbox" checked
+                       class="rounded bg-gray-700 border-gray-600 text-primary-500 focus:ring-primary-500 focus:ring-offset-gray-800">
+                <span>Auto-scroll</span>
+            </label>
+
+            {# Clear button #}
+            <button onclick="clearLogs()" class="text-xs text-gray-400 hover:text-gray-200 px-2 py-1 rounded hover:bg-gray-700">
+                Clear
+            </button>
+        </div>
+    </div>
+
+    {# Log entries container #}
+    <div id="log-panel-body" class="transition-all duration-300 ease-in-out" style="height: 300px;">
+        <div id="log-entries" class="h-full overflow-y-auto font-mono text-xs p-3 space-y-1 bg-gray-900">
+            {# Log entries will be appended here via JavaScript #}
+            <div id="log-placeholder" class="text-gray-500 text-center py-8">
+                Waiting for log entries...
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    // Configuration
+    const MAX_ENTRIES = 100;
+    const RECONNECT_DELAY = 3000;
+
+    // State
+    let eventSource = null;
+    let isExpanded = true;
+    let entries = [];
+    let filters = { role: '', beadId: '' };
+
+    // DOM elements
+    const logEntries = document.getElementById('log-entries');
+    const logCount = document.getElementById('log-count');
+    const logPlaceholder = document.getElementById('log-placeholder');
+    const logPanelBody = document.getElementById('log-panel-body');
+    const logPanelChevron = document.getElementById('log-panel-chevron');
+    const connectionStatus = document.getElementById('log-connection-status');
+
+    // Event type color mapping
+    const eventColors = {
+        'SESSION_START': 'text-green-400',
+        'SESSION_END': 'text-green-400',
+        'CLAIM': 'text-blue-400',
+        'READ': 'text-blue-300',
+        'WORK_START': 'text-blue-300',
+        'CLOSE': 'text-purple-400',
+        'TESTS': 'text-cyan-400',
+        'TESTS_PASSED': 'text-green-400',
+        'TESTS_FAILED': 'text-red-400',
+        'ERROR': 'text-red-500',
+        'BLOCKED': 'text-orange-400',
+        'BEAD_CREATE': 'text-purple-300',
+        'PR_CREATE': 'text-indigo-400',
+        'PR_CREATED': 'text-indigo-400',
+        'PR_MERGED': 'text-green-400',
+        'CI': 'text-cyan-400',
+        'NO_WORK': 'text-yellow-400'
+    };
+
+    // Role badge colors
+    const roleColors = {
+        'developer': 'bg-green-900 text-green-300',
+        'qa': 'bg-blue-900 text-blue-300',
+        'tech_lead': 'bg-yellow-900 text-yellow-300',
+        'manager': 'bg-purple-900 text-purple-300',
+        'reviewer': 'bg-cyan-900 text-cyan-300'
+    };
+
+    // Initialize SSE connection
+    function connect() {
+        let url = '/api/logs/stream';
+        const params = new URLSearchParams();
+        if (filters.role) params.set('role', filters.role);
+        if (filters.beadId) params.set('bead_id', filters.beadId);
+        if (params.toString()) url += '?' + params.toString();
+
+        eventSource = new EventSource(url);
+
+        eventSource.onopen = function() {
+            updateConnectionStatus(true);
+        };
+
+        eventSource.onmessage = function(event) {
+            try {
+                const entry = JSON.parse(event.data);
+                addLogEntry(entry);
+            } catch (e) {
+                console.error('Failed to parse log entry:', e);
+            }
+        };
+
+        eventSource.onerror = function() {
+            updateConnectionStatus(false);
+            eventSource.close();
+            // Attempt reconnect
+            setTimeout(connect, RECONNECT_DELAY);
+        };
+    }
+
+    // Update connection status indicator
+    function updateConnectionStatus(connected) {
+        const pingSpan = connectionStatus.querySelector('.animate-ping');
+        const dotSpan = connectionStatus.querySelector('.relative.inline-flex');
+        const textSpan = connectionStatus.querySelector('span:last-child');
+
+        if (connected) {
+            pingSpan.classList.remove('bg-red-400');
+            pingSpan.classList.add('bg-green-400');
+            dotSpan.classList.remove('bg-red-500');
+            dotSpan.classList.add('bg-green-500');
+            textSpan.textContent = 'Connected';
+        } else {
+            pingSpan.classList.remove('bg-green-400');
+            pingSpan.classList.add('bg-red-400');
+            dotSpan.classList.remove('bg-green-500');
+            dotSpan.classList.add('bg-red-500');
+            textSpan.textContent = 'Reconnecting...';
+        }
+    }
+
+    // Add a log entry to the display
+    function addLogEntry(entry) {
+        // Hide placeholder
+        if (logPlaceholder) {
+            logPlaceholder.style.display = 'none';
+        }
+
+        // Store entry
+        entries.push(entry);
+
+        // Trim to max entries
+        while (entries.length > MAX_ENTRIES) {
+            entries.shift();
+            const firstChild = logEntries.querySelector('.log-entry');
+            if (firstChild) firstChild.remove();
+        }
+
+        // Create entry element
+        const entryEl = createEntryElement(entry);
+        logEntries.appendChild(entryEl);
+
+        // Update count
+        logCount.textContent = entries.length;
+
+        // Auto-scroll if enabled
+        const autoScroll = document.getElementById('log-autoscroll');
+        if (autoScroll && autoScroll.checked) {
+            logEntries.scrollTop = logEntries.scrollHeight;
+        }
+    }
+
+    // Create DOM element for a log entry
+    function createEntryElement(entry) {
+        const div = document.createElement('div');
+        div.className = 'log-entry flex items-start space-x-2 py-1 px-2 rounded hover:bg-gray-800 transition-colors';
+
+        // Timestamp
+        const timestamp = document.createElement('span');
+        timestamp.className = 'text-gray-500 flex-shrink-0';
+        timestamp.textContent = entry.timestamp.split(' ')[1] || entry.timestamp; // Just time portion
+        div.appendChild(timestamp);
+
+        // PID
+        const pid = document.createElement('span');
+        pid.className = 'text-gray-600 flex-shrink-0 w-12';
+        pid.textContent = '[' + entry.pid + ']';
+        div.appendChild(pid);
+
+        // Event type with color
+        const eventColor = eventColors[entry.event] || 'text-gray-400';
+        const event = document.createElement('span');
+        event.className = eventColor + ' font-semibold flex-shrink-0 w-28';
+        event.textContent = entry.event;
+        div.appendChild(event);
+
+        // Message/details
+        if (entry.message) {
+            const message = document.createElement('span');
+            message.className = 'text-gray-300 flex-1 break-all';
+            message.textContent = entry.message;
+            div.appendChild(message);
+        }
+
+        // Role badge (if present)
+        if (entry.role) {
+            const roleColor = roleColors[entry.role] || 'bg-gray-700 text-gray-400';
+            const role = document.createElement('span');
+            role.className = 'px-1.5 py-0.5 rounded text-xs flex-shrink-0 ' + roleColor;
+            role.textContent = entry.role.replace('_', ' ');
+            div.appendChild(role);
+        }
+
+        return div;
+    }
+
+    // Toggle panel expand/collapse
+    window.toggleLogPanel = function() {
+        isExpanded = !isExpanded;
+        if (isExpanded) {
+            logPanelBody.style.height = '300px';
+            logPanelChevron.style.transform = 'rotate(0deg)';
+        } else {
+            logPanelBody.style.height = '0px';
+            logPanelChevron.style.transform = 'rotate(-90deg)';
+        }
+    };
+
+    // Update filters and reconnect
+    window.updateLogFilters = function() {
+        const roleFilter = document.getElementById('log-role-filter');
+        const beadFilter = document.getElementById('log-bead-filter');
+
+        filters.role = roleFilter ? roleFilter.value : '';
+        filters.beadId = beadFilter ? beadFilter.value.trim() : '';
+
+        // Clear current entries
+        clearLogs();
+
+        // Reconnect with new filters
+        if (eventSource) {
+            eventSource.close();
+        }
+        connect();
+    };
+
+    // Clear all log entries
+    window.clearLogs = function() {
+        entries = [];
+        logEntries.innerHTML = '';
+        logCount.textContent = '0';
+
+        // Show placeholder
+        const placeholder = document.createElement('div');
+        placeholder.id = 'log-placeholder';
+        placeholder.className = 'text-gray-500 text-center py-8';
+        placeholder.textContent = 'Waiting for log entries...';
+        logEntries.appendChild(placeholder);
+    };
+
+    // Load recent logs on init
+    async function loadRecentLogs() {
+        try {
+            let url = '/api/logs/recent?limit=50';
+            if (filters.role) url += '&role=' + encodeURIComponent(filters.role);
+            if (filters.beadId) url += '&bead_id=' + encodeURIComponent(filters.beadId);
+
+            const response = await fetch(url);
+            if (response.ok) {
+                const logs = await response.json();
+                // Add in reverse order (oldest first) since API returns newest first
+                logs.reverse().forEach(entry => addLogEntry(entry));
+            }
+        } catch (e) {
+            console.error('Failed to load recent logs:', e);
+        }
+    }
+
+    // Initialize
+    loadRecentLogs().then(() => connect());
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', function() {
+        if (eventSource) {
+            eventSource.close();
+        }
+    });
+})();
+</script>
