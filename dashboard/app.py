@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from dashboard.config import CORS_ORIGINS, STATIC_DIR, TEMPLATES_DIR
+from dashboard.routes.agents import _get_active_agents
 from dashboard.routes.agents import router as agents_router
 from dashboard.routes.beads import router as beads_router
 from dashboard.routes.logs import router as logs_router
@@ -122,6 +123,20 @@ async def kanban_partial(request: Request) -> HTMLResponse:
             "in_progress_beads": in_progress_beads,
             "done_beads": done_beads,
             "total_count": total_count,
+        },
+    )
+
+
+@app.get("/partials/agents", response_class=HTMLResponse)
+async def agents_partial(request: Request) -> HTMLResponse:
+    """Render the agent sidebar partial with current agent data."""
+    agents = _get_active_agents()
+
+    return templates.TemplateResponse(
+        "partials/agent_sidebar.html",
+        {
+            "request": request,
+            "agents": agents,
         },
     )
 

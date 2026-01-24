@@ -1,0 +1,111 @@
+{# Agent sidebar partial - displays active agents with status #}
+{# Requires 'agents' list to be passed from the endpoint #}
+
+<div class="agent-sidebar bg-gray-800 rounded-lg border border-gray-700 p-4">
+    <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold text-gray-100">Active Agents</h2>
+        <span class="text-xs text-gray-500">{{ agents|length }} online</span>
+    </div>
+
+    {% if not agents %}
+    <div class="text-center py-8">
+        <svg class="mx-auto h-12 w-12 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+        </svg>
+        <p class="mt-2 text-sm text-gray-500">No active agents</p>
+    </div>
+    {% else %}
+    <div class="space-y-3">
+        {% for agent in agents %}
+        {# Role color mapping #}
+        {% set role_colors = {
+            'developer': {'bg': 'bg-green-900', 'text': 'text-green-300', 'border': 'border-green-600', 'dot': 'bg-green-500'},
+            'qa': {'bg': 'bg-blue-900', 'text': 'text-blue-300', 'border': 'border-blue-600', 'dot': 'bg-blue-500'},
+            'tech_lead': {'bg': 'bg-yellow-900', 'text': 'text-yellow-300', 'border': 'border-yellow-600', 'dot': 'bg-yellow-500'},
+            'manager': {'bg': 'bg-purple-900', 'text': 'text-purple-300', 'border': 'border-purple-600', 'dot': 'bg-purple-500'},
+            'reviewer': {'bg': 'bg-cyan-900', 'text': 'text-cyan-300', 'border': 'border-cyan-600', 'dot': 'bg-cyan-500'},
+            'unknown': {'bg': 'bg-gray-800', 'text': 'text-gray-300', 'border': 'border-gray-600', 'dot': 'bg-gray-500'}
+        } %}
+        {% set colors = role_colors.get(agent.role, role_colors.unknown) %}
+
+        {# Role icons #}
+        {% set role_icons = {
+            'developer': '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />',
+            'qa': '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />',
+            'tech_lead': '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />',
+            'manager': '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />',
+            'reviewer': '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />',
+            'unknown': '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />'
+        } %}
+        {% set role_icon = role_icons.get(agent.role, role_icons.unknown) %}
+
+        {# Status indicators #}
+        {% set status_styles = {
+            'working': {'animation': 'animate-pulse', 'label': 'Working'},
+            'idle': {'animation': '', 'label': 'Idle'},
+            'blocked': {'animation': 'animate-ping', 'label': 'Blocked'}
+        } %}
+        {% set status_style = status_styles.get(agent.status, status_styles.idle) %}
+
+        <div class="agent-card {{ colors.bg }} rounded-lg p-3 border {{ colors.border }} hover:opacity-90 transition-opacity">
+            {# Header: Role badge and instance #}
+            <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center space-x-2">
+                    {# Role icon #}
+                    <svg class="h-5 w-5 {{ colors.text }}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        {{ role_icon|safe }}
+                    </svg>
+                    {# Role name and instance #}
+                    <span class="text-sm font-medium {{ colors.text }}">
+                        {{ agent.role|replace('_', ' ')|title }}
+                        {% if agent.instance > 1 %}
+                        <span class="text-xs opacity-75">#{{ agent.instance }}</span>
+                        {% endif %}
+                    </span>
+                </div>
+
+                {# Status indicator #}
+                <div class="flex items-center space-x-1">
+                    <span class="relative flex h-2.5 w-2.5">
+                        {% if agent.status == 'working' %}
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full {{ colors.dot }} opacity-75"></span>
+                        {% endif %}
+                        <span class="relative inline-flex rounded-full h-2.5 w-2.5 {{ colors.dot }}"></span>
+                    </span>
+                    <span class="text-xs {{ colors.text }} opacity-75">{{ status_style.label }}</span>
+                </div>
+            </div>
+
+            {# Current bead (if working) #}
+            {% if agent.current_bead %}
+            <div class="mt-2">
+                <a href="#"
+                   class="block text-xs {{ colors.text }} hover:underline truncate"
+                   title="{{ agent.current_bead_title or agent.current_bead }}"
+                   hx-get="/api/beads/{{ agent.current_bead }}"
+                   hx-target="#bead-detail-modal"
+                   hx-swap="innerHTML">
+                    <span class="font-mono opacity-75">{{ agent.current_bead.split('-')[-1][:8] }}</span>
+                    {% if agent.current_bead_title %}
+                    <span class="ml-1">{{ agent.current_bead_title|truncate(30) }}</span>
+                    {% endif %}
+                </a>
+            </div>
+            {% else %}
+            <div class="mt-2">
+                <span class="text-xs text-gray-500 italic">No bead claimed</span>
+            </div>
+            {% endif %}
+
+            {# Last activity / time on bead #}
+            <div class="mt-2 flex items-center justify-between">
+                <span class="text-xs text-gray-500" title="Last activity: {{ agent.last_activity }}">
+                    {{ agent.last_activity[:16] if agent.last_activity else 'Unknown' }}
+                </span>
+                <span class="text-xs font-mono text-gray-600">PID {{ agent.pid }}</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
