@@ -7,6 +7,8 @@ and the background daemon, including:
 - Request/response pattern with timeouts
 - Connection pooling for performance
 - Error handling for daemon not running
+
+The RPC layer connects to the global daemon at ~/.mab/mab.sock by default.
 """
 
 import asyncio
@@ -19,6 +21,9 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
 from typing import Any, Callable, Coroutine
+
+# Global daemon location - one daemon per user manages all towns/projects
+MAB_HOME = Path.home() / ".mab"
 
 
 class RPCErrorCode(IntEnum):
@@ -173,6 +178,8 @@ RPCHandler = Callable[[dict[str, Any]], Coroutine[Any, Any, Any]]
 class RPCClient:
     """Client for making RPC calls to the daemon.
 
+    Connects to the global daemon at ~/.mab/mab.sock by default.
+
     Usage:
         client = RPCClient()
 
@@ -189,9 +196,9 @@ class RPCClient:
         """Initialize RPC client.
 
         Args:
-            mab_dir: Path to .mab directory. Defaults to .mab in current dir.
+            mab_dir: Path to global .mab directory. Defaults to ~/.mab/.
         """
-        self.mab_dir = mab_dir or Path(".mab")
+        self.mab_dir = mab_dir or MAB_HOME
         self.socket_path = self.mab_dir / "mab.sock"
         self._connection_pool: list[socket.socket] = []
         self._pool_size = 3
@@ -400,7 +407,7 @@ class RPCServer:
     """Async RPC server for handling daemon requests.
 
     The server runs as part of the daemon's asyncio event loop and handles
-    incoming requests on a Unix socket.
+    incoming requests on the global Unix socket at ~/.mab/mab.sock.
 
     Usage:
         server = RPCServer()
@@ -420,9 +427,9 @@ class RPCServer:
         """Initialize RPC server.
 
         Args:
-            mab_dir: Path to .mab directory. Defaults to .mab in current dir.
+            mab_dir: Path to global .mab directory. Defaults to ~/.mab/.
         """
-        self.mab_dir = mab_dir or Path(".mab")
+        self.mab_dir = mab_dir or MAB_HOME
         self.socket_path = self.mab_dir / "mab.sock"
         self._handlers: dict[str, RPCHandler] = {}
         self._server: asyncio.Server | None = None
@@ -664,9 +671,11 @@ class RPCServer:
 
 
 def get_default_client() -> RPCClient:
-    """Get an RPC client with default configuration.
+    """Get an RPC client with default global configuration.
+
+    Connects to the global daemon at ~/.mab/mab.sock.
 
     Returns:
-        RPCClient configured for current directory.
+        RPCClient configured with global ~/.mab/ location.
     """
-    return RPCClient()
+    return RPCClient(mab_dir=MAB_HOME)

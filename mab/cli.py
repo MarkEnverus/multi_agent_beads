@@ -1,11 +1,17 @@
 """MAB CLI - Multi-Agent Beads command-line interface.
 
 A tool for orchestrating concurrent agent workflows in software development.
+
+The CLI connects to the global daemon at ~/.mab/ regardless of current directory.
+Per-project configuration can be stored in <project>/.mab/config.yaml.
 """
+
+from pathlib import Path
 
 import click
 
 from mab.daemon import (
+    MAB_HOME,
     Daemon,
     DaemonAlreadyRunningError,
     DaemonNotRunningError,
@@ -23,9 +29,16 @@ def cli(ctx: click.Context) -> None:
 
     MAB coordinates Developer, QA, Tech Lead, Manager, and Code Reviewer
     agents working concurrently on shared codebases with proper task handoffs.
+
+    The daemon runs globally at ~/.mab/ and manages workers across all projects.
+    Per-project configuration can be stored in <project>/.mab/config.yaml.
     """
     ctx.ensure_object(dict)
-    ctx.obj["daemon"] = Daemon()
+    # Always use global daemon at ~/.mab/
+    # Optionally detect current project for per-project features
+    town_path = Path.cwd()
+    ctx.obj["daemon"] = Daemon(mab_dir=MAB_HOME, town_path=town_path)
+    ctx.obj["town_path"] = town_path
 
 
 @cli.command()

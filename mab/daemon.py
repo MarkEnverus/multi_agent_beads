@@ -8,6 +8,11 @@ worker agents, including:
 - Start/stop/status functionality
 - File-based logging
 - RPC server for CLI communication
+
+The daemon uses a hybrid global/local architecture:
+- Global daemon state at ~/.mab/ (daemon.pid, mab.sock, workers.db)
+- Per-project config at <project>/.mab/config.yaml
+- Per-project worker logs at <project>/.mab/logs/
 """
 
 import asyncio
@@ -25,6 +30,9 @@ from pathlib import Path
 from typing import Any
 
 from mab.rpc import RPCError, RPCErrorCode, RPCServer
+
+# Global daemon location - one daemon per user manages all towns/projects
+MAB_HOME = Path.home() / ".mab"
 
 
 class DaemonState(str, Enum):
@@ -83,26 +91,52 @@ class Daemon:
     - Health checks and auto-restart
     - Graceful shutdown coordination
 
-    File layout:
-        .mab/
-        ├── daemon.pid        # Daemon process ID
-        ├── daemon.lock       # Exclusive lock (flock)
-        ├── daemon.log        # Daemon structured logs
-        ├── mab.sock          # Unix socket for RPC (future)
-        └── workers.db        # SQLite state database (future)
+    File layout (hybrid global/local):
+        ~/.mab/                   # GLOBAL daemon home (one per user)
+        ├── daemon.pid            # Daemon process ID
+        ├── daemon.lock           # Exclusive lock (flock)
+        ├── daemon.log            # Daemon structured logs
+        ├── mab.sock              # Unix socket for RPC
+        ├── workers.db            # SQLite state (ALL workers)
+        └── config.yaml           # Global defaults
+
+        <project>/.mab/           # PER-PROJECT town config
+        ├── config.yaml           # Town-specific overrides
+        ├── logs/                 # Worker logs for this town
+        └── heartbeat/            # Heartbeat files for workers
     """
 
-    def __init__(self, mab_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        mab_dir: Path | None = None,
+        town_path: Path | None = None,
+    ) -> None:
         """Initialize daemon with configuration.
 
         Args:
-            mab_dir: Path to .mab directory. Defaults to .mab in current dir.
+            mab_dir: Path to global .mab directory. Defaults to ~/.mab/.
+            town_path: Path to project directory for per-project config/logs.
+                      If not specified, some per-project features won't work.
         """
-        self.mab_dir = mab_dir or Path(".mab")
+        # Global daemon state lives at ~/.mab/ by default
+        self.mab_dir = mab_dir or MAB_HOME
         self.pid_file = self.mab_dir / "daemon.pid"
         self.lock_file = self.mab_dir / "daemon.lock"
         self.log_file = self.mab_dir / "daemon.log"
         self.socket_path = self.mab_dir / "mab.sock"
+
+        # Per-project state (optional)
+        self.town_path: Path | None = town_path
+        self.town_mab_dir: Path | None = None
+        self.town_logs_dir: Path | None = None
+        self.town_heartbeat_dir: Path | None = None
+        self.town_config_file: Path | None = None
+
+        if town_path:
+            self.town_mab_dir = town_path / ".mab"
+            self.town_logs_dir = self.town_mab_dir / "logs"
+            self.town_heartbeat_dir = self.town_mab_dir / "heartbeat"
+            self.town_config_file = self.town_mab_dir / "config.yaml"
 
         self._lock_fd: int | None = None
         self._shutting_down = False
@@ -583,13 +617,21 @@ class Daemon:
         self.start(foreground=foreground)
 
 
-def get_default_daemon() -> Daemon:
-    """Get a Daemon instance with default configuration.
+def get_default_daemon(town_path: Path | None = None) -> Daemon:
+    """Get a Daemon instance with default global configuration.
+
+    The daemon always uses ~/.mab/ for global state. Optionally,
+    a town_path can be specified for per-project config and logs.
+
+    Args:
+        town_path: Optional project directory for per-project state.
+                   Defaults to current working directory if you need
+                   project-specific features.
 
     Returns:
-        Daemon configured for current directory.
+        Daemon configured with global ~/.mab/ location.
     """
-    return Daemon()
+    return Daemon(mab_dir=MAB_HOME, town_path=town_path)
 
 
 def status_to_json(status: DaemonStatus) -> str:

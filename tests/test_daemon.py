@@ -7,11 +7,13 @@ from pathlib import Path
 import pytest
 
 from mab.daemon import (
+    MAB_HOME,
     Daemon,
     DaemonAlreadyRunningError,
     DaemonNotRunningError,
     DaemonState,
     DaemonStatus,
+    get_default_daemon,
     status_to_json,
 )
 
@@ -392,3 +394,80 @@ class TestDaemonCLIIntegration:
 
         assert result.exit_code == 0
         assert "restart" in result.output
+
+
+class TestGlobalDaemonLocation:
+    """Tests for global daemon at ~/.mab/ location."""
+
+    def test_mab_home_is_user_home(self) -> None:
+        """Test MAB_HOME is at ~/.mab/."""
+        assert MAB_HOME == Path.home() / ".mab"
+
+    def test_default_daemon_uses_global_location(self) -> None:
+        """Test get_default_daemon() uses ~/.mab/."""
+        daemon = get_default_daemon()
+        assert daemon.mab_dir == MAB_HOME
+        assert daemon.pid_file == MAB_HOME / "daemon.pid"
+        assert daemon.lock_file == MAB_HOME / "daemon.lock"
+        assert daemon.log_file == MAB_HOME / "daemon.log"
+        assert daemon.socket_path == MAB_HOME / "mab.sock"
+
+    def test_default_daemon_no_town_path(self) -> None:
+        """Test get_default_daemon() without town_path has no per-project state."""
+        daemon = get_default_daemon()
+        assert daemon.town_path is None
+        assert daemon.town_mab_dir is None
+        assert daemon.town_logs_dir is None
+        assert daemon.town_heartbeat_dir is None
+        assert daemon.town_config_file is None
+
+    def test_default_daemon_with_town_path(self, tmp_path: Path) -> None:
+        """Test get_default_daemon() with town_path sets up per-project paths."""
+        project_path = tmp_path / "my-project"
+        project_path.mkdir()
+
+        daemon = get_default_daemon(town_path=project_path)
+
+        # Global daemon location
+        assert daemon.mab_dir == MAB_HOME
+        assert daemon.socket_path == MAB_HOME / "mab.sock"
+
+        # Per-project locations
+        assert daemon.town_path == project_path
+        assert daemon.town_mab_dir == project_path / ".mab"
+        assert daemon.town_logs_dir == project_path / ".mab" / "logs"
+        assert daemon.town_heartbeat_dir == project_path / ".mab" / "heartbeat"
+        assert daemon.town_config_file == project_path / ".mab" / "config.yaml"
+
+
+class TestDaemonWithTownPath:
+    """Tests for Daemon with per-project town_path."""
+
+    def test_daemon_with_custom_mab_dir_and_town_path(self, tmp_path: Path) -> None:
+        """Test Daemon with both custom mab_dir and town_path."""
+        mab_dir = tmp_path / "global-mab"
+        town_path = tmp_path / "project"
+        mab_dir.mkdir()
+        town_path.mkdir()
+
+        daemon = Daemon(mab_dir=mab_dir, town_path=town_path)
+
+        # Global daemon files at mab_dir
+        assert daemon.mab_dir == mab_dir
+        assert daemon.pid_file == mab_dir / "daemon.pid"
+        assert daemon.socket_path == mab_dir / "mab.sock"
+
+        # Per-project files at town_path
+        assert daemon.town_path == town_path
+        assert daemon.town_mab_dir == town_path / ".mab"
+        assert daemon.town_logs_dir == town_path / ".mab" / "logs"
+
+    def test_daemon_without_town_path(self, tmp_path: Path) -> None:
+        """Test Daemon without town_path has global state only."""
+        mab_dir = tmp_path / ".mab"
+
+        daemon = Daemon(mab_dir=mab_dir)
+
+        assert daemon.mab_dir == mab_dir
+        assert daemon.town_path is None
+        assert daemon.town_mab_dir is None

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from mab.rpc import (
+    MAB_HOME,
     ConnectionTimeoutError,
     DaemonNotRunningError,
     RequestTimeoutError,
@@ -219,10 +220,10 @@ class TestRPCClient:
     """Tests for RPCClient class."""
 
     def test_client_init_default_dir(self) -> None:
-        """Test RPCClient uses default .mab directory."""
+        """Test RPCClient uses global ~/.mab/ directory by default."""
         client = RPCClient()
-        assert client.mab_dir == Path(".mab")
-        assert client.socket_path == Path(".mab/mab.sock")
+        assert client.mab_dir == MAB_HOME
+        assert client.socket_path == MAB_HOME / "mab.sock"
 
     def test_client_init_custom_dir(self, tmp_path: Path) -> None:
         """Test RPCClient with custom directory."""
@@ -258,10 +259,10 @@ class TestRPCServer:
     """Tests for RPCServer class."""
 
     def test_server_init_default_dir(self) -> None:
-        """Test RPCServer uses default .mab directory."""
+        """Test RPCServer uses global ~/.mab/ directory by default."""
         server = RPCServer()
-        assert server.mab_dir == Path(".mab")
-        assert server.socket_path == Path(".mab/mab.sock")
+        assert server.mab_dir == MAB_HOME
+        assert server.socket_path == MAB_HOME / "mab.sock"
 
     def test_server_init_custom_dir(self, tmp_path: Path) -> None:
         """Test RPCServer with custom directory."""
