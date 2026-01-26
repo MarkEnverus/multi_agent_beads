@@ -64,10 +64,110 @@ class TestMabCli:
         assert "--json" in result.output
 
     def test_init_runs(self) -> None:
-        """Test init command executes."""
-        result = self.runner.invoke(cli, ["init"])
-        assert result.exit_code == 0
-        assert "Initializing MAB project" in result.output
+        """Test init command executes and creates config."""
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["init"])
+            assert result.exit_code == 0
+            assert "Initialized MAB project" in result.output
+            assert ".mab" in result.output
+
+    def test_init_creates_directory_structure(self) -> None:
+        """Test init creates .mab directory structure."""
+        import os
+
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["init"])
+            assert result.exit_code == 0
+            assert os.path.isdir(".mab")
+            assert os.path.isdir(".mab/logs")
+            assert os.path.isdir(".mab/heartbeat")
+            assert os.path.isfile(".mab/config.yaml")
+            assert os.path.isfile(".mab/.gitignore")
+
+    def test_init_config_content(self) -> None:
+        """Test init creates valid config file."""
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["init"])
+            assert result.exit_code == 0
+
+            with open(".mab/config.yaml") as f:
+                config = f.read()
+            assert "project:" in config
+            assert "workers:" in config
+            assert "max_workers:" in config
+
+    def test_init_with_template_minimal(self) -> None:
+        """Test init with minimal template."""
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["init", "--template", "minimal"])
+            assert result.exit_code == 0
+
+            with open(".mab/config.yaml") as f:
+                config = f.read()
+            assert "Minimal" in config
+            assert "max_workers: 2" in config
+
+    def test_init_with_template_full(self) -> None:
+        """Test init with full template."""
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["init", "--template", "full"])
+            assert result.exit_code == 0
+
+            with open(".mab/config.yaml") as f:
+                config = f.read()
+            assert "Full" in config
+            assert "roles:" in config
+            assert "hooks:" in config
+
+    def test_init_warns_not_git_repo(self) -> None:
+        """Test init warns when not in git repo."""
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["init"])
+            assert result.exit_code == 0
+            assert "Warning" in result.output
+            assert "git" in result.output.lower()
+
+    def test_init_detects_beads(self) -> None:
+        """Test init detects existing beads setup."""
+        import os
+
+        with self.runner.isolated_filesystem():
+            os.makedirs(".beads")
+            result = self.runner.invoke(cli, ["init"])
+            assert result.exit_code == 0
+            assert "beads" in result.output.lower()
+
+    def test_init_fails_if_exists(self) -> None:
+        """Test init fails if already initialized."""
+        with self.runner.isolated_filesystem():
+            # First init
+            result = self.runner.invoke(cli, ["init"])
+            assert result.exit_code == 0
+
+            # Second init should fail
+            result = self.runner.invoke(cli, ["init"])
+            assert result.exit_code == 1
+            assert "already initialized" in result.output
+
+    def test_init_force_overwrites(self) -> None:
+        """Test init --force overwrites existing config."""
+        with self.runner.isolated_filesystem():
+            # First init
+            self.runner.invoke(cli, ["init"])
+
+            # Force init should succeed
+            result = self.runner.invoke(cli, ["init", "--force"])
+            assert result.exit_code == 0
+            assert "Initialized MAB project" in result.output
+
+    def test_init_creates_target_directory(self) -> None:
+        """Test init creates target directory if it doesn't exist."""
+        import os
+
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["init", "new-project"])
+            assert result.exit_code == 0
+            assert os.path.isdir("new-project/.mab")
 
     def test_start_daemon_mode(self) -> None:
         """Test start command with --daemon flag calls daemon.start()."""

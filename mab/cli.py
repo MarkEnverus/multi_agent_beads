@@ -41,6 +41,140 @@ def cli(ctx: click.Context) -> None:
     ctx.obj["town_path"] = town_path
 
 
+def _is_git_repo(directory: Path) -> bool:
+    """Check if directory is inside a git repository."""
+    check_dir = directory.resolve()
+    while check_dir != check_dir.parent:
+        if (check_dir / ".git").exists():
+            return True
+        check_dir = check_dir.parent
+    return False
+
+
+def _has_beads_setup(directory: Path) -> bool:
+    """Check if directory has an existing beads setup."""
+    return (directory / ".beads").exists()
+
+
+def _get_config_template(template: str, has_beads: bool) -> str:
+    """Generate config.yaml content based on template."""
+    base_config = """# MAB Configuration File
+# Multi-Agent Beads orchestration settings for this project
+# See https://github.com/multi_agent_beads for documentation
+
+# Project identification
+project:
+  name: ""  # Auto-detected from directory name if empty
+  description: ""
+
+# Worker settings
+workers:
+  # Maximum concurrent workers for this project
+  max_workers: 3
+  # Default roles to spawn on 'mab start'
+  default_roles:
+    - dev
+    - qa
+"""
+
+    minimal_config = """# MAB Configuration File (Minimal)
+# See 'mab init --template full' for all options
+
+project:
+  name: ""
+
+workers:
+  max_workers: 2
+"""
+
+    full_config = """# MAB Configuration File (Full)
+# Multi-Agent Beads orchestration settings for this project
+# See https://github.com/multi_agent_beads for documentation
+
+# Project identification
+project:
+  name: ""  # Auto-detected from directory name if empty
+  description: ""
+  # Project-specific issue prefix (overrides beads prefix if set)
+  issue_prefix: ""
+
+# Worker settings
+workers:
+  # Maximum concurrent workers for this project
+  max_workers: 5
+  # Default roles to spawn on 'mab start'
+  default_roles:
+    - dev
+    - qa
+    - reviewer
+  # Worker restart policy
+  restart_policy: always  # always, on-failure, never
+  # Heartbeat interval in seconds
+  heartbeat_interval: 30
+  # Maximum consecutive failures before giving up
+  max_failures: 3
+
+# Role-specific configuration
+roles:
+  dev:
+    # Labels this role can work on
+    labels:
+      - dev
+      - feature
+      - bug
+    # Priority threshold (0=P0 only, 4=all)
+    max_priority: 3
+
+  qa:
+    labels:
+      - qa
+      - test
+    max_priority: 2
+
+  reviewer:
+    labels:
+      - review
+    max_priority: 2
+
+# Integration with beads
+beads:
+  # Auto-detected, but can be overridden
+  enabled: true
+  # Path to beads directory (relative to project root)
+  path: ".beads"
+
+# Logging
+logging:
+  # Log level: debug, info, warning, error
+  level: info
+  # Keep logs for N days
+  retention_days: 7
+
+# Hooks (scripts to run at various points)
+hooks:
+  # Before claiming a bead
+  pre_claim: ""
+  # After completing work
+  post_complete: ""
+  # On worker error
+  on_error: ""
+"""
+
+    if template == "minimal":
+        config = minimal_config
+    elif template == "full":
+        config = full_config
+    else:
+        config = base_config
+
+    # Add beads integration note if detected
+    if has_beads:
+        config += "\n# Note: Existing beads setup detected at .beads/\n"
+        config += "# MAB will integrate with beads for issue tracking.\n"
+
+    return config
+
+
 @cli.command()
 @click.option(
     "--template",
@@ -61,10 +195,95 @@ def init(template: str, force: bool, directory: str) -> None:
 
     Sets up configuration files and directory structure for multi-agent
     orchestration in the specified DIRECTORY (defaults to current directory).
+
+    \b
+    Templates:
+      default  Standard configuration with common options
+      minimal  Bare minimum settings only
+      full     All available options with documentation
     """
-    click.echo(f"Initializing MAB project in '{directory}' with template '{template}'...")
-    # Implementation will be added in multi_agent_beads-3ma1
-    click.echo("Note: Full implementation pending (see multi_agent_beads-3ma1)")
+    target_dir = Path(directory).resolve()
+
+    # Check if directory exists
+    if not target_dir.exists():
+        click.echo(f"Creating directory: {target_dir}")
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check for git repo
+    if not _is_git_repo(target_dir):
+        click.secho(
+            "Warning: Not a git repository. MAB works best with version control.",
+            fg="yellow",
+        )
+
+    # Check for existing beads setup
+    has_beads = _has_beads_setup(target_dir)
+    if has_beads:
+        click.echo("Detected existing beads setup at .beads/")
+
+    # Create .mab directory
+    mab_dir = target_dir / ".mab"
+    config_file = mab_dir / "config.yaml"
+    logs_dir = mab_dir / "logs"
+    heartbeat_dir = mab_dir / "heartbeat"
+
+    # Check if already initialized
+    if mab_dir.exists() and not force:
+        if config_file.exists():
+            click.secho(
+                f"Project already initialized at {mab_dir}",
+                fg="yellow",
+            )
+            click.echo("Use --force to reinitialize and overwrite configuration.")
+            raise SystemExit(1)
+
+    # Create directory structure
+    mab_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(exist_ok=True)
+    heartbeat_dir.mkdir(exist_ok=True)
+
+    # Generate and write config
+    config_content = _get_config_template(template, has_beads)
+
+    # Set project name from directory if not specified
+    project_name = target_dir.name
+    config_content = config_content.replace(
+        'name: ""  # Auto-detected',
+        f'name: "{project_name}"  # Auto-detected',
+        1,
+    )
+
+    config_file.write_text(config_content)
+
+    # Create .gitignore for .mab directory
+    gitignore_file = mab_dir / ".gitignore"
+    gitignore_content = """# MAB local files (not tracked in git)
+# Config is tracked so team shares settings
+!config.yaml
+
+# Logs are local
+logs/
+*.log
+
+# Runtime files
+heartbeat/
+*.pid
+*.lock
+*.sock
+"""
+    gitignore_file.write_text(gitignore_content)
+
+    # Success message
+    click.secho(f"✓ Initialized MAB project in {mab_dir}", fg="green")
+    click.echo(f"  Config: {config_file}")
+    click.echo(f"  Logs:   {logs_dir}")
+
+    if has_beads:
+        click.echo("\nBeads integration enabled. Use 'bd ready' to find work.")
+
+    click.echo("\nNext steps:")
+    click.echo("  1. Edit .mab/config.yaml to customize settings")
+    click.echo("  2. Run 'mab start' to begin agent orchestration")
 
 
 @cli.command()
