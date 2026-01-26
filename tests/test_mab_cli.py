@@ -1,5 +1,7 @@
 """Tests for mab CLI framework."""
 
+from unittest.mock import patch
+
 from click.testing import CliRunner
 
 from mab.cli import cli
@@ -22,6 +24,7 @@ class TestMabCli:
         assert "start" in result.output
         assert "stop" in result.output
         assert "status" in result.output
+        assert "restart" in result.output
 
     def test_version_shows_version(self) -> None:
         """Test that --version shows version."""
@@ -51,6 +54,7 @@ class TestMabCli:
         assert result.exit_code == 0
         assert "--all" in result.output
         assert "--graceful" in result.output
+        assert "--timeout" in result.output
 
     def test_status_help(self) -> None:
         """Test status subcommand help."""
@@ -65,12 +69,17 @@ class TestMabCli:
         assert result.exit_code == 0
         assert "Initializing MAB project" in result.output
 
-    def test_start_runs(self) -> None:
-        """Test start command executes."""
-        result = self.runner.invoke(cli, ["start"])
-        assert result.exit_code == 0
-        assert "Starting" in result.output
-        assert "worker" in result.output
+    def test_start_daemon_mode(self) -> None:
+        """Test start command with --daemon flag calls daemon.start()."""
+        with patch("mab.cli.Daemon") as mock_daemon_class:
+            mock_daemon = mock_daemon_class.return_value
+            mock_daemon.start.return_value = None
+
+            result = self.runner.invoke(cli, ["start", "--daemon"])
+
+            assert result.exit_code == 0
+            assert "Starting MAB daemon" in result.output
+            mock_daemon.start.assert_called_once_with(foreground=False)
 
     def test_stop_requires_argument_or_flag(self) -> None:
         """Test stop command requires worker_id or --all."""
@@ -78,21 +87,37 @@ class TestMabCli:
         assert result.exit_code == 1
         assert "Error" in result.output
 
-    def test_stop_with_all_flag(self) -> None:
-        """Test stop --all command executes."""
-        result = self.runner.invoke(cli, ["stop", "--all"])
-        assert result.exit_code == 0
-        assert "Stopping all workers" in result.output
+    def test_stop_with_all_flag_not_running(self) -> None:
+        """Test stop --all fails when daemon not running."""
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["stop", "--all"])
+            assert result.exit_code == 1
+            assert "not running" in result.output.lower()
+
+    def test_stop_with_all_flag_success(self) -> None:
+        """Test stop --all succeeds when daemon running."""
+        with patch("mab.cli.Daemon") as mock_daemon_class:
+            mock_daemon = mock_daemon_class.return_value
+            mock_daemon.stop.return_value = None
+
+            result = self.runner.invoke(cli, ["stop", "--all"])
+
+            assert result.exit_code == 0
+            assert "stopped successfully" in result.output.lower()
+            mock_daemon.stop.assert_called_once()
 
     def test_status_runs(self) -> None:
         """Test status command executes."""
-        result = self.runner.invoke(cli, ["status"])
-        assert result.exit_code == 0
-        assert "MAB Status" in result.output
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["status"])
+            assert result.exit_code == 0
+            assert "MAB Status" in result.output
+            assert "Daemon:" in result.output
 
     def test_status_json_output(self) -> None:
         """Test status --json outputs JSON."""
-        result = self.runner.invoke(cli, ["status", "--json"])
-        assert result.exit_code == 0
-        assert '"workers"' in result.output
-        assert '"queue"' in result.output
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["status", "--json"])
+            assert result.exit_code == 0
+            assert '"state"' in result.output
+            assert '"pid"' in result.output
