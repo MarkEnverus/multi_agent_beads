@@ -412,6 +412,7 @@ name = "multi-agent-beads"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "fastapi" },
     { name = "jinja2" },
     { name = "python-multipart" },
@@ -441,6 +442,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.1.0" },
     { name = "fastapi", specifier = ">=0.109.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.26.0" },
     { name = "jinja2", specifier = ">=3.1.0" },

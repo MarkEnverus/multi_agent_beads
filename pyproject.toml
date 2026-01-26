@@ -9,7 +9,11 @@ dependencies = [
     "jinja2>=3.1.0",
     "python-multipart>=0.0.6",
     "pyyaml>=6.0",
+    "click>=8.1.0",
 ]
+
+[project.scripts]
+mab = "mab.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -50,7 +54,7 @@ warn_unused_configs = true
 ignore_missing_imports = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["dashboard", "scripts"]
+packages = ["dashboard", "scripts", "mab"]
 
 [build-system]
 requires = ["hatchling"]
