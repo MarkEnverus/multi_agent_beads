@@ -46,10 +46,18 @@ The MAB daemon manages the lifecycle of Claude Code worker agents, providing:
 | Aspect | Beads Daemon | MAB Daemon |
 |--------|--------------|------------|
 | Purpose | Database sync & RPC | Worker lifecycle management |
-| Socket | `.beads/bd.sock` | `.mab/mab.sock` |
-| PID File | `.beads/daemon.pid` | `.mab/daemon.pid` |
-| State Store | SQLite (beads.db) | SQLite (workers.db) |
+| Scope | Per-project (`.beads/`) | **Global per-user** (`~/.mab/`) |
+| Socket | `.beads/bd.sock` | `~/.mab/mab.sock` |
+| PID File | `.beads/daemon.pid` | `~/.mab/daemon.pid` |
+| State Store | SQLite (beads.db) | SQLite (`~/.mab/workers.db`) |
 | Event Model | Mutation-driven export | Worker state changes |
+
+### Key Architectural Decisions
+
+1. **Global Daemon**: One daemon process per user manages all towns/projects
+2. **Project Identification**: Towns are identified by their filesystem path
+3. **Local Logs**: Worker logs stay in `<project>/.mab/logs/` for easy debugging
+4. **Config Inheritance**: Global defaults in `~/.mab/config.yaml` → Project overrides in `<project>/.mab/config.yaml`
 
 ---
 
@@ -125,39 +133,81 @@ The MAB daemon manages the lifecycle of Claude Code worker agents, providing:
 └─────────────┘
 ```
 
-### File Layout
+### File Layout (Hybrid Global/Local)
+
+The MAB daemon uses a **hybrid approach**: global daemon state in `~/.mab/` with per-project worker logs and configuration overrides.
 
 ```
-.mab/
-├── daemon.pid        # Daemon process ID
-├── daemon.lock       # Exclusive lock (flock)
-├── daemon.log        # Daemon structured logs
-├── mab.sock          # Unix socket for RPC
-├── workers.db        # SQLite state database
-├── workers.db-wal    # Write-ahead log
-├── workers.db-shm    # Shared memory
-└── config.yaml       # Daemon configuration
+~/.mab/                       # GLOBAL daemon home (one per user)
+├── daemon.pid                # Daemon process ID
+├── daemon.lock               # Exclusive lock (flock)
+├── daemon.log                # Daemon structured logs
+├── mab.sock                  # Unix socket for RPC
+├── workers.db                # SQLite state (ALL workers across ALL towns)
+├── workers.db-wal            # Write-ahead log
+├── workers.db-shm            # Shared memory
+└── config.yaml               # Global defaults
+
+<project>/.mab/               # PER-PROJECT town config
+├── config.yaml               # Town-specific configuration overrides
+├── logs/                     # Worker logs for this town
+│   ├── worker-abc123.log     # Individual worker log
+│   └── worker-xyz789.log
+└── heartbeat/                # Heartbeat files for this town's workers
+    ├── mab-worker-abc123     # Heartbeat touch file
+    └── mab-worker-xyz789
+```
+
+#### Configuration Inheritance
+
+Configuration is resolved with the following precedence (highest to lowest):
+
+1. **Command-line arguments** (e.g., `mab spawn --max-workers=3`)
+2. **Project config** (`<project>/.mab/config.yaml`)
+3. **Global config** (`~/.mab/config.yaml`)
+4. **Built-in defaults**
+
+```yaml
+# Example: ~/.mab/config.yaml (global)
+defaults:
+  max_workers_per_town: 5
+  auto_restart: true
+  health_check_interval: 10
+
+# Example: <project>/.mab/config.yaml (overrides)
+max_workers: 3  # Override: this project only needs 3 workers
+roles:
+  - developer
+  - qa
 ```
 
 ### Startup Sequence
 
 ```python
+import os
+from pathlib import Path
+
+MAB_HOME = Path.home() / ".mab"
+
 def daemon_main():
+    # 0. Ensure global directory exists
+    MAB_HOME.mkdir(exist_ok=True)
+
     # 1. Acquire exclusive lock
-    lock_file = open(".mab/daemon.lock", "w")
+    lock_file = open(MAB_HOME / "daemon.lock", "w")
     fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
     # 2. Write PID file
-    with open(".mab/daemon.pid", "w") as f:
+    with open(MAB_HOME / "daemon.pid", "w") as f:
         f.write(str(os.getpid()))
 
-    # 3. Initialize database
-    db = sqlite3.connect(".mab/workers.db")
+    # 3. Initialize database (stores ALL workers across ALL towns)
+    db = sqlite3.connect(MAB_HOME / "workers.db")
     init_schema(db)
 
     # 4. Create Unix socket
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.bind(".mab/mab.sock")
+    sock.bind(str(MAB_HOME / "mab.sock"))
     sock.listen(10)
 
     # 5. Install signal handlers
@@ -175,7 +225,7 @@ def daemon_main():
 ### Transport Layer
 
 - **Protocol:** Unix domain socket (SOCK_STREAM)
-- **Location:** `.mab/mab.sock`
+- **Location:** `~/.mab/mab.sock` (global, user-level)
 - **Framing:** Length-prefixed JSON messages
 - **Timeout:** 30 seconds default, configurable per command
 
@@ -261,10 +311,13 @@ def daemon_main():
 import socket
 import struct
 import json
+from pathlib import Path
+
+MAB_HOME = Path.home() / ".mab"
 
 def rpc_call(method: str, params: dict) -> dict:
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.connect(".mab/mab.sock")
+    sock.connect(str(MAB_HOME / "mab.sock"))  # Global socket
 
     request = json.dumps({
         "id": str(uuid.uuid4()),
@@ -405,8 +458,10 @@ CREATE INDEX idx_worker_logs_timestamp ON worker_logs(timestamp);
 
 Workers report health via two mechanisms:
 
-1. **Heartbeat file** (primary): Worker touches `.mab/heartbeat/{worker_id}`
+1. **Heartbeat file** (primary): Worker touches `<project>/.mab/heartbeat/{worker_id}` (local to project)
 2. **Process check** (fallback): Daemon checks if PID is alive
+
+Heartbeat files are stored **per-project** for easy debugging and to keep worker state close to the code it's working on.
 
 ```python
 async def health_check_loop(interval: int = 10):
@@ -414,11 +469,13 @@ async def health_check_loop(interval: int = 10):
         await asyncio.sleep(interval)
 
         for worker in get_running_workers():
-            heartbeat_file = f".mab/heartbeat/{worker.id}"
+            # Heartbeat file is in the project directory (town path)
+            town = get_town(worker.town_id)
+            heartbeat_file = Path(town.path) / ".mab" / "heartbeat" / worker.id
 
             # Check heartbeat file freshness
-            if os.path.exists(heartbeat_file):
-                mtime = os.path.getmtime(heartbeat_file)
+            if heartbeat_file.exists():
+                mtime = heartbeat_file.stat().st_mtime
                 age = time.time() - mtime
 
                 if age > HEARTBEAT_TIMEOUT:
@@ -436,10 +493,15 @@ async def health_check_loop(interval: int = 10):
 **Worker side:**
 ```python
 def worker_heartbeat_loop():
-    heartbeat_file = f".mab/heartbeat/{WORKER_ID}"
+    # Heartbeat file is local to the project
+    project_path = Path.cwd()  # Worker runs in project directory
+    heartbeat_dir = project_path / ".mab" / "heartbeat"
+    heartbeat_dir.mkdir(parents=True, exist_ok=True)
+    heartbeat_file = heartbeat_dir / WORKER_ID
+
     while running:
         # Touch the file
-        Path(heartbeat_file).touch()
+        heartbeat_file.touch()
         time.sleep(5)
 ```
 
@@ -572,113 +634,151 @@ shutdown:
 
 ### Town Concept
 
-A "town" is an isolated environment for running agents against a specific project:
+A "town" is an isolated environment for running agents against a specific project. The **global daemon** (`~/.mab/`) orchestrates workers across **multiple towns**, while each project maintains its own local state:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              MAB Daemon                                      │
+│                    GLOBAL MAB Daemon (~/.mab/)                               │
+│                    One daemon per user manages ALL towns                     │
 │                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                         Town: "frontend"                             │   │
-│  │  path: /home/user/projects/frontend                                  │   │
-│  │                                                                       │   │
-│  │  ┌─────────────┐  ┌─────────────┐                                   │   │
-│  │  │  Developer  │  │     QA      │                                   │   │
-│  │  └─────────────┘  └─────────────┘                                   │   │
-│  │         │                │                                           │   │
-│  │         └────────┬───────┘                                           │   │
-│  │                  ▼                                                   │   │
-│  │         .beads/beads.db (frontend)                                   │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                         Town: "backend"                               │   │
-│  │  path: /home/user/projects/backend                                    │   │
-│  │                                                                       │   │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                   │   │
-│  │  │  Developer  │  │  Developer  │  │  Tech Lead  │                   │   │
-│  │  │  (inst 1)   │  │  (inst 2)   │  │             │                   │   │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘                   │   │
-│  │         │                │                │                           │   │
-│  │         └────────────────┼────────────────┘                           │   │
-│  │                          ▼                                            │   │
-│  │               .beads/beads.db (backend)                               │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+│  ┌────────────────────────────────────────┐                                 │
+│  │  ~/.mab/workers.db (GLOBAL STATE)      │                                 │
+│  │  Tracks ALL workers across ALL towns   │                                 │
+│  └────────────────────────────────────────┘                                 │
+│                              │                                              │
+│           ┌──────────────────┼──────────────────┐                           │
+│           │                  │                  │                           │
+│           ▼                  ▼                  ▼                           │
+│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐               │
+│  │  Town: frontend │ │  Town: backend  │ │  Town: shared   │               │
+│  │  (by path)      │ │  (by path)      │ │  (by path)      │               │
+│  └────────┬────────┘ └────────┬────────┘ └────────┬────────┘               │
+│           │                   │                   │                         │
+└───────────┼───────────────────┼───────────────────┼─────────────────────────┘
+            │                   │                   │
+            ▼                   ▼                   ▼
+┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐
+│ /projects/frontend  │ │ /projects/backend   │ │ /projects/shared    │
+│ ├── .mab/           │ │ ├── .mab/           │ │ ├── .mab/           │
+│ │   ├── config.yaml │ │ │   ├── config.yaml │ │ │   ├── config.yaml │
+│ │   ├── logs/       │ │ │   ├── logs/       │ │ │   ├── logs/       │
+│ │   └── heartbeat/  │ │ │   └── heartbeat/  │ │ │   └── heartbeat/  │
+│ ├── .beads/         │ │ ├── .beads/         │ │ ├── .beads/         │
+│ │   └── beads.db    │ │ │   └── beads.db    │ │ │   └── beads.db    │
+│ └── src/            │ │ └── src/            │ │ └── lib/            │
+│                     │ │                     │ │                     │
+│  Workers:           │ │  Workers:           │ │  Workers:           │
+│  ┌────────┐         │ │  ┌────────┐         │ │  ┌────────┐         │
+│  │  Dev   │         │ │  │ Dev x2 │         │ │  │  Lead  │         │
+│  │   QA   │         │ │  │  Lead  │         │ │  └────────┘         │
+│  └────────┘         │ │  └────────┘         │ │                     │
+└─────────────────────┘ └─────────────────────┘ └─────────────────────┘
 ```
 
 ### Isolation Guarantees
 
-| Aspect | Isolation Level | Implementation |
-|--------|-----------------|----------------|
-| Beads database | Full | Each town has own `.beads/` |
-| Worker processes | Full | Separate PIDs, working directories |
-| Log files | Full | `{town_path}/claude.log` |
-| Configuration | Partial | Town can override daemon defaults |
-| Resource limits | Configurable | Per-town worker limits |
+| Aspect | Isolation Level | Location | Implementation |
+|--------|-----------------|----------|----------------|
+| Beads database | Full | `<project>/.beads/` | Each project has own beads |
+| Worker state | Shared | `~/.mab/workers.db` | Global daemon tracks all |
+| Worker processes | Full | N/A | Separate PIDs, working directories |
+| Log files | Full | `<project>/.mab/logs/` | Logs stay local to project |
+| Heartbeat files | Full | `<project>/.mab/heartbeat/` | Per-project for debugging |
+| Configuration | Inherited | Both | Global → Project overrides |
+| Resource limits | Configurable | Both | Per-town worker limits |
 
 ### Town Configuration
 
+Towns can be configured at the global level (`~/.mab/config.yaml`) or overridden at the project level (`<project>/.mab/config.yaml`):
+
 ```yaml
-# .mab/config.yaml
+# ~/.mab/config.yaml (GLOBAL defaults)
+defaults:
+  max_workers_per_town: 5
+  auto_create_town: true  # create town when spawning in new path
+  default_roles:
+    - developer
+    - qa
+
+# Town-specific settings can also be declared globally
 towns:
-  frontend:
-    path: /home/user/projects/frontend
+  # Towns are keyed by path for uniqueness
+  "/home/user/projects/frontend":
     max_workers: 3
-    default_roles:
+    roles:
       - developer
       - qa
 
-  backend:
-    path: /home/user/projects/backend
+  "/home/user/projects/backend":
     max_workers: 5
-    default_roles:
+    roles:
       - developer
       - developer
       - qa
       - tech_lead
       - reviewer
+```
 
-defaults:
-  max_workers_per_town: 5
-  auto_create_town: true  # create town when spawning in new path
+```yaml
+# /home/user/projects/frontend/.mab/config.yaml (PROJECT override)
+# This overrides global settings for this specific project
+max_workers: 2  # Override: fewer workers than global default
+roles:
+  - developer
+# Note: Other settings inherit from ~/.mab/config.yaml
 ```
 
 ### Town Routing
 
-When spawning a worker:
+When spawning a worker, the daemon resolves the town by project path and sets up the local directory structure:
+
 ```python
-async def spawn_worker(role: str, town: str = "default"):
-    # Resolve town
-    town_config = get_town(town)
+async def spawn_worker(role: str, project_path: str = None):
+    """Spawn a worker for a project (town identified by path)."""
+    project_path = Path(project_path or os.getcwd()).resolve()
+
+    # Resolve town by path (create if auto_create enabled)
+    town_config = get_town_by_path(project_path)
     if not town_config:
         if config.auto_create_town:
-            town_config = create_town(town, os.getcwd())
+            town_config = create_town(project_path)
         else:
-            raise ValueError(f"Unknown town: {town}")
+            raise ValueError(f"Unknown project (no town): {project_path}")
+
+    # Merge configuration: global defaults → project overrides
+    effective_config = merge_configs(
+        global_config=load_config(MAB_HOME / "config.yaml"),
+        project_config=load_config(project_path / ".mab" / "config.yaml")
+    )
 
     # Check limits
-    current_count = count_workers(town)
-    if current_count >= town_config.max_workers:
-        raise ResourceError(f"Town {town} at capacity ({current_count}/{town_config.max_workers})")
+    current_count = count_workers_in_town(project_path)
+    if current_count >= effective_config.max_workers:
+        raise ResourceError(f"Project {project_path} at capacity ({current_count}/{effective_config.max_workers})")
 
-    # Spawn in town's directory
+    # Ensure local directories exist
+    local_mab = project_path / ".mab"
+    (local_mab / "logs").mkdir(parents=True, exist_ok=True)
+    (local_mab / "heartbeat").mkdir(parents=True, exist_ok=True)
+
+    # Create worker record (stored in global ~/.mab/workers.db)
     worker = Worker(
         id=generate_worker_id(),
-        town_id=town_config.id,
+        town_path=str(project_path),  # Town identified by path
         role=role,
-        cwd=town_config.path
     )
 
     # Start process with correct working directory
+    # Logs go to project-local directory
+    log_file = local_mab / "logs" / f"{worker.id}.log"
     process = await spawn_claude_code(
-        cwd=town_config.path,
-        prompt_file=f"prompts/{role.upper()}.md"
+        cwd=project_path,
+        prompt_file=f"prompts/{role.upper()}.md",
+        log_file=log_file
     )
 
     worker.pid = process.pid
-    save_worker(worker)
+    save_worker(worker)  # Saved to ~/.mab/workers.db
 
     return worker
 ```
@@ -687,119 +787,131 @@ async def spawn_worker(role: str, town: str = "default"):
 
 ## Sequence Diagrams
 
+The following diagrams illustrate the hybrid global/local architecture where:
+- **Daemon** runs globally at `~/.mab/`
+- **Workers** run in project directories with local logs/heartbeats at `<project>/.mab/`
+
 ### Worker Spawn
 
 ```
-┌───────┐          ┌────────┐          ┌────────┐          ┌────────┐
-│  CLI  │          │ Daemon │          │  DB    │          │ Worker │
-└───┬───┘          └───┬────┘          └───┬────┘          └───┬────┘
-    │                  │                   │                   │
-    │  worker.spawn    │                   │                   │
-    │  (developer)     │                   │                   │
-    │─────────────────▶│                   │                   │
-    │                  │                   │                   │
-    │                  │ INSERT worker     │                   │
-    │                  │ status=starting   │                   │
-    │                  │──────────────────▶│                   │
-    │                  │                   │                   │
-    │                  │ fork process      │                   │
-    │                  │──────────────────────────────────────▶│
-    │                  │                   │                   │
-    │                  │                   │        start      │
-    │                  │                   │◀──────────────────│
-    │                  │                   │                   │
-    │  {worker_id,     │                   │                   │
-    │   pid, status}   │                   │                   │
-    │◀─────────────────│                   │                   │
-    │                  │                   │                   │
-    │                  │ heartbeat         │                   │
-    │                  │◀──────────────────────────────────────│
-    │                  │                   │                   │
-    │                  │ UPDATE worker     │                   │
-    │                  │ status=running    │                   │
-    │                  │──────────────────▶│                   │
-    │                  │                   │                   │
+┌───────┐          ┌─────────────┐       ┌─────────────┐     ┌────────────────┐
+│  CLI  │          │   Daemon    │       │ ~/.mab/     │     │    Worker      │
+│       │          │ (~/.mab/)   │       │ workers.db  │     │ (in project)   │
+└───┬───┘          └──────┬──────┘       └──────┬──────┘     └───────┬────────┘
+    │                     │                     │                    │
+    │  worker.spawn       │                     │                    │
+    │  (developer,        │                     │                    │
+    │   /proj/frontend)   │                     │                    │
+    │────────────────────▶│                     │                    │
+    │                     │                     │                    │
+    │                     │ INSERT worker       │                    │
+    │                     │ town=/proj/frontend │                    │
+    │                     │ status=starting     │                    │
+    │                     │────────────────────▶│                    │
+    │                     │                     │                    │
+    │                     │ mkdir /proj/frontend/.mab/{logs,heartbeat}
+    │                     │                     │                    │
+    │                     │ fork process (cwd=/proj/frontend)       │
+    │                     │─────────────────────────────────────────▶│
+    │                     │                     │                    │
+    │  {worker_id,        │                     │     logs →         │
+    │   pid, status}      │                     │  /proj/.mab/logs/  │
+    │◀────────────────────│                     │                    │
+    │                     │                     │                    │
+    │                     │ heartbeat file at   │                    │
+    │                     │ /proj/.mab/heartbeat/worker-id           │
+    │                     │◀────────────────────────────────────────│
+    │                     │                     │                    │
+    │                     │ UPDATE worker       │                    │
+    │                     │ status=running      │                    │
+    │                     │────────────────────▶│                    │
+    │                     │                     │                    │
 ```
 
 ### Health Check Failure
 
 ```
-┌────────┐          ┌────────┐          ┌────────┐          ┌────────┐
-│ Daemon │          │  DB    │          │Worker 1│          │Worker 2│
-└───┬────┘          └───┬────┘          └───┬────┘          └───┬────┘
-    │                   │                   │                   │
-    │  health check     │                   │                   │
-    │  tick             │                   │                   │
-    │───────┐           │                   │                   │
-    │       │           │                   │                   │
-    │◀──────┘           │                   │                   │
-    │                   │                   │                   │
-    │ check heartbeat   │                   │                   │
-    │ Worker 1: stale   │                   │                   │
-    │                   │              (crashed)                │
-    │                   │                   X                   │
-    │                   │                                       │
-    │ check heartbeat   │                                       │
-    │ Worker 2: fresh   │                                       │
-    │◀──────────────────────────────────────────────────────────│
-    │                   │                                       │
-    │ UPDATE Worker 1   │                                       │
-    │ status=failed     │                                       │
-    │──────────────────▶│                                       │
-    │                   │                                       │
-    │ schedule restart  │                                       │
-    │ (backoff: 5s)     │                                       │
-    │───────┐           │                                       │
-    │       │           │                                       │
-    │◀──────┘           │                                       │
-    │                   │                    ┌────────┐         │
-    │ spawn replacement │                    │Worker 1│         │
-    │────────────────────────────────────────▶  (new) │         │
-    │                   │                    └───┬────┘         │
-    │                   │                        │              │
+┌─────────────┐     ┌─────────────┐     ┌──────────────────┐   ┌──────────────────┐
+│   Daemon    │     │ ~/.mab/     │     │ Worker 1         │   │ Worker 2         │
+│  (~/.mab/)  │     │ workers.db  │     │ (/proj/frontend) │   │ (/proj/backend)  │
+└──────┬──────┘     └──────┬──────┘     └────────┬─────────┘   └────────┬─────────┘
+       │                   │                     │                      │
+       │  health check     │                     │                      │
+       │  tick             │                     │                      │
+       │───────┐           │                     │                      │
+       │       │           │                     │                      │
+       │◀──────┘           │                     │                      │
+       │                   │                     │                      │
+       │ check heartbeat   │                     │                      │
+       │ /proj/frontend/.mab/heartbeat/worker1   │                      │
+       │ → STALE (no update)                (crashed)                   │
+       │                   │                     X                      │
+       │                   │                                            │
+       │ check heartbeat   │                                            │
+       │ /proj/backend/.mab/heartbeat/worker2                           │
+       │ → FRESH           │                                            │
+       │◀───────────────────────────────────────────────────────────────│
+       │                   │                                            │
+       │ UPDATE Worker 1   │                                            │
+       │ status=failed     │                                            │
+       │──────────────────▶│                                            │
+       │                   │                                            │
+       │ schedule restart  │                                            │
+       │ (backoff: 5s)     │                                            │
+       │───────┐           │                                            │
+       │       │           │                                            │
+       │◀──────┘           │                     ┌─────────────────┐    │
+       │                   │                     │ Worker 1 (new)  │    │
+       │ spawn replacement │                     │ /proj/frontend  │    │
+       │ in /proj/frontend │                     │                 │    │
+       │─────────────────────────────────────────▶                 │    │
+       │                   │                     └────────┬────────┘    │
+       │                   │                              │             │
 ```
 
 ### Graceful Shutdown
 
 ```
-┌───────┐          ┌────────┐          ┌────────┐          ┌────────┐
-│  OS   │          │ Daemon │          │Worker 1│          │Worker 2│
-└───┬───┘          └───┬────┘          └───┬────┘          └───┬────┘
-    │                  │                   │                   │
-    │  SIGTERM         │                   │                   │
-    │─────────────────▶│                   │                   │
-    │                  │                   │                   │
-    │                  │ stop accepting    │                   │
-    │                  │ new connections   │                   │
-    │                  │───────┐           │                   │
-    │                  │       │           │                   │
-    │                  │◀──────┘           │                   │
-    │                  │                   │                   │
-    │                  │     SIGTERM       │                   │
-    │                  │──────────────────▶│                   │
-    │                  │                   │                   │
-    │                  │     SIGTERM       │                   │
-    │                  │──────────────────────────────────────▶│
-    │                  │                   │                   │
-    │                  │ finish work       │                   │
-    │                  │                   │───────┐           │
-    │                  │                   │       │           │
-    │                  │     exit(0)       │◀──────┘           │
-    │                  │◀──────────────────│                   │
-    │                  │                   │                   │
-    │                  │                   │    finish work    │
-    │                  │                   │                   │───────┐
-    │                  │                   │                   │       │
-    │                  │     exit(0)       │                   │◀──────┘
-    │                  │◀──────────────────────────────────────│
-    │                  │                   │                   │
-    │                  │ cleanup socket,   │                   │
-    │                  │ release lock      │                   │
-    │                  │───────┐           │                   │
-    │                  │       │           │                   │
-    │   exit(0)        │◀──────┘           │                   │
-    │◀─────────────────│                   │                   │
-    │                  │                   │                   │
+┌───────┐        ┌─────────────┐      ┌──────────────────┐   ┌──────────────────┐
+│  OS   │        │   Daemon    │      │ Worker 1         │   │ Worker 2         │
+│       │        │  (~/.mab/)  │      │ (/proj/frontend) │   │ (/proj/backend)  │
+└───┬───┘        └──────┬──────┘      └────────┬─────────┘   └────────┬─────────┘
+    │                   │                      │                      │
+    │  SIGTERM          │                      │                      │
+    │──────────────────▶│                      │                      │
+    │                   │                      │                      │
+    │                   │ stop accepting       │                      │
+    │                   │ new RPC connections  │                      │
+    │                   │───────┐              │                      │
+    │                   │       │              │                      │
+    │                   │◀──────┘              │                      │
+    │                   │                      │                      │
+    │                   │     SIGTERM (to all workers across all towns)
+    │                   │─────────────────────▶│                      │
+    │                   │                      │                      │
+    │                   │─────────────────────────────────────────────▶│
+    │                   │                      │                      │
+    │                   │ finish current bead  │                      │
+    │                   │                      │───────┐              │
+    │                   │                      │       │              │
+    │                   │     exit(0)          │◀──────┘              │
+    │                   │◀─────────────────────│                      │
+    │                   │                      │                      │
+    │                   │                      │    finish current bead
+    │                   │                      │                      │───────┐
+    │                   │                      │                      │       │
+    │                   │     exit(0)          │                      │◀──────┘
+    │                   │◀────────────────────────────────────────────│
+    │                   │                      │                      │
+    │                   │ cleanup:             │                      │
+    │                   │ - close ~/.mab/mab.sock                     │
+    │                   │ - release ~/.mab/daemon.lock                │
+    │                   │ - update ~/.mab/workers.db                  │
+    │                   │───────┐              │                      │
+    │                   │       │              │                      │
+    │   exit(0)         │◀──────┘              │                      │
+    │◀──────────────────│                      │                      │
+    │                   │                      │                      │
 ```
 
 ---
@@ -868,27 +980,35 @@ async def spawn_worker(role: str, town: str = "default"):
 
 ## Appendix: Configuration Reference
 
-```yaml
-# .mab/config.yaml - Full configuration reference
+### Global Configuration (`~/.mab/config.yaml`)
 
+The global configuration applies to all projects unless overridden:
+
+```yaml
+# ~/.mab/config.yaml - Full configuration reference
+
+# Daemon process settings (global only)
 daemon:
-  socket: .mab/mab.sock
-  pid_file: .mab/daemon.pid
-  lock_file: .mab/daemon.lock
-  log_file: .mab/daemon.log
+  socket: mab.sock          # Relative to ~/.mab/
+  pid_file: daemon.pid      # Relative to ~/.mab/
+  lock_file: daemon.lock    # Relative to ~/.mab/
+  log_file: daemon.log      # Relative to ~/.mab/
   log_level: INFO
 
+# Database settings (global only - single DB for all workers)
 database:
-  path: .mab/workers.db
+  path: workers.db          # Relative to ~/.mab/
   wal_mode: true
   busy_timeout: 5000
 
+# Health check settings (can override per-project)
 health_check:
   enabled: true
   interval: 10
   heartbeat_timeout: 30
   unhealthy_threshold: 3
 
+# Restart policy (can override per-project)
 restart_policy:
   enabled: true
   max_restarts: 5
@@ -896,11 +1016,13 @@ restart_policy:
   backoff_max: 300
   cooldown_period: 3600
 
+# Shutdown settings (global only)
 shutdown:
   worker_grace_period: 60
   force_kill_timeout: 10
   drain_connections: true
 
+# Default settings for all projects
 defaults:
   max_workers_per_town: 5
   auto_create_town: true
@@ -908,6 +1030,47 @@ defaults:
     - developer
     - qa
 
+# Optional: pre-declare town-specific settings
 towns:
-  # Populated dynamically or via mab town create
+  "/path/to/project":
+    max_workers: 3
+    roles:
+      - developer
+```
+
+### Project Configuration (`<project>/.mab/config.yaml`)
+
+Project-level overrides (inherits from global):
+
+```yaml
+# <project>/.mab/config.yaml - Project-specific overrides
+
+# Override max workers for this project
+max_workers: 3
+
+# Override roles for this project
+roles:
+  - developer
+  - developer  # 2 developer instances
+  - qa
+  - tech_lead
+
+# Override health check for this project
+health_check:
+  heartbeat_timeout: 60  # Longer timeout for slow workers
+
+# Override restart policy for this project
+restart_policy:
+  max_restarts: 3  # Fewer restarts for this project
+```
+
+### Configuration Inheritance Example
+
+```
+~/.mab/config.yaml              <project>/.mab/config.yaml       Effective
+─────────────────────────────   ────────────────────────────     ─────────
+max_workers_per_town: 5         max_workers: 3                 → max_workers: 3
+health_check.interval: 10       (not set)                      → health_check.interval: 10
+restart_policy.enabled: true    (not set)                      → restart_policy.enabled: true
+default_roles: [dev, qa]        roles: [dev, dev, qa, lead]    → roles: [dev, dev, qa, lead]
 ```
