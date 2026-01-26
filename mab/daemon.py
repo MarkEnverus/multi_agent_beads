@@ -7,8 +7,10 @@ worker agents, including:
 - Signal handling (SIGTERM, SIGINT) for clean shutdown
 - Start/stop/status functionality
 - File-based logging
+- RPC server for CLI communication
 """
 
+import asyncio
 import fcntl
 import json
 import logging
@@ -21,6 +23,8 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from mab.rpc import RPCError, RPCErrorCode, RPCServer
 
 
 class DaemonState(str, Enum):
@@ -98,10 +102,13 @@ class Daemon:
         self.pid_file = self.mab_dir / "daemon.pid"
         self.lock_file = self.mab_dir / "daemon.lock"
         self.log_file = self.mab_dir / "daemon.log"
+        self.socket_path = self.mab_dir / "mab.sock"
 
         self._lock_fd: int | None = None
         self._shutting_down = False
         self._started_at: datetime | None = None
+        self._rpc_server: RPCServer | None = None
+        self._event_loop: asyncio.AbstractEventLoop | None = None
 
         # Set up logging
         self._setup_logging()
@@ -355,17 +362,157 @@ class Daemon:
 
         This is the core loop that:
         - Monitors worker health
-        - Handles RPC requests (future)
+        - Handles RPC requests
         - Manages auto-restart (future)
         """
         self.logger.info("Entering main event loop")
 
-        while not self._shutting_down:
-            # For now, just sleep and check shutdown flag
-            # Future: asyncio event loop with RPC handler
-            time.sleep(1)
+        # Run the async event loop
+        try:
+            asyncio.run(self._async_run())
+        except Exception as e:
+            self.logger.error(f"Event loop error: {e}")
 
         self.logger.info("Exiting main event loop")
+
+    async def _async_run(self) -> None:
+        """Async main event loop with RPC server."""
+        self._event_loop = asyncio.get_running_loop()
+
+        # Create and start RPC server
+        self._rpc_server = RPCServer(mab_dir=self.mab_dir)
+        self._register_rpc_handlers()
+
+        await self._rpc_server.start()
+        self.logger.info(f"RPC server listening on {self.socket_path}")
+
+        try:
+            # Main loop - check shutdown flag periodically
+            while not self._shutting_down:
+                await asyncio.sleep(1)
+        finally:
+            # Stop RPC server
+            if self._rpc_server is not None:
+                await self._rpc_server.stop(graceful=True)
+                self.logger.info("RPC server stopped")
+
+    def _register_rpc_handlers(self) -> None:
+        """Register RPC method handlers."""
+        if self._rpc_server is None:
+            return
+
+        # Daemon control methods
+        self._rpc_server.register("daemon.status", self._handle_status)
+        self._rpc_server.register("daemon.shutdown", self._handle_shutdown)
+
+        # Worker management methods (stubs for now)
+        self._rpc_server.register("worker.list", self._handle_worker_list)
+        self._rpc_server.register("worker.spawn", self._handle_worker_spawn)
+        self._rpc_server.register("worker.stop", self._handle_worker_stop)
+        self._rpc_server.register("worker.get", self._handle_worker_get)
+
+    async def _handle_status(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle daemon.status RPC request.
+
+        Returns current daemon status including uptime and worker count.
+        """
+        uptime_seconds = None
+        if self._started_at is not None:
+            uptime_seconds = (datetime.now() - self._started_at).total_seconds()
+
+        return {
+            "state": DaemonState.RUNNING.value,
+            "pid": os.getpid(),
+            "uptime_seconds": uptime_seconds,
+            "started_at": self._started_at.isoformat() if self._started_at else None,
+            "workers_count": 0,  # TODO: Read from workers registry
+        }
+
+    async def _handle_shutdown(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle daemon.shutdown RPC request.
+
+        Initiates graceful daemon shutdown.
+        """
+        graceful = params.get("graceful", True)
+        self.logger.info(f"Shutdown requested via RPC (graceful={graceful})")
+
+        # Schedule shutdown (don't block the response)
+        if self._event_loop is not None:
+            self._event_loop.call_soon(self._initiate_shutdown)
+
+        return {"success": True, "message": "Shutdown initiated"}
+
+    def _initiate_shutdown(self) -> None:
+        """Initiate daemon shutdown from RPC handler."""
+        self._shutting_down = True
+
+    async def _handle_worker_list(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle worker.list RPC request.
+
+        Returns list of all workers, optionally filtered by town/role/status.
+        """
+        # TODO: Implement worker listing from database
+        return {"workers": []}
+
+    async def _handle_worker_spawn(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle worker.spawn RPC request.
+
+        Spawns a new worker with the specified role.
+        """
+        role = params.get("role")
+        if not role:
+            raise RPCError(
+                RPCErrorCode.INVALID_PARAMS,
+                "Missing required parameter: role",
+            )
+
+        # TODO: Implement worker spawning
+        self.logger.info(f"Worker spawn requested: role={role}")
+
+        return {
+            "worker_id": "not-implemented",
+            "pid": None,
+            "status": "pending",
+            "message": "Worker spawning not yet implemented",
+        }
+
+    async def _handle_worker_stop(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle worker.stop RPC request.
+
+        Stops a worker by ID.
+        """
+        worker_id = params.get("worker_id")
+        if not worker_id:
+            raise RPCError(
+                RPCErrorCode.INVALID_PARAMS,
+                "Missing required parameter: worker_id",
+            )
+
+        # TODO: Implement worker stopping
+        self.logger.info(f"Worker stop requested: worker_id={worker_id}")
+
+        return {
+            "success": False,
+            "message": "Worker stopping not yet implemented",
+        }
+
+    async def _handle_worker_get(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle worker.get RPC request.
+
+        Returns details of a specific worker.
+        """
+        worker_id = params.get("worker_id")
+        if not worker_id:
+            raise RPCError(
+                RPCErrorCode.INVALID_PARAMS,
+                "Missing required parameter: worker_id",
+            )
+
+        # TODO: Implement worker lookup
+        raise RPCError(
+            RPCErrorCode.INTERNAL_ERROR,
+            f"Worker not found: {worker_id}",
+        )
 
     def _cleanup(self) -> None:
         """Clean up daemon resources on shutdown."""
