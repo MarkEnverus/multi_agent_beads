@@ -1,0 +1,592 @@
+{% extends "base.html" %}
+
+{% block title %}Admin - Multi-Agent Dashboard{% endblock %}
+
+{% block content %}
+{# Page Header #}
+<div class="mb-6">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-white">System Administration</h1>
+            <p class="text-gray-400 mt-1">Manage workers and monitor system health</p>
+        </div>
+        <div class="flex items-center space-x-4">
+            <span id="ws-status" class="flex items-center space-x-2">
+                <span class="relative flex h-3 w-3">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>
+                </span>
+                <span class="text-sm text-gray-400">Connecting...</span>
+            </span>
+            <button
+                id="refresh-btn"
+                class="px-3 py-1.5 text-sm bg-primary-600 hover:bg-primary-700 text-white rounded-md transition-colors"
+                onclick="refreshAll()"
+            >
+                Refresh
+            </button>
+        </div>
+    </div>
+</div>
+
+{# Daemon Status Card #}
+<div class="mb-6">
+    <div id="daemon-status" class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-4">
+                <div class="flex-shrink-0">
+                    <div class="h-12 w-12 rounded-full bg-gray-700 flex items-center justify-center">
+                        <svg class="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+                        </svg>
+                    </div>
+                </div>
+                <div>
+                    <h2 class="text-lg font-semibold text-white">MAB Daemon</h2>
+                    <p id="daemon-state" class="text-gray-400">Loading...</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-6 text-sm">
+                <div>
+                    <span class="text-gray-500">PID:</span>
+                    <span id="daemon-pid" class="text-gray-300 ml-1">-</span>
+                </div>
+                <div>
+                    <span class="text-gray-500">Uptime:</span>
+                    <span id="daemon-uptime" class="text-gray-300 ml-1">-</span>
+                </div>
+                <div>
+                    <span class="text-gray-500">Workers:</span>
+                    <span id="daemon-workers" class="text-primary-400 font-semibold ml-1">0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Health and Stats Grid #}
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">Healthy</span>
+            <span class="h-8 w-8 rounded-full bg-green-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-healthy" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">Unhealthy</span>
+            <span class="h-8 w-8 rounded-full bg-yellow-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-unhealthy" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">Crashed</span>
+            <span class="h-8 w-8 rounded-full bg-red-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-crashed" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">Total Restarts</span>
+            <span class="h-8 w-8 rounded-full bg-gray-700 flex items-center justify-center">
+                <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-restarts" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+</div>
+
+{# Spawn Worker Section #}
+<div class="mb-6">
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+        <h3 class="text-lg font-semibold text-white mb-4">Spawn New Worker</h3>
+        <form id="spawn-form" class="flex items-end space-x-4" onsubmit="spawnWorker(event)">
+            <div class="flex-1">
+                <label for="spawn-role" class="block text-sm font-medium text-gray-400 mb-1">Role</label>
+                <select id="spawn-role" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500">
+                    <option value="dev">Developer</option>
+                    <option value="qa">QA</option>
+                    <option value="reviewer">Reviewer</option>
+                    <option value="tech-lead">Tech Lead</option>
+                    <option value="manager">Manager</option>
+                </select>
+            </div>
+            <div class="flex-1">
+                <label for="spawn-project" class="block text-sm font-medium text-gray-400 mb-1">Project Path</label>
+                <input type="text" id="spawn-project" value="{{ project_path }}"
+                       class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                       placeholder="/path/to/project">
+            </div>
+            <div class="flex items-center space-x-2">
+                <input type="checkbox" id="spawn-autorestart" checked
+                       class="h-4 w-4 text-primary-600 bg-gray-700 border-gray-600 rounded focus:ring-primary-500">
+                <label for="spawn-autorestart" class="text-sm text-gray-400">Auto-restart</label>
+            </div>
+            <button type="submit"
+                    class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors flex items-center space-x-2">
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                <span>Spawn</span>
+            </button>
+        </form>
+    </div>
+</div>
+
+{# Workers List #}
+<div class="bg-gray-800 rounded-lg border border-gray-700">
+    <div class="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
+        <h3 class="text-lg font-semibold text-white">Workers</h3>
+        <div class="flex items-center space-x-2">
+            <select id="filter-status" onchange="filterWorkers()"
+                    class="bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-1 text-sm">
+                <option value="">All Statuses</option>
+                <option value="running">Running</option>
+                <option value="stopped">Stopped</option>
+                <option value="crashed">Crashed</option>
+            </select>
+            <select id="filter-role" onchange="filterWorkers()"
+                    class="bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-1 text-sm">
+                <option value="">All Roles</option>
+                <option value="dev">Developer</option>
+                <option value="qa">QA</option>
+                <option value="reviewer">Reviewer</option>
+                <option value="tech-lead">Tech Lead</option>
+                <option value="manager">Manager</option>
+            </select>
+        </div>
+    </div>
+    <div id="workers-list" class="divide-y divide-gray-700">
+        <div class="px-6 py-8 text-center text-gray-400">
+            <svg class="animate-spin h-6 w-6 mx-auto mb-2 text-primary-500" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Loading workers...
+        </div>
+    </div>
+</div>
+
+{# Toast Notifications Container #}
+<div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // WebSocket connection
+    let ws = null;
+    let wsReconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+
+    // Store worker data
+    let workers = [];
+
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        connectWebSocket();
+        refreshAll();
+        // Refresh every 10 seconds as backup
+        setInterval(refreshAll, 10000);
+    });
+
+    // WebSocket connection management
+    function connectWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+        ws.onopen = function() {
+            console.log('WebSocket connected');
+            wsReconnectAttempts = 0;
+            updateWsStatus('connected');
+        };
+
+        ws.onclose = function() {
+            console.log('WebSocket disconnected');
+            updateWsStatus('disconnected');
+
+            // Try to reconnect
+            if (wsReconnectAttempts < maxReconnectAttempts) {
+                wsReconnectAttempts++;
+                setTimeout(connectWebSocket, 2000 * wsReconnectAttempts);
+            }
+        };
+
+        ws.onerror = function(error) {
+            console.error('WebSocket error:', error);
+            updateWsStatus('error');
+        };
+
+        ws.onmessage = function(event) {
+            const message = JSON.parse(event.data);
+            handleWebSocketMessage(message);
+        };
+    }
+
+    function updateWsStatus(status) {
+        const statusEl = document.getElementById('ws-status');
+        let html = '';
+
+        if (status === 'connected') {
+            html = `
+                <span class="relative flex h-3 w-3">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                </span>
+                <span class="text-sm text-gray-400">Live</span>
+            `;
+        } else if (status === 'disconnected') {
+            html = `
+                <span class="relative flex h-3 w-3">
+                    <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                </span>
+                <span class="text-sm text-gray-400">Disconnected</span>
+            `;
+        } else {
+            html = `
+                <span class="relative flex h-3 w-3">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>
+                </span>
+                <span class="text-sm text-gray-400">Connecting...</span>
+            `;
+        }
+
+        statusEl.innerHTML = html;
+    }
+
+    function handleWebSocketMessage(message) {
+        switch (message.type) {
+            case 'connected':
+                showToast('Connected to real-time updates', 'success');
+                break;
+            case 'worker.spawned':
+                showToast(`Worker spawned: ${message.data.role}`, 'success');
+                refreshWorkers();
+                break;
+            case 'worker.stopped':
+                showToast(`Worker stopped: ${message.data.worker_id}`, 'info');
+                refreshWorkers();
+                break;
+            case 'worker.crashed':
+                showToast(`Worker crashed: ${message.data.worker_id}`, 'error');
+                refreshWorkers();
+                break;
+            case 'daemon.status':
+                updateDaemonStatus(message.data);
+                break;
+        }
+    }
+
+    // API calls
+    async function refreshAll() {
+        await Promise.all([
+            refreshDaemonStatus(),
+            refreshHealthStatus(),
+            refreshWorkers()
+        ]);
+    }
+
+    async function refreshDaemonStatus() {
+        try {
+            const response = await fetch('/api/workers/daemon/status');
+            if (response.ok) {
+                const data = await response.json();
+                updateDaemonStatus(data);
+            } else if (response.status === 503) {
+                updateDaemonStatus({ state: 'stopped' });
+            }
+        } catch (error) {
+            console.error('Failed to fetch daemon status:', error);
+            updateDaemonStatus({ state: 'unknown' });
+        }
+    }
+
+    function updateDaemonStatus(data) {
+        const stateEl = document.getElementById('daemon-state');
+        const pidEl = document.getElementById('daemon-pid');
+        const uptimeEl = document.getElementById('daemon-uptime');
+        const workersEl = document.getElementById('daemon-workers');
+        const statusCard = document.getElementById('daemon-status');
+
+        // Update state with color
+        const state = data.state || 'unknown';
+        let stateClass = 'text-gray-400';
+        if (state === 'running') stateClass = 'text-green-400';
+        else if (state === 'stopped') stateClass = 'text-red-400';
+        else if (state === 'starting') stateClass = 'text-yellow-400';
+
+        stateEl.innerHTML = `Status: <span class="${stateClass} font-semibold">${state.toUpperCase()}</span>`;
+
+        // Update PID
+        pidEl.textContent = data.pid || '-';
+
+        // Update uptime
+        if (data.uptime_seconds) {
+            uptimeEl.textContent = formatUptime(data.uptime_seconds);
+        } else {
+            uptimeEl.textContent = '-';
+        }
+
+        // Update workers count
+        workersEl.textContent = data.workers_count || 0;
+    }
+
+    async function refreshHealthStatus() {
+        try {
+            const response = await fetch('/api/workers/health');
+            if (response.ok) {
+                const data = await response.json();
+                document.getElementById('stat-healthy').textContent = data.healthy_count || 0;
+                document.getElementById('stat-unhealthy').textContent = data.unhealthy_count || 0;
+                document.getElementById('stat-crashed').textContent = data.crashed_count || 0;
+                document.getElementById('stat-restarts').textContent = data.total_restarts || 0;
+            }
+        } catch (error) {
+            console.error('Failed to fetch health status:', error);
+        }
+    }
+
+    async function refreshWorkers() {
+        const statusFilter = document.getElementById('filter-status').value;
+        const roleFilter = document.getElementById('filter-role').value;
+
+        let url = '/api/workers';
+        const params = new URLSearchParams();
+        if (statusFilter) params.append('status', statusFilter);
+        if (roleFilter) params.append('role', roleFilter);
+        if (params.toString()) url += '?' + params.toString();
+
+        try {
+            const response = await fetch(url);
+            if (response.ok) {
+                const data = await response.json();
+                workers = data.workers || [];
+                renderWorkers(workers);
+            } else if (response.status === 503) {
+                renderWorkers([]);
+                showToast('Daemon not running', 'warning');
+            }
+        } catch (error) {
+            console.error('Failed to fetch workers:', error);
+        }
+    }
+
+    function filterWorkers() {
+        refreshWorkers();
+    }
+
+    function renderWorkers(workers) {
+        const container = document.getElementById('workers-list');
+
+        if (workers.length === 0) {
+            container.innerHTML = `
+                <div class="px-6 py-8 text-center text-gray-400">
+                    <svg class="h-12 w-12 mx-auto mb-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                    </svg>
+                    <p>No workers running</p>
+                    <p class="text-sm mt-1">Spawn a worker to get started</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = workers.map(worker => renderWorkerRow(worker)).join('');
+    }
+
+    function renderWorkerRow(worker) {
+        const statusClass = {
+            'running': 'text-green-400',
+            'stopped': 'text-gray-400',
+            'crashed': 'text-red-400',
+            'restarting': 'text-yellow-400'
+        }[worker.status] || 'text-gray-400';
+
+        const statusBg = {
+            'running': 'bg-green-500',
+            'stopped': 'bg-gray-500',
+            'crashed': 'bg-red-500',
+            'restarting': 'bg-yellow-500'
+        }[worker.status] || 'bg-gray-500';
+
+        return `
+            <div class="px-6 py-4 flex items-center justify-between hover:bg-gray-700/50 transition-colors">
+                <div class="flex items-center space-x-4">
+                    <span class="h-2 w-2 rounded-full ${statusBg}"></span>
+                    <div>
+                        <p class="text-white font-medium">${worker.id}</p>
+                        <p class="text-sm text-gray-400">
+                            <span class="font-medium">${worker.role}</span>
+                            <span class="mx-1">|</span>
+                            PID: ${worker.pid || '-'}
+                            ${worker.crash_count > 0 ? `<span class="mx-1">|</span> Crashes: ${worker.crash_count}` : ''}
+                        </p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <span class="${statusClass} text-sm font-medium">${worker.status.toUpperCase()}</span>
+                    <div class="flex items-center space-x-2">
+                        ${worker.status === 'running' ? `
+                            <button onclick="restartWorker('${worker.id}')"
+                                    class="p-1.5 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 rounded transition-colors"
+                                    title="Restart">
+                                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                            </button>
+                            <button onclick="stopWorker('${worker.id}')"
+                                    class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors"
+                                    title="Stop">
+                                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                                </svg>
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Actions
+    async function spawnWorker(event) {
+        event.preventDefault();
+
+        const role = document.getElementById('spawn-role').value;
+        const projectPath = document.getElementById('spawn-project').value;
+        const autoRestart = document.getElementById('spawn-autorestart').checked;
+
+        if (!projectPath) {
+            showToast('Project path is required', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/workers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    role: role,
+                    project_path: projectPath,
+                    auto_restart: autoRestart
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                showToast(`Worker spawned: ${data.worker_id}`, 'success');
+                refreshAll();
+            } else {
+                const error = await response.json();
+                showToast(error.detail || 'Failed to spawn worker', 'error');
+            }
+        } catch (error) {
+            console.error('Failed to spawn worker:', error);
+            showToast('Failed to spawn worker', 'error');
+        }
+    }
+
+    async function stopWorker(workerId) {
+        if (!confirm(`Stop worker ${workerId}?`)) return;
+
+        try {
+            const response = await fetch(`/api/workers/${workerId}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                showToast(`Worker stopped: ${workerId}`, 'success');
+                refreshAll();
+            } else {
+                const error = await response.json();
+                showToast(error.detail || 'Failed to stop worker', 'error');
+            }
+        } catch (error) {
+            console.error('Failed to stop worker:', error);
+            showToast('Failed to stop worker', 'error');
+        }
+    }
+
+    async function restartWorker(workerId) {
+        if (!confirm(`Restart worker ${workerId}?`)) return;
+
+        try {
+            const response = await fetch(`/api/workers/${workerId}/restart`, {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                showToast(`Worker restarted`, 'success');
+                refreshAll();
+            } else {
+                const error = await response.json();
+                showToast(error.detail || 'Failed to restart worker', 'error');
+            }
+        } catch (error) {
+            console.error('Failed to restart worker:', error);
+            showToast('Failed to restart worker', 'error');
+        }
+    }
+
+    // Helpers
+    function formatUptime(seconds) {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+
+        if (hours > 0) {
+            return `${hours}h ${minutes}m`;
+        } else if (minutes > 0) {
+            return `${minutes}m ${secs}s`;
+        } else {
+            return `${secs}s`;
+        }
+    }
+
+    function showToast(message, type = 'info') {
+        const container = document.getElementById('toast-container');
+        const id = 'toast-' + Date.now();
+
+        const bgColor = {
+            'success': 'bg-green-600',
+            'error': 'bg-red-600',
+            'warning': 'bg-yellow-600',
+            'info': 'bg-primary-600'
+        }[type] || 'bg-gray-600';
+
+        const toast = document.createElement('div');
+        toast.id = id;
+        toast.className = `${bgColor} text-white px-4 py-2 rounded-lg shadow-lg transform transition-all duration-300 translate-x-full`;
+        toast.textContent = message;
+
+        container.appendChild(toast);
+
+        // Animate in
+        setTimeout(() => toast.classList.remove('translate-x-full'), 10);
+
+        // Remove after 3 seconds
+        setTimeout(() => {
+            toast.classList.add('translate-x-full');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+</script>
+{% endblock %}

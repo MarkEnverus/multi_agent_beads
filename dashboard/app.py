@@ -16,6 +16,7 @@ from dashboard.config import (
     HOST,
     LOG_LEVEL_STR,
     PORT,
+    PROJECT_ROOT,
     STATIC_DIR,
     TEMPLATES_DIR,
     setup_logging,
@@ -30,6 +31,8 @@ from dashboard.routes.agents import _get_active_agents
 from dashboard.routes.agents import router as agents_router
 from dashboard.routes.beads import router as beads_router
 from dashboard.routes.logs import router as logs_router
+from dashboard.routes.workers import router as workers_router
+from dashboard.routes.ws import router as ws_router
 from dashboard.services import BeadService
 
 # Configure logging using centralized setup
@@ -47,7 +50,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         PORT,
         LOG_LEVEL_STR,
     )
-    logger.info("Routers registered: /api/agents, /api/beads, /api/logs")
+    logger.info("Routers registered: /api/agents, /api/beads, /api/logs, /api/workers, /ws")
     yield
     # Shutdown
     logger.info("Dashboard shutting down")
@@ -110,6 +113,8 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.include_router(agents_router)
 app.include_router(beads_router)
 app.include_router(logs_router)
+app.include_router(workers_router)
+app.include_router(ws_router)
 
 
 @app.get("/health")
@@ -124,6 +129,21 @@ async def dashboard(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         "dashboard.html",
         {"request": request},
+    )
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request) -> HTMLResponse:
+    """Render the system administration page.
+
+    Provides worker management, daemon status, and health monitoring.
+    """
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "project_path": str(PROJECT_ROOT),
+        },
     )
 
 
