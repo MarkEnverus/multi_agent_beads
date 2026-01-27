@@ -3,6 +3,7 @@
 from mab.rpc import DaemonNotRunningError as RPCDaemonNotRunningError
 from mab.rpc import RPCClient, RPCError, RPCErrorCode, RPCRequest, RPCResponse, RPCServer
 from mab.version import __version__
+from mab.workers import HealthConfig, HealthStatus
 
 __all__ = [
     "__version__",
@@ -13,4 +14,6 @@ __all__ = [
     "RPCError",
     "RPCErrorCode",
     "RPCDaemonNotRunningError",
+    "HealthConfig",
+    "HealthStatus",
 ]

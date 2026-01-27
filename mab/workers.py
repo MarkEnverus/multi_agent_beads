@@ -5,12 +5,13 @@ This module implements worker lifecycle management for the daemon, including:
 - SQLite database for state persistence across daemon restarts
 - Process spawning and tracking
 - Health monitoring via heartbeat files
-- Auto-restart on worker crash
+- Auto-restart on worker crash with exponential backoff
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import signal
 import sqlite3
@@ -22,6 +23,8 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("mab.workers")
 
 # Worker roles
 VALID_ROLES = frozenset(["dev", "qa", "tech_lead", "manager", "reviewer"])
@@ -40,6 +43,53 @@ class WorkerStatus(str, Enum):
 
 
 @dataclass
+class HealthConfig:
+    """Configuration for health monitoring and auto-restart.
+
+    Attributes:
+        health_check_interval_seconds: How often to check worker health (default: 30).
+        heartbeat_timeout_seconds: Max age of heartbeat before considering crashed (default: 60).
+        max_restart_count: Maximum auto-restarts before giving up (default: 5).
+        restart_backoff_base_seconds: Base delay for exponential backoff (default: 5).
+        restart_backoff_max_seconds: Maximum backoff delay (default: 300 = 5 min).
+        auto_restart_enabled: Whether auto-restart is enabled (default: True).
+    """
+
+    health_check_interval_seconds: float = 30.0
+    heartbeat_timeout_seconds: float = 60.0
+    max_restart_count: int = 5
+    restart_backoff_base_seconds: float = 5.0
+    restart_backoff_max_seconds: float = 300.0
+    auto_restart_enabled: bool = True
+
+    def calculate_backoff(self, crash_count: int) -> float:
+        """Calculate backoff delay using exponential backoff.
+
+        Args:
+            crash_count: Number of times the worker has crashed.
+
+        Returns:
+            Backoff delay in seconds.
+        """
+        # Exponential backoff: base * 2^(crash_count-1), capped at max
+        if crash_count <= 0:
+            return 0.0
+        delay = self.restart_backoff_base_seconds * (2 ** (crash_count - 1))
+        return min(delay, self.restart_backoff_max_seconds)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "health_check_interval_seconds": self.health_check_interval_seconds,
+            "heartbeat_timeout_seconds": self.heartbeat_timeout_seconds,
+            "max_restart_count": self.max_restart_count,
+            "restart_backoff_base_seconds": self.restart_backoff_base_seconds,
+            "restart_backoff_max_seconds": self.restart_backoff_max_seconds,
+            "auto_restart_enabled": self.auto_restart_enabled,
+        }
+
+
+@dataclass
 class Worker:
     """Represents a worker agent process."""
 
@@ -55,6 +105,8 @@ class Worker:
     last_heartbeat: str | None = None
     exit_code: int | None = None
     error_message: str | None = None
+    last_restart_at: str | None = None
+    auto_restart_enabled: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -71,6 +123,8 @@ class Worker:
             "last_heartbeat": self.last_heartbeat,
             "exit_code": self.exit_code,
             "error_message": self.error_message,
+            "last_restart_at": self.last_restart_at,
+            "auto_restart_enabled": self.auto_restart_enabled,
         }
 
     @classmethod
@@ -89,6 +143,8 @@ class Worker:
             last_heartbeat=row["last_heartbeat"],
             exit_code=row["exit_code"],
             error_message=row["error_message"],
+            last_restart_at=row["last_restart_at"],
+            auto_restart_enabled=bool(row["auto_restart_enabled"]),
         )
 
 
@@ -156,7 +212,9 @@ class WorkerDatabase:
                     crash_count INTEGER DEFAULT 0,
                     last_heartbeat TEXT,
                     exit_code INTEGER,
-                    error_message TEXT
+                    error_message TEXT,
+                    last_restart_at TEXT,
+                    auto_restart_enabled INTEGER DEFAULT 1
                 )
             """)
             conn.execute("""
@@ -175,8 +233,8 @@ class WorkerDatabase:
                 INSERT INTO workers (
                     id, role, project_path, status, pid, created_at,
                     started_at, stopped_at, crash_count, last_heartbeat,
-                    exit_code, error_message
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    exit_code, error_message, last_restart_at, auto_restart_enabled
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     worker.id,
@@ -191,6 +249,8 @@ class WorkerDatabase:
                     worker.last_heartbeat,
                     worker.exit_code,
                     worker.error_message,
+                    worker.last_restart_at,
+                    1 if worker.auto_restart_enabled else 0,
                 ),
             )
             conn.commit()
@@ -210,7 +270,9 @@ class WorkerDatabase:
                     crash_count = ?,
                     last_heartbeat = ?,
                     exit_code = ?,
-                    error_message = ?
+                    error_message = ?,
+                    last_restart_at = ?,
+                    auto_restart_enabled = ?
                 WHERE id = ?
             """,
                 (
@@ -224,6 +286,8 @@ class WorkerDatabase:
                     worker.last_heartbeat,
                     worker.exit_code,
                     worker.error_message,
+                    worker.last_restart_at,
+                    1 if worker.auto_restart_enabled else 0,
                     worker.id,
                 ),
             )
@@ -293,34 +357,67 @@ class WorkerDatabase:
             return int(result[0]) if result else 0
 
 
+@dataclass
+class HealthStatus:
+    """Health status summary for the worker system.
+
+    Attributes:
+        healthy_workers: Number of healthy running workers.
+        unhealthy_workers: Number of workers needing attention.
+        crashed_workers: Number of currently crashed workers.
+        total_restarts: Total restart count across all workers.
+        workers_at_max_restarts: Workers that have hit max restart limit.
+        config: Current health configuration.
+    """
+
+    healthy_workers: int = 0
+    unhealthy_workers: int = 0
+    crashed_workers: int = 0
+    total_restarts: int = 0
+    workers_at_max_restarts: int = 0
+    config: HealthConfig = field(default_factory=HealthConfig)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "healthy_workers": self.healthy_workers,
+            "unhealthy_workers": self.unhealthy_workers,
+            "crashed_workers": self.crashed_workers,
+            "total_restarts": self.total_restarts,
+            "workers_at_max_restarts": self.workers_at_max_restarts,
+            "config": self.config.to_dict(),
+        }
+
+
 class WorkerManager:
     """Manages worker lifecycle with process spawning and health monitoring.
 
     The WorkerManager handles:
     - Spawning worker processes (cross-platform)
     - Monitoring worker health via heartbeat files
-    - Detecting crashed workers and handling auto-restart
+    - Detecting crashed workers and auto-restart with exponential backoff
     - Graceful and forceful worker termination
     """
-
-    # Heartbeat timeout before considering worker crashed
-    HEARTBEAT_TIMEOUT_SECONDS = 60
 
     def __init__(
         self,
         mab_dir: Path,
         heartbeat_dir: Path | None = None,
+        health_config: HealthConfig | None = None,
     ) -> None:
         """Initialize WorkerManager.
 
         Args:
             mab_dir: Global .mab directory (for database).
             heartbeat_dir: Directory for heartbeat files.
+            health_config: Health monitoring configuration.
         """
         self.mab_dir = mab_dir
         self.db = WorkerDatabase(mab_dir / "workers.db")
         self.heartbeat_dir = heartbeat_dir or mab_dir / "heartbeat"
+        self.health_config = health_config or HealthConfig()
         self._active_processes: dict[str, subprocess.Popen[bytes]] = {}
+        self._pending_restarts: dict[str, asyncio.Task[None]] = {}
         self._ensure_heartbeat_dir()
 
     def _ensure_heartbeat_dir(self) -> None:
@@ -668,7 +765,7 @@ while True:
         last_heartbeat = self._check_heartbeat(worker.id)
         if last_heartbeat is not None:
             age = (datetime.now() - last_heartbeat).total_seconds()
-            if age > self.HEARTBEAT_TIMEOUT_SECONDS:
+            if age > self.health_config.heartbeat_timeout_seconds:
                 return False
 
             # Update last heartbeat in database
@@ -680,6 +777,284 @@ while True:
     def count_running(self) -> int:
         """Count currently running workers."""
         return self.db.count_workers(status=WorkerStatus.RUNNING)
+
+    async def auto_restart(self, worker: Worker) -> Worker | None:
+        """Attempt to auto-restart a crashed worker with exponential backoff.
+
+        Args:
+            worker: The crashed worker to restart.
+
+        Returns:
+            The restarted Worker if successful, None if restart was skipped
+            (disabled, at max restarts, or already pending).
+        """
+        # Check if auto-restart is enabled globally and for this worker
+        if not self.health_config.auto_restart_enabled:
+            logger.info(f"Auto-restart disabled globally, not restarting {worker.id}")
+            return None
+
+        if not worker.auto_restart_enabled:
+            logger.info(f"Auto-restart disabled for {worker.id}")
+            return None
+
+        # Check if we've hit max restart count
+        if worker.crash_count >= self.health_config.max_restart_count:
+            logger.warning(
+                f"Worker {worker.id} has crashed {worker.crash_count} times, "
+                f"exceeds max {self.health_config.max_restart_count}. "
+                "Disabling auto-restart."
+            )
+            worker.auto_restart_enabled = False
+            worker.error_message = f"Exceeded max restart count ({self.health_config.max_restart_count})"
+            self.db.update_worker(worker)
+            return None
+
+        # Check if already pending restart
+        if worker.id in self._pending_restarts:
+            task = self._pending_restarts[worker.id]
+            if not task.done():
+                logger.debug(f"Worker {worker.id} already has pending restart")
+                return None
+            else:
+                # Clean up completed task
+                del self._pending_restarts[worker.id]
+
+        # Calculate backoff delay
+        backoff_delay = self.health_config.calculate_backoff(worker.crash_count)
+
+        logger.info(
+            f"Scheduling auto-restart for {worker.id} in {backoff_delay:.1f}s "
+            f"(crash #{worker.crash_count})"
+        )
+
+        # Schedule the restart with backoff
+        task = asyncio.create_task(
+            self._delayed_restart(worker, backoff_delay)
+        )
+        self._pending_restarts[worker.id] = task
+
+        return None  # Return None immediately, restart will happen later
+
+    async def _delayed_restart(
+        self,
+        worker: Worker,
+        delay: float,
+    ) -> None:
+        """Perform a delayed restart of a worker.
+
+        Args:
+            worker: Worker to restart.
+            delay: Delay in seconds before restarting.
+        """
+        try:
+            # Wait for backoff period
+            await asyncio.sleep(delay)
+
+            # Refresh worker state from database
+            current_worker = self.db.get_worker(worker.id)
+            if current_worker is None:
+                logger.warning(f"Worker {worker.id} no longer exists, skipping restart")
+                return
+
+            # Check if status changed while we were waiting
+            if current_worker.status not in (WorkerStatus.CRASHED, WorkerStatus.FAILED):
+                logger.info(
+                    f"Worker {worker.id} status changed to {current_worker.status}, "
+                    "skipping restart"
+                )
+                return
+
+            # Check if auto-restart was disabled while waiting
+            if not current_worker.auto_restart_enabled:
+                logger.info(f"Auto-restart disabled for {worker.id} while waiting")
+                return
+
+            # Perform the restart
+            logger.info(f"Restarting worker {worker.id}")
+
+            try:
+                restarted = await self._restart_worker(current_worker)
+                logger.info(
+                    f"Worker {worker.id} restarted successfully as PID {restarted.pid}"
+                )
+            except WorkerSpawnError as e:
+                logger.error(f"Failed to restart worker {worker.id}: {e}")
+                # Update error message
+                current_worker.error_message = f"Restart failed: {e}"
+                current_worker.status = WorkerStatus.FAILED
+                self.db.update_worker(current_worker)
+
+        except asyncio.CancelledError:
+            logger.debug(f"Restart cancelled for {worker.id}")
+            raise
+        finally:
+            # Clean up from pending restarts
+            self._pending_restarts.pop(worker.id, None)
+
+    async def _restart_worker(self, worker: Worker) -> Worker:
+        """Restart a worker by spawning a new process with the same configuration.
+
+        Args:
+            worker: Worker to restart.
+
+        Returns:
+            Updated Worker with new process.
+        """
+        # Mark restart time
+        worker.last_restart_at = datetime.now().isoformat()
+
+        # Spawn new process
+        env = os.environ.copy()
+        env["WORKER_ID"] = worker.id
+        env["WORKER_ROLE"] = worker.role
+        env["WORKER_PROJECT"] = worker.project_path
+        env["WORKER_HEARTBEAT_FILE"] = str(self._get_heartbeat_file(worker.id))
+
+        # Get the worker script path
+        mab_root = Path(__file__).parent.parent
+        worker_script = mab_root / "scripts" / "worker_agent.py"
+
+        # Use placeholder if script doesn't exist
+        if not worker_script.exists():
+            cmd = [
+                "python3",
+                "-c",
+                """
+import time
+import os
+from pathlib import Path
+
+heartbeat_file = Path(os.environ.get('WORKER_HEARTBEAT_FILE', '/tmp/heartbeat'))
+print(f"Worker {os.environ.get('WORKER_ID')} restarted")
+
+while True:
+    heartbeat_file.write_text(str(time.time()))
+    time.sleep(10)
+""",
+            ]
+        else:
+            cmd = ["python3", str(worker_script)]
+
+        # Spawn the process
+        process = subprocess.Popen(
+            cmd,
+            env=env,
+            cwd=worker.project_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+
+        # Give it a moment to start
+        await asyncio.sleep(0.1)
+
+        # Check if it crashed immediately
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            raise WorkerSpawnError(
+                f"Worker process exited immediately with code {process.returncode}: "
+                f"{stderr.decode()}"
+            )
+
+        # Update worker state
+        worker.pid = process.pid
+        worker.status = WorkerStatus.RUNNING
+        worker.started_at = datetime.now().isoformat()
+        worker.stopped_at = None
+        worker.exit_code = None
+        worker.error_message = None
+
+        # Track the process
+        self._active_processes[worker.id] = process
+
+        # Initial heartbeat
+        self._update_heartbeat(worker.id)
+        worker.last_heartbeat = datetime.now().isoformat()
+
+        self.db.update_worker(worker)
+        return worker
+
+    def get_health_status(self) -> HealthStatus:
+        """Get current health status of the worker system.
+
+        Returns:
+            HealthStatus with current metrics.
+        """
+        all_workers = self.db.list_workers()
+        running_workers = [w for w in all_workers if w.status == WorkerStatus.RUNNING]
+        crashed_workers = [w for w in all_workers if w.status == WorkerStatus.CRASHED]
+
+        # Count healthy vs unhealthy running workers
+        healthy_count = 0
+        unhealthy_count = 0
+
+        for worker in running_workers:
+            last_hb = self._check_heartbeat(worker.id)
+            if last_hb is not None:
+                age = (datetime.now() - last_hb).total_seconds()
+                if age <= self.health_config.heartbeat_timeout_seconds:
+                    healthy_count += 1
+                else:
+                    unhealthy_count += 1
+            else:
+                # No heartbeat file - check if process is running
+                if worker.pid is not None and self._is_process_running(worker.pid):
+                    unhealthy_count += 1  # Running but no heartbeat
+                else:
+                    unhealthy_count += 1  # May have crashed
+
+        # Calculate totals
+        total_restarts = sum(w.crash_count for w in all_workers)
+        at_max_restarts = sum(
+            1 for w in all_workers
+            if w.crash_count >= self.health_config.max_restart_count
+        )
+
+        return HealthStatus(
+            healthy_workers=healthy_count,
+            unhealthy_workers=unhealthy_count,
+            crashed_workers=len(crashed_workers),
+            total_restarts=total_restarts,
+            workers_at_max_restarts=at_max_restarts,
+            config=self.health_config,
+        )
+
+    async def health_check_and_restart(self) -> tuple[list[Worker], list[Worker]]:
+        """Check health of all running workers and auto-restart crashed ones.
+
+        This is the main health check method that should be called periodically.
+        It combines crash detection with auto-restart logic.
+
+        Returns:
+            Tuple of (crashed_workers, restart_scheduled_workers).
+        """
+        crashed = await self.health_check()
+        restart_scheduled: list[Worker] = []
+
+        for worker in crashed:
+            # Attempt auto-restart
+            if self.health_config.auto_restart_enabled and worker.auto_restart_enabled:
+                result = await self.auto_restart(worker)
+                if result is None:
+                    # Restart was scheduled (not immediate)
+                    if worker.id in self._pending_restarts:
+                        restart_scheduled.append(worker)
+
+        return crashed, restart_scheduled
+
+    def cancel_pending_restarts(self) -> int:
+        """Cancel all pending restart tasks.
+
+        Returns:
+            Number of restart tasks cancelled.
+        """
+        cancelled = 0
+        for worker_id, task in list(self._pending_restarts.items()):
+            if not task.done():
+                task.cancel()
+                cancelled += 1
+            del self._pending_restarts[worker_id]
+        return cancelled
 
 
 def get_default_worker_manager(

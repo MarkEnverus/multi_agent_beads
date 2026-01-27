@@ -31,6 +31,7 @@ from typing import Any
 
 from mab.rpc import RPCError, RPCErrorCode, RPCServer
 from mab.workers import (
+    HealthConfig,
     WorkerError,
     WorkerManager,
     WorkerNotFoundError,
@@ -117,6 +118,7 @@ class Daemon:
         self,
         mab_dir: Path | None = None,
         town_path: Path | None = None,
+        health_config: HealthConfig | None = None,
     ) -> None:
         """Initialize daemon with configuration.
 
@@ -124,6 +126,7 @@ class Daemon:
             mab_dir: Path to global .mab directory. Defaults to ~/.mab/.
             town_path: Path to project directory for per-project config/logs.
                       If not specified, some per-project features won't work.
+            health_config: Health monitoring configuration. Defaults to HealthConfig().
         """
         # Global daemon state lives at ~/.mab/ by default
         self.mab_dir = mab_dir or MAB_HOME
@@ -131,6 +134,9 @@ class Daemon:
         self.lock_file = self.mab_dir / "daemon.lock"
         self.log_file = self.mab_dir / "daemon.log"
         self.socket_path = self.mab_dir / "mab.sock"
+
+        # Health configuration
+        self.health_config = health_config or HealthConfig()
 
         # Per-project state (optional)
         self.town_path: Path | None = town_path
@@ -422,13 +428,17 @@ class Daemon:
         """Async main event loop with RPC server."""
         self._event_loop = asyncio.get_running_loop()
 
-        # Initialize worker manager
+        # Initialize worker manager with health config
         heartbeat_dir = self.town_heartbeat_dir if self.town_heartbeat_dir else self.mab_dir / "heartbeat"
         self._worker_manager = WorkerManager(
             mab_dir=self.mab_dir,
             heartbeat_dir=heartbeat_dir,
+            health_config=self.health_config,
         )
-        self.logger.info("Worker manager initialized")
+        self.logger.info(
+            f"Worker manager initialized (health_check_interval={self.health_config.health_check_interval_seconds}s, "
+            f"max_restarts={self.health_config.max_restart_count})"
+        )
 
         # Create and start RPC server
         self._rpc_server = RPCServer(mab_dir=self.mab_dir)
@@ -455,6 +465,12 @@ class Daemon:
                     pass
                 self.logger.info("Health check loop stopped")
 
+            # Cancel pending restarts
+            if self._worker_manager is not None:
+                cancelled = self._worker_manager.cancel_pending_restarts()
+                if cancelled > 0:
+                    self.logger.info(f"Cancelled {cancelled} pending restarts")
+
             # Stop all workers gracefully
             if self._worker_manager is not None:
                 stopped = await self._worker_manager.stop_all(graceful=True)
@@ -466,17 +482,27 @@ class Daemon:
                 self.logger.info("RPC server stopped")
 
     async def _health_check_loop(self) -> None:
-        """Periodic health check for workers."""
+        """Periodic health check for workers with auto-restart."""
         while not self._shutting_down:
             try:
-                await asyncio.sleep(30)  # Check every 30 seconds
+                # Use configurable health check interval
+                await asyncio.sleep(self.health_config.health_check_interval_seconds)
 
                 if self._worker_manager is not None:
-                    crashed = await self._worker_manager.health_check()
+                    # Use health_check_and_restart for crash detection + auto-restart
+                    crashed, restart_scheduled = await self._worker_manager.health_check_and_restart()
+
                     for worker in crashed:
                         self.logger.warning(
                             f"Worker {worker.id} crashed (count: {worker.crash_count})"
                         )
+
+                    for worker in restart_scheduled:
+                        backoff = self.health_config.calculate_backoff(worker.crash_count)
+                        self.logger.info(
+                            f"Auto-restart scheduled for {worker.id} in {backoff:.1f}s"
+                        )
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -491,11 +517,14 @@ class Daemon:
         self._rpc_server.register("daemon.status", self._handle_status)
         self._rpc_server.register("daemon.shutdown", self._handle_shutdown)
 
-        # Worker management methods (stubs for now)
+        # Worker management methods
         self._rpc_server.register("worker.list", self._handle_worker_list)
         self._rpc_server.register("worker.spawn", self._handle_worker_spawn)
         self._rpc_server.register("worker.stop", self._handle_worker_stop)
         self._rpc_server.register("worker.get", self._handle_worker_get)
+
+        # Health monitoring methods
+        self._rpc_server.register("health.status", self._handle_health_status)
 
     async def _handle_status(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle daemon.status RPC request.
@@ -685,6 +714,20 @@ class Daemon:
                 RPCErrorCode.INVALID_PARAMS,
                 f"Worker not found: {worker_id}",
             )
+
+    async def _handle_health_status(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle health.status RPC request.
+
+        Returns current health status including worker counts and configuration.
+        """
+        if self._worker_manager is None:
+            raise RPCError(
+                RPCErrorCode.INTERNAL_ERROR,
+                "Worker manager not initialized",
+            )
+
+        health_status = self._worker_manager.get_health_status()
+        return health_status.to_dict()
 
     def _cleanup(self) -> None:
         """Clean up daemon resources on shutdown."""

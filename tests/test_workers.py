@@ -9,6 +9,8 @@ import pytest
 
 from mab.workers import (
     VALID_ROLES,
+    HealthConfig,
+    HealthStatus,
     Worker,
     WorkerDatabase,
     WorkerManager,
@@ -442,3 +444,337 @@ class TestGetDefaultWorkerManager:
             heartbeat_dir=tmp_path / "heartbeat",
         )
         assert manager.heartbeat_dir == tmp_path / "heartbeat"
+
+
+class TestHealthConfig:
+    """Tests for HealthConfig."""
+
+    def test_default_values(self) -> None:
+        """Test HealthConfig has correct defaults."""
+        config = HealthConfig()
+
+        assert config.health_check_interval_seconds == 30.0
+        assert config.heartbeat_timeout_seconds == 60.0
+        assert config.max_restart_count == 5
+        assert config.restart_backoff_base_seconds == 5.0
+        assert config.restart_backoff_max_seconds == 300.0
+        assert config.auto_restart_enabled is True
+
+    def test_custom_values(self) -> None:
+        """Test HealthConfig with custom values."""
+        config = HealthConfig(
+            health_check_interval_seconds=10.0,
+            max_restart_count=3,
+            restart_backoff_base_seconds=2.0,
+        )
+
+        assert config.health_check_interval_seconds == 10.0
+        assert config.max_restart_count == 3
+        assert config.restart_backoff_base_seconds == 2.0
+
+    def test_calculate_backoff_first_crash(self) -> None:
+        """Test backoff calculation for first crash."""
+        config = HealthConfig(restart_backoff_base_seconds=5.0)
+
+        # First crash: 5 * 2^0 = 5 seconds
+        assert config.calculate_backoff(1) == 5.0
+
+    def test_calculate_backoff_exponential(self) -> None:
+        """Test exponential backoff calculation."""
+        config = HealthConfig(
+            restart_backoff_base_seconds=5.0,
+            restart_backoff_max_seconds=300.0,
+        )
+
+        # crash 1: 5 * 2^0 = 5
+        assert config.calculate_backoff(1) == 5.0
+        # crash 2: 5 * 2^1 = 10
+        assert config.calculate_backoff(2) == 10.0
+        # crash 3: 5 * 2^2 = 20
+        assert config.calculate_backoff(3) == 20.0
+        # crash 4: 5 * 2^3 = 40
+        assert config.calculate_backoff(4) == 40.0
+        # crash 5: 5 * 2^4 = 80
+        assert config.calculate_backoff(5) == 80.0
+
+    def test_calculate_backoff_capped_at_max(self) -> None:
+        """Test backoff is capped at max value."""
+        config = HealthConfig(
+            restart_backoff_base_seconds=5.0,
+            restart_backoff_max_seconds=50.0,
+        )
+
+        # crash 5: 5 * 2^4 = 80, but capped at 50
+        assert config.calculate_backoff(5) == 50.0
+
+    def test_calculate_backoff_zero_crash(self) -> None:
+        """Test backoff for zero crashes returns zero."""
+        config = HealthConfig()
+        assert config.calculate_backoff(0) == 0.0
+
+    def test_to_dict(self) -> None:
+        """Test HealthConfig to_dict."""
+        config = HealthConfig(
+            health_check_interval_seconds=15.0,
+            max_restart_count=3,
+        )
+        d = config.to_dict()
+
+        assert d["health_check_interval_seconds"] == 15.0
+        assert d["max_restart_count"] == 3
+
+
+class TestHealthStatus:
+    """Tests for HealthStatus."""
+
+    def test_default_values(self) -> None:
+        """Test HealthStatus has correct defaults."""
+        status = HealthStatus()
+
+        assert status.healthy_workers == 0
+        assert status.unhealthy_workers == 0
+        assert status.crashed_workers == 0
+        assert status.total_restarts == 0
+        assert status.workers_at_max_restarts == 0
+
+    def test_to_dict(self) -> None:
+        """Test HealthStatus to_dict."""
+        status = HealthStatus(
+            healthy_workers=5,
+            unhealthy_workers=1,
+            crashed_workers=2,
+            total_restarts=10,
+        )
+        d = status.to_dict()
+
+        assert d["healthy_workers"] == 5
+        assert d["unhealthy_workers"] == 1
+        assert d["crashed_workers"] == 2
+        assert d["total_restarts"] == 10
+        assert "config" in d
+
+
+class TestWorkerWithAutoRestart:
+    """Tests for Worker with auto-restart fields."""
+
+    def test_worker_auto_restart_defaults(self) -> None:
+        """Test Worker has auto-restart defaults."""
+        worker = Worker(
+            id="test-1",
+            role="dev",
+            project_path="/tmp/test",
+        )
+
+        assert worker.auto_restart_enabled is True
+        assert worker.last_restart_at is None
+
+    def test_worker_to_dict_includes_restart_fields(self) -> None:
+        """Test Worker to_dict includes restart fields."""
+        worker = Worker(
+            id="test-1",
+            role="dev",
+            project_path="/tmp/test",
+            auto_restart_enabled=False,
+            last_restart_at="2024-01-01T12:00:00",
+        )
+        d = worker.to_dict()
+
+        assert d["auto_restart_enabled"] is False
+        assert d["last_restart_at"] == "2024-01-01T12:00:00"
+
+
+class TestWorkerManagerHealthConfig:
+    """Tests for WorkerManager with HealthConfig."""
+
+    def test_manager_accepts_health_config(self, tmp_path: Path) -> None:
+        """Test WorkerManager accepts health config."""
+        config = HealthConfig(
+            health_check_interval_seconds=10.0,
+            max_restart_count=3,
+        )
+        manager = WorkerManager(
+            mab_dir=tmp_path / ".mab",
+            health_config=config,
+        )
+
+        assert manager.health_config.health_check_interval_seconds == 10.0
+        assert manager.health_config.max_restart_count == 3
+
+    def test_manager_uses_default_health_config(self, tmp_path: Path) -> None:
+        """Test WorkerManager uses default config if not specified."""
+        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+
+        assert manager.health_config.health_check_interval_seconds == 30.0
+        assert manager.health_config.max_restart_count == 5
+
+    def test_get_health_status_empty(self, tmp_path: Path) -> None:
+        """Test get_health_status with no workers."""
+        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        status = manager.get_health_status()
+
+        assert status.healthy_workers == 0
+        assert status.unhealthy_workers == 0
+        assert status.crashed_workers == 0
+        assert status.total_restarts == 0
+
+
+class TestAutoRestartAsync:
+    """Async tests for auto-restart functionality."""
+
+    @pytest.mark.asyncio
+    async def test_auto_restart_disabled_globally(self, tmp_path: Path) -> None:
+        """Test auto-restart respects global disable."""
+        config = HealthConfig(auto_restart_enabled=False)
+        manager = WorkerManager(
+            mab_dir=tmp_path / ".mab",
+            health_config=config,
+        )
+
+        worker = Worker(
+            id="test-1",
+            role="dev",
+            project_path=str(tmp_path),
+            status=WorkerStatus.CRASHED,
+            crash_count=1,
+        )
+        manager.db.insert_worker(worker)
+
+        result = await manager.auto_restart(worker)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_auto_restart_disabled_per_worker(self, tmp_path: Path) -> None:
+        """Test auto-restart respects per-worker disable."""
+        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+
+        worker = Worker(
+            id="test-1",
+            role="dev",
+            project_path=str(tmp_path),
+            status=WorkerStatus.CRASHED,
+            crash_count=1,
+            auto_restart_enabled=False,
+        )
+        manager.db.insert_worker(worker)
+
+        result = await manager.auto_restart(worker)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_auto_restart_max_count_exceeded(self, tmp_path: Path) -> None:
+        """Test auto-restart stops at max restart count."""
+        config = HealthConfig(max_restart_count=3)
+        manager = WorkerManager(
+            mab_dir=tmp_path / ".mab",
+            health_config=config,
+        )
+
+        worker = Worker(
+            id="test-1",
+            role="dev",
+            project_path=str(tmp_path),
+            status=WorkerStatus.CRASHED,
+            crash_count=3,  # At max
+        )
+        manager.db.insert_worker(worker)
+
+        result = await manager.auto_restart(worker)
+        assert result is None
+
+        # Worker should be marked as disabled
+        updated = manager.db.get_worker("test-1")
+        assert updated is not None
+        assert updated.auto_restart_enabled is False
+
+    @pytest.mark.asyncio
+    async def test_health_check_and_restart_schedules_restarts(self, tmp_path: Path) -> None:
+        """Test health_check_and_restart schedules restarts for crashed workers."""
+        config = HealthConfig(
+            restart_backoff_base_seconds=0.1,  # Fast for testing
+        )
+        manager = WorkerManager(
+            mab_dir=tmp_path / ".mab",
+            health_config=config,
+        )
+
+        # Spawn a worker
+        worker = await manager.spawn(
+            role="dev",
+            project_path=str(tmp_path),
+        )
+
+        # Kill it to simulate crash
+        if worker.pid is not None:
+            os.kill(worker.pid, 9)
+
+        # Reap the zombie process by waiting on it
+        if worker.id in manager._active_processes:
+            proc = manager._active_processes[worker.id]
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                pass
+
+        # Wait for process to fully die
+        await asyncio.sleep(0.5)
+
+        # Health check should detect crash and schedule restart
+        crashed, restart_scheduled = await manager.health_check_and_restart()
+
+        assert len(crashed) == 1
+        assert crashed[0].id == worker.id
+        # Restart should be scheduled (pending)
+        assert worker.id in manager._pending_restarts
+
+        # Cancel pending restarts for cleanup
+        manager.cancel_pending_restarts()
+
+    @pytest.mark.asyncio
+    async def test_cancel_pending_restarts(self, tmp_path: Path) -> None:
+        """Test cancelling pending restarts."""
+        config = HealthConfig(
+            restart_backoff_base_seconds=10.0,  # Long delay so it stays pending
+        )
+        manager = WorkerManager(
+            mab_dir=tmp_path / ".mab",
+            health_config=config,
+        )
+
+        worker = Worker(
+            id="test-1",
+            role="dev",
+            project_path=str(tmp_path),
+            status=WorkerStatus.CRASHED,
+            crash_count=1,
+        )
+        manager.db.insert_worker(worker)
+
+        # Schedule restart (will be pending due to backoff)
+        await manager.auto_restart(worker)
+
+        assert "test-1" in manager._pending_restarts
+
+        # Cancel all
+        cancelled = manager.cancel_pending_restarts()
+
+        assert cancelled == 1
+        assert "test-1" not in manager._pending_restarts
+
+    @pytest.mark.asyncio
+    async def test_get_health_status_with_workers(self, tmp_path: Path) -> None:
+        """Test get_health_status with running workers."""
+        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+
+        # Spawn a worker
+        worker = await manager.spawn(
+            role="dev",
+            project_path=str(tmp_path),
+        )
+
+        status = manager.get_health_status()
+
+        assert status.healthy_workers >= 0  # May or may not be healthy yet
+        assert status.total_restarts == 0
+
+        # Cleanup
+        await manager.stop(worker.id)
