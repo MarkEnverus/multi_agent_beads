@@ -89,8 +89,36 @@
                         </div>
                     </div>
 
-                    <!-- Status Indicator -->
-                    <div class="flex items-center">
+                    <!-- Town Switcher and Status -->
+                    <div class="flex items-center space-x-4">
+                        <!-- Town Selector Dropdown -->
+                        <div class="relative" id="town-switcher">
+                            <button type="button"
+                                    id="town-dropdown-btn"
+                                    class="flex items-center space-x-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-md text-sm text-gray-200 transition-colors"
+                                    onclick="toggleTownDropdown()">
+                                <svg class="h-4 w-4 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                                </svg>
+                                <span id="current-town-name">Loading...</span>
+                                <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                </svg>
+                            </button>
+                            <div id="town-dropdown"
+                                 class="hidden absolute right-0 mt-2 w-64 bg-gray-800 rounded-lg shadow-lg border border-gray-700 z-50">
+                                <div class="py-2">
+                                    <div class="px-4 py-2 border-b border-gray-700">
+                                        <span class="text-xs font-medium text-gray-400 uppercase tracking-wider">Switch Town</span>
+                                    </div>
+                                    <div id="town-list" class="max-h-64 overflow-y-auto">
+                                        <div class="px-4 py-3 text-sm text-gray-400">Loading towns...</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Status Indicator -->
                         <div class="flex items-center space-x-2">
                             <span class="relative flex h-3 w-3">
                                 <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
@@ -159,6 +187,101 @@
             </div>
         </footer>
     </div>
+
+    <!-- Town Switcher Script (always loaded) -->
+    <script>
+        // Town switcher functionality
+        let townsData = [];
+
+        // Toggle dropdown visibility
+        function toggleTownDropdown() {
+            const dropdown = document.getElementById('town-dropdown');
+            dropdown.classList.toggle('hidden');
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(event) {
+            const switcher = document.getElementById('town-switcher');
+            const dropdown = document.getElementById('town-dropdown');
+            if (switcher && !switcher.contains(event.target)) {
+                dropdown.classList.add('hidden');
+            }
+        });
+
+        // Fetch towns and populate dropdown
+        async function loadTowns() {
+            try {
+                const response = await fetch('/api/towns');
+                if (!response.ok) {
+                    throw new Error('Failed to fetch towns');
+                }
+                const data = await response.json();
+                townsData = data.towns || [];
+
+                // Update current town name
+                document.getElementById('current-town-name').textContent = data.current_town || 'default';
+
+                // Populate dropdown
+                const townList = document.getElementById('town-list');
+                if (townsData.length === 0) {
+                    townList.innerHTML = `
+                        <div class="px-4 py-3 text-sm text-gray-400">
+                            No towns configured
+                        </div>
+                    `;
+                    return;
+                }
+
+                townList.innerHTML = townsData.map(town => {
+                    const isCurrentTown = town.name === data.current_town;
+                    const statusColor = town.status === 'running' ? 'bg-green-500' : 'bg-gray-500';
+
+                    return `
+                        <button
+                            class="w-full px-4 py-2 text-left hover:bg-gray-700 flex items-center justify-between group ${isCurrentTown ? 'bg-gray-700' : ''}"
+                            onclick="switchToTown('${town.name}', ${town.port})"
+                            ${isCurrentTown ? 'disabled' : ''}>
+                            <div class="flex items-center space-x-3">
+                                <span class="h-2 w-2 rounded-full ${statusColor}"></span>
+                                <div>
+                                    <span class="text-sm text-gray-200 ${isCurrentTown ? 'font-semibold' : ''}">${town.name}</span>
+                                    ${town.description ? `<p class="text-xs text-gray-500">${town.description}</p>` : ''}
+                                </div>
+                            </div>
+                            <div class="text-xs text-gray-500 group-hover:text-gray-400">
+                                :${town.port}
+                                ${isCurrentTown ? '<span class="ml-1 text-primary-400">(current)</span>' : ''}
+                            </div>
+                        </button>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Failed to load towns:', error);
+                document.getElementById('current-town-name').textContent = 'default';
+                document.getElementById('town-list').innerHTML = `
+                    <div class="px-4 py-3 text-sm text-gray-400">
+                        Towns unavailable
+                    </div>
+                `;
+            }
+        }
+
+        // Switch to a different town (navigate to its port)
+        function switchToTown(townName, port) {
+            const protocol = window.location.protocol;
+            const hostname = window.location.hostname;
+            const path = window.location.pathname;
+
+            // Navigate to the same path on the different port
+            const newUrl = `${protocol}//${hostname}:${port}${path}`;
+            window.location.href = newUrl;
+        }
+
+        // Load towns on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadTowns();
+        });
+    </script>
 
     <!-- Page-specific scripts -->
     {% block scripts %}
