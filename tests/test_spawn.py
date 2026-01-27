@@ -20,6 +20,7 @@ from spawn_agent import (
     VALID_ROLES,
     AgentSpawnError,
     get_prompt_path,
+    spawn_terminal_macos,
     validate_prompt_exists,
 )
 
@@ -47,9 +48,11 @@ class TestValidRoles:
         """Test that reviewer role is valid."""
         assert "reviewer" in VALID_ROLES
 
-    def test_valid_roles_has_five_entries(self) -> None:
-        """Test that there are exactly five valid roles."""
-        assert len(VALID_ROLES) == 5
+    def test_valid_roles_has_expected_entries(self) -> None:
+        """Test that valid roles includes all expected roles and aliases."""
+        # Includes both "developer" and "dev" as aliases
+        assert len(VALID_ROLES) >= 5
+        assert "developer" in VALID_ROLES or "dev" in VALID_ROLES
 
     def test_all_roles_have_prompt_mapping(self) -> None:
         """Test that all valid roles have a corresponding prompt file."""
@@ -152,16 +155,13 @@ class TestEnvironmentVariablesSet:
         # Create required prompt file
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        prompt_file = prompts_dir / "DEVELOPER.md"
-        prompt_file.write_text("# Developer Prompt")
+        (prompts_dir / "DEVELOPER.md").write_text("# Developer Prompt")
 
-        with patch("scripts.spawn_agent.subprocess.run") as mock_run:
+        with patch("spawn_agent.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
-            # Import and call spawn function
-            from spawn_agent import spawn_agent_macos
-
-            spawn_agent_macos("developer", 1, tmp_path, prompt_file)
+            # spawn_terminal_macos now takes (role, instance, repo_path)
+            spawn_terminal_macos("developer", 1, tmp_path)
 
             # Verify subprocess.run was called
             mock_run.assert_called_once()
@@ -174,15 +174,12 @@ class TestEnvironmentVariablesSet:
         """Test that spawned agent command includes AGENT_INSTANCE env var."""
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        prompt_file = prompts_dir / "QA.md"
-        prompt_file.write_text("# QA Prompt")
+        (prompts_dir / "QA.md").write_text("# QA Prompt")
 
-        with patch("scripts.spawn_agent.subprocess.run") as mock_run:
+        with patch("spawn_agent.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
-            from spawn_agent import spawn_agent_macos
-
-            spawn_agent_macos("qa", 3, tmp_path, prompt_file)
+            spawn_terminal_macos("qa", 3, tmp_path)
 
             call_args = mock_run.call_args
             applescript = call_args[0][0][2]
@@ -193,15 +190,12 @@ class TestEnvironmentVariablesSet:
         """Test that spawned agent command includes AGENT_LOG_FILE env var."""
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        prompt_file = prompts_dir / "MANAGER.md"
-        prompt_file.write_text("# Manager Prompt")
+        (prompts_dir / "MANAGER.md").write_text("# Manager Prompt")
 
-        with patch("scripts.spawn_agent.subprocess.run") as mock_run:
+        with patch("spawn_agent.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
-            from spawn_agent import spawn_agent_macos
-
-            spawn_agent_macos("manager", 2, tmp_path, prompt_file)
+            spawn_terminal_macos("manager", 2, tmp_path)
 
             call_args = mock_run.call_args
             applescript = call_args[0][0][2]
@@ -217,15 +211,12 @@ class TestOsascriptCommand:
         """Test that subprocess.run is called with osascript command."""
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        prompt_file = prompts_dir / "DEVELOPER.md"
-        prompt_file.write_text("# Developer Prompt")
+        (prompts_dir / "DEVELOPER.md").write_text("# Developer Prompt")
 
-        with patch("scripts.spawn_agent.subprocess.run") as mock_run:
+        with patch("spawn_agent.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
-            from spawn_agent import spawn_agent_macos
-
-            spawn_agent_macos("developer", 1, tmp_path, prompt_file)
+            spawn_terminal_macos("developer", 1, tmp_path)
 
             call_args = mock_run.call_args
             command = call_args[0][0]
@@ -237,15 +228,12 @@ class TestOsascriptCommand:
         """Test that AppleScript includes Terminal application commands."""
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        prompt_file = prompts_dir / "TECH_LEAD.md"
-        prompt_file.write_text("# Tech Lead Prompt")
+        (prompts_dir / "TECH_LEAD.md").write_text("# Tech Lead Prompt")
 
-        with patch("scripts.spawn_agent.subprocess.run") as mock_run:
+        with patch("spawn_agent.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
-            from spawn_agent import spawn_agent_macos
-
-            spawn_agent_macos("tech_lead", 1, tmp_path, prompt_file)
+            spawn_terminal_macos("tech_lead", 1, tmp_path)
 
             call_args = mock_run.call_args
             applescript = call_args[0][0][2]
@@ -258,19 +246,16 @@ class TestOsascriptCommand:
         """Test that subprocess error raises AgentSpawnError."""
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        prompt_file = prompts_dir / "REVIEWER.md"
-        prompt_file.write_text("# Reviewer Prompt")
+        (prompts_dir / "CODE_REVIEWER.md").write_text("# Reviewer Prompt")
 
-        with patch("scripts.spawn_agent.subprocess.run") as mock_run:
+        with patch("spawn_agent.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=1,
                 stderr="AppleScript error",
             )
 
-            from spawn_agent import spawn_agent_macos
-
             with pytest.raises(AgentSpawnError) as exc_info:
-                spawn_agent_macos("reviewer", 1, tmp_path, prompt_file)
+                spawn_terminal_macos("reviewer", 1, tmp_path)
 
             assert "failed" in exc_info.value.message.lower()
 

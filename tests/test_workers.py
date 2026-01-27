@@ -315,7 +315,7 @@ class TestWorkerManagerAsync:
     @pytest.mark.asyncio
     async def test_spawn_invalid_role(self, tmp_path: Path) -> None:
         """Test spawning worker with invalid role raises error."""
-        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        manager = WorkerManager(mab_dir=tmp_path / ".mab", test_mode=True)
 
         with pytest.raises(WorkerSpawnError) as exc_info:
             await manager.spawn(
@@ -328,9 +328,9 @@ class TestWorkerManagerAsync:
     @pytest.mark.asyncio
     async def test_spawn_worker_creates_record(self, tmp_path: Path) -> None:
         """Test spawning worker creates database record."""
-        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        manager = WorkerManager(mab_dir=tmp_path / ".mab", test_mode=True)
 
-        # Spawn a worker (uses placeholder process)
+        # Spawn a worker (uses placeholder process in test mode)
         worker = await manager.spawn(
             role="dev",
             project_path=str(tmp_path),
@@ -352,7 +352,7 @@ class TestWorkerManagerAsync:
     @pytest.mark.asyncio
     async def test_stop_worker(self, tmp_path: Path) -> None:
         """Test stopping a worker."""
-        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        manager = WorkerManager(mab_dir=tmp_path / ".mab", test_mode=True)
 
         # Spawn and stop
         worker = await manager.spawn(
@@ -368,7 +368,7 @@ class TestWorkerManagerAsync:
     @pytest.mark.asyncio
     async def test_stop_nonexistent_worker(self, tmp_path: Path) -> None:
         """Test stopping a nonexistent worker raises error."""
-        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        manager = WorkerManager(mab_dir=tmp_path / ".mab", test_mode=True)
 
         with pytest.raises(WorkerNotFoundError):
             await manager.stop("nonexistent")
@@ -376,7 +376,7 @@ class TestWorkerManagerAsync:
     @pytest.mark.asyncio
     async def test_stop_all_workers(self, tmp_path: Path) -> None:
         """Test stopping all workers."""
-        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        manager = WorkerManager(mab_dir=tmp_path / ".mab", test_mode=True)
 
         # Spawn multiple workers
         await manager.spawn(role="dev", project_path=str(tmp_path))
@@ -393,7 +393,7 @@ class TestWorkerManagerAsync:
     @pytest.mark.asyncio
     async def test_health_check_detects_crashed_worker(self, tmp_path: Path) -> None:
         """Test health check detects crashed workers."""
-        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        manager = WorkerManager(mab_dir=tmp_path / ".mab", test_mode=True)
 
         # Spawn worker
         worker = await manager.spawn(
@@ -695,6 +695,7 @@ class TestAutoRestartAsync:
         manager = WorkerManager(
             mab_dir=tmp_path / ".mab",
             health_config=config,
+            test_mode=True,
         )
 
         # Spawn a worker
@@ -763,7 +764,7 @@ class TestAutoRestartAsync:
     @pytest.mark.asyncio
     async def test_get_health_status_with_workers(self, tmp_path: Path) -> None:
         """Test get_health_status with running workers."""
-        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        manager = WorkerManager(mab_dir=tmp_path / ".mab", test_mode=True)
 
         # Spawn a worker
         worker = await manager.spawn(

@@ -1,15 +1,38 @@
 #!/usr/bin/env python3
-"""Spawn role-based Claude agents in new terminal windows.
+"""Spawn role-based Claude agents using cross-platform spawner.
+
+This script replaces the macOS-only AppleScript implementation with
+a cross-platform solution that works on both macOS and Linux.
 
 Usage:
+    # Headless mode (default) - works on macOS and Linux
     python scripts/spawn_agent.py developer --instance 1 --repo /path/to/repo
+
+    # With tmux (if installed)
+    python scripts/spawn_agent.py qa --instance 2 --spawner tmux
+
+    # Legacy Terminal mode (macOS only, for development)
+    python scripts/spawn_agent.py tech_lead --mode terminal
 """
 
 import argparse
+import asyncio
 import logging
 import subprocess
 import sys
 from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from mab.spawner import (
+    ROLE_TO_LABEL,
+    ROLE_TO_PROMPT,
+    SpawnerError,
+    get_spawner,
+    is_claude_available,
+    is_tmux_available,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -18,22 +41,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-VALID_ROLES = ["developer", "qa", "tech_lead", "manager", "reviewer"]
+# Supported roles
+VALID_ROLES = ["developer", "dev", "qa", "tech_lead", "manager", "reviewer"]
 
-ROLE_TO_PROMPT = {
-    "developer": "DEVELOPER.md",
-    "qa": "QA.md",
-    "tech_lead": "TECH_LEAD.md",
-    "manager": "MANAGER.md",
-    "reviewer": "CODE_REVIEWER.md",
-}
-
-ROLE_TO_LABEL = {
+# Map CLI role names to internal names
+ROLE_ALIASES = {
     "developer": "dev",
+    "dev": "dev",
     "qa": "qa",
-    "tech_lead": "architecture",
-    "manager": None,
-    "reviewer": "review",
+    "tech_lead": "tech_lead",
+    "manager": "manager",
+    "reviewer": "reviewer",
 }
 
 
@@ -54,144 +72,147 @@ class AgentSpawnError(Exception):
         super().__init__(message)
 
 
-def get_prompt_path(role: str, repo_path: Path) -> Path:
-    """Get the path to the role-specific prompt file.
-
-    Args:
-        role: Agent role.
-        repo_path: Path to the repository.
-
-    Returns:
-        Path to the prompt file.
-
-    Raises:
-        AgentSpawnError: If the role is invalid.
-    """
-    if role not in ROLE_TO_PROMPT:
-        raise AgentSpawnError(
-            message=f"Invalid role: {role}. Valid roles: {', '.join(VALID_ROLES)}",
-            role=role,
-        )
-    prompt_file = ROLE_TO_PROMPT[role]
-    return repo_path / "prompts" / prompt_file
-
-
-def validate_prompt_exists(prompt_path: Path, role: str) -> None:
-    """Ensure the prompt file exists.
-
-    Args:
-        prompt_path: Path to check.
-        role: Role for error context.
-
-    Raises:
-        AgentSpawnError: If the prompt file doesn't exist.
-    """
-    if not prompt_path.exists():
-        logger.error("Prompt file not found: %s", prompt_path)
-        raise AgentSpawnError(
-            message=f"Prompt file not found: {prompt_path}",
-            role=role,
-            detail=f"Expected file at: {prompt_path}",
-        )
-
-    if not prompt_path.is_file():
-        logger.error("Prompt path is not a file: %s", prompt_path)
-        raise AgentSpawnError(
-            message=f"Prompt path is not a file: {prompt_path}",
-            role=role,
-        )
-
-
 def validate_repo_path(repo_path: Path) -> None:
-    """Validate the repository path exists and is a directory.
-
-    Args:
-        repo_path: Path to validate.
-
-    Raises:
-        AgentSpawnError: If the path is invalid.
-    """
+    """Validate the repository path exists and is a directory."""
     if not repo_path.exists():
-        logger.error("Repository path not found: %s", repo_path)
         raise AgentSpawnError(
             message=f"Repository path not found: {repo_path}",
             detail="Please provide a valid path to the repository",
         )
 
     if not repo_path.is_dir():
-        logger.error("Repository path is not a directory: %s", repo_path)
         raise AgentSpawnError(
             message=f"Repository path is not a directory: {repo_path}",
         )
 
 
-def spawn_agent_macos(
+def get_prompt_path(role: str, repo_path: Path) -> Path:
+    """Get the path to the role-specific prompt file."""
+    if role not in ROLE_TO_PROMPT:
+        raise AgentSpawnError(
+            message=f"Invalid role: {role}",
+            role=role,
+            detail=f"Valid roles: {', '.join(VALID_ROLES)}",
+        )
+
+    prompt_file = ROLE_TO_PROMPT[role]
+    return repo_path / "prompts" / prompt_file
+
+
+def validate_prompt_exists(prompt_path: Path, role: str) -> None:
+    """Ensure the prompt file exists."""
+    if not prompt_path.exists():
+        raise AgentSpawnError(
+            message=f"Prompt file not found: {prompt_path}",
+            role=role,
+            detail="Ensure prompts/ directory contains role-specific prompts",
+        )
+
+
+def generate_worker_id(role: str, instance: int) -> str:
+    """Generate a worker ID from role and instance."""
+    import uuid
+    short_uuid = str(uuid.uuid4())[:8]
+    return f"worker-{role}-{instance}-{short_uuid}"
+
+
+async def spawn_headless(
     role: str,
     instance: int,
     repo_path: Path,
-    prompt_path: Path,
+    spawner_type: str = "subprocess",
 ) -> None:
-    """Spawn agent in a new macOS Terminal window.
+    """Spawn agent using cross-platform headless spawner.
 
-    Args:
-        role: Agent role.
-        instance: Instance number.
-        repo_path: Path to the repository.
-        prompt_path: Path to the prompt file.
-
-    Raises:
-        AgentSpawnError: If spawning fails.
+    This works on both macOS and Linux without requiring a GUI.
     """
+    # Validate inputs
+    validate_repo_path(repo_path)
+
+    internal_role = ROLE_ALIASES.get(role, role)
+    prompt_path = get_prompt_path(internal_role, repo_path)
+    validate_prompt_exists(prompt_path, role)
+
+    # Set up logs directory
+    logs_dir = repo_path / ".mab" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate worker ID
+    worker_id = generate_worker_id(internal_role, instance)
+
+    logger.info(f"Spawning {role} agent (instance {instance}) headlessly")
+    logger.debug(f"Repo: {repo_path}")
+    logger.debug(f"Prompt: {prompt_path}")
+    logger.debug(f"Spawner: {spawner_type}")
+
+    try:
+        spawner = get_spawner(spawner_type, logs_dir=logs_dir)
+        process_info = await spawner.spawn(
+            role=internal_role,
+            project_path=str(repo_path),
+            worker_id=worker_id,
+            env_vars={
+                "AGENT_INSTANCE": str(instance),
+            },
+        )
+
+        print(f"Spawned {role} agent (instance {instance})")
+        print(f"  Worker ID: {worker_id}")
+        print(f"  PID: {process_info.pid}")
+        print(f"  Log: {process_info.log_file}")
+        print(f"  Repo: {repo_path}")
+
+        if spawner_type == "tmux":
+            print(f"\nTo attach: tmux attach -t mab-{worker_id}")
+
+    except SpawnerError as e:
+        raise AgentSpawnError(
+            message=e.message,
+            role=role,
+            instance=instance,
+            detail=e.detail,
+        ) from e
+
+
+def spawn_terminal_macos(
+    role: str,
+    instance: int,
+    repo_path: Path,
+) -> None:
+    """Legacy: Spawn agent in a new macOS Terminal window using AppleScript.
+
+    This is kept for development/debugging purposes where you want
+    to see the agent in a visible Terminal window.
+    """
+    if sys.platform != "darwin":
+        raise AgentSpawnError(
+            message="Terminal mode only supported on macOS",
+            role=role,
+            instance=instance,
+            detail="Use headless mode (--mode headless) on other platforms",
+        )
+
+    validate_repo_path(repo_path)
+
+    internal_role = ROLE_ALIASES.get(role, role)
+    prompt_path = get_prompt_path(internal_role, repo_path)
+    validate_prompt_exists(prompt_path, role)
+
+    # Create log directory
     log_file = repo_path / "logs" / f"{role}_{instance}.log"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
 
-    try:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-    except PermissionError:
-        logger.error("Permission denied creating log directory: %s", log_file.parent)
-        raise AgentSpawnError(
-            message="Permission denied creating log directory",
-            role=role,
-            instance=instance,
-            detail=f"Could not create: {log_file.parent}",
-        ) from None
-    except OSError as e:
-        logger.error("Error creating log directory: %s", e)
-        raise AgentSpawnError(
-            message=f"Error creating log directory: {e}",
-            role=role,
-            instance=instance,
-        ) from None
+    # Read prompt content
+    prompt_content = prompt_path.read_text(encoding="utf-8")
 
-    env_exports = f"""
-export AGENT_ROLE="{role}"
-export AGENT_INSTANCE="{instance}"
-export AGENT_LOG_FILE="{log_file}"
-"""
-
-    label = ROLE_TO_LABEL.get(role)
+    # Build worker prompt
+    label = ROLE_TO_LABEL.get(internal_role)
     label_filter = f"-l {label}" if label else ""
-
-    try:
-        prompt_content = prompt_path.read_text(encoding="utf-8")
-    except PermissionError:
-        logger.error("Permission denied reading prompt file: %s", prompt_path)
-        raise AgentSpawnError(
-            message="Permission denied reading prompt file",
-            role=role,
-            instance=instance,
-            detail=f"Could not read: {prompt_path}",
-        ) from None
-    except OSError as e:
-        logger.error("Error reading prompt file: %s", e)
-        raise AgentSpawnError(
-            message=f"Error reading prompt file: {e}",
-            role=role,
-            instance=instance,
-        ) from None
+    worker_id = generate_worker_id(internal_role, instance)
 
     agent_prompt = f"""# Autonomous Beads Worker - {role.upper()} Agent (Instance {instance})
 
-## Your Role: {role.upper()}
+## Worker ID: {worker_id}
 
 You are a {role} agent. Follow the role-specific prompt below, then find work using:
     bd ready {label_filter}
@@ -212,6 +233,7 @@ You are a {role} agent. Follow the role-specific prompt below, then find work us
 {prompt_content}
 """
 
+    # Escape for shell
     escaped_prompt = (
         agent_prompt.replace("\\", "\\\\")
         .replace('"', '\\"')
@@ -219,9 +241,16 @@ You are a {role} agent. Follow the role-specific prompt below, then find work us
         .replace("`", "\\`")
     )
 
+    env_exports = f"""
+export AGENT_ROLE="{role}"
+export AGENT_INSTANCE="{instance}"
+export AGENT_LOG_FILE="{log_file}"
+export WORKER_ID="{worker_id}"
+"""
+
     terminal_command = (
         f'cd "{repo_path}" && {env_exports.strip()} && '
-        f'claude --print-system-prompt "{escaped_prompt}" '
+        f'claude --print "{escaped_prompt}"'
     )
 
     applescript = f'''
@@ -232,79 +261,51 @@ tell application "Terminal"
 end tell
 '''
 
-    logger.info("Spawning %s agent (instance %d)", role, instance)
-    logger.debug("Repo: %s", repo_path)
-    logger.debug("Prompt: %s", prompt_path)
-    logger.debug("Log: %s", log_file)
+    logger.info(f"Spawning {role} agent (instance {instance}) in Terminal")
 
-    try:
-        result = subprocess.run(
-            ["osascript", "-e", applescript],
-            capture_output=True,
-            text=True,
-            timeout=30,
+    result = subprocess.run(
+        ["osascript", "-e", applescript],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    if result.returncode != 0:
+        raise AgentSpawnError(
+            message=f"Failed to spawn agent: {result.stderr.strip()}",
+            role=role,
+            instance=instance,
+            detail="AppleScript execution failed",
         )
 
-        if result.returncode != 0:
-            stderr = result.stderr.strip()
-            logger.error("AppleScript error: %s", stderr)
-            raise AgentSpawnError(
-                message=f"Failed to spawn agent: {stderr}",
-                role=role,
-                instance=instance,
-                detail="AppleScript execution failed",
-            )
-
-        logger.info(
-            "Successfully spawned %s agent (instance %d) in new Terminal window",
-            role,
-            instance,
-        )
-        print(f"Spawned {role} agent (instance {instance}) in new Terminal window")
-        print(f"  Repo: {repo_path}")
-        print(f"  Prompt: {prompt_path}")
-        print(f"  Log: {log_file}")
-
-    except subprocess.TimeoutExpired:
-        logger.error("Timeout spawning agent")
-        raise AgentSpawnError(
-            message="Timeout spawning agent - Terminal may not be responding",
-            role=role,
-            instance=instance,
-        ) from None
-
-    except FileNotFoundError:
-        logger.error("osascript command not found")
-        raise AgentSpawnError(
-            message="osascript command not found - is this macOS?",
-            role=role,
-            instance=instance,
-        ) from None
-
-    except OSError as e:
-        logger.error("Error executing osascript: %s", e)
-        raise AgentSpawnError(
-            message=f"Error executing osascript: {e}",
-            role=role,
-            instance=instance,
-        ) from None
+    print(f"Spawned {role} agent (instance {instance}) in new Terminal window")
+    print(f"  Worker ID: {worker_id}")
+    print(f"  Repo: {repo_path}")
+    print(f"  Prompt: {prompt_path}")
+    print(f"  Log: {log_file}")
 
 
 def main() -> int:
-    """Main entry point.
-
-    Returns:
-        Exit code (0 for success, 1 for error).
-    """
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Spawn role-based Claude agents in new terminal windows.",
+        description="Spawn role-based Claude agents (cross-platform).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+    # Headless (default, works on macOS and Linux)
     python scripts/spawn_agent.py developer
     python scripts/spawn_agent.py qa --instance 2
     python scripts/spawn_agent.py tech_lead --repo /path/to/repo
-    python scripts/spawn_agent.py manager --instance 1 --repo .
+
+    # Using tmux for session management
+    python scripts/spawn_agent.py developer --spawner tmux
+
+    # Legacy Terminal mode (macOS only)
+    python scripts/spawn_agent.py manager --mode terminal
+
+Spawner types:
+    subprocess  - Headless using PTY (default, cross-platform)
+    tmux        - Uses tmux sessions for isolation (requires tmux)
         """,
     )
 
@@ -326,6 +327,18 @@ Examples:
         help="Path to repository (default: current directory)",
     )
     parser.add_argument(
+        "--mode",
+        choices=["headless", "terminal"],
+        default="headless",
+        help="Spawn mode: headless (default) or terminal (macOS only)",
+    )
+    parser.add_argument(
+        "--spawner",
+        choices=["subprocess", "tmux"],
+        default="subprocess",
+        help="Spawner type for headless mode (default: subprocess)",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose logging",
@@ -336,24 +349,31 @@ Examples:
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
+    # Check prerequisites
+    if not is_claude_available():
+        print("Error: Claude CLI not found", file=sys.stderr)
+        print("Ensure 'claude' is installed and in PATH", file=sys.stderr)
+        return 1
+
+    if args.spawner == "tmux" and not is_tmux_available():
+        print("Error: tmux not found", file=sys.stderr)
+        print("Install tmux or use --spawner subprocess", file=sys.stderr)
+        return 1
+
     try:
         repo_path = Path(args.repo).resolve()
-        validate_repo_path(repo_path)
 
-        prompt_path = get_prompt_path(args.role, repo_path)
-        validate_prompt_exists(prompt_path, args.role)
-
-        if sys.platform == "darwin":
-            spawn_agent_macos(args.role, args.instance, repo_path, prompt_path)
+        if args.mode == "terminal":
+            spawn_terminal_macos(args.role, args.instance, repo_path)
         else:
-            logger.error("Platform '%s' not supported", sys.platform)
-            print(
-                f"Error: Platform '{sys.platform}' not supported. "
-                "Only macOS is implemented.",
-                file=sys.stderr,
+            asyncio.run(
+                spawn_headless(
+                    args.role,
+                    args.instance,
+                    repo_path,
+                    spawner_type=args.spawner,
+                )
             )
-            print("For Linux/Windows, please spawn agents manually.", file=sys.stderr)
-            return 1
 
         return 0
 

@@ -3,7 +3,7 @@
 This module implements worker lifecycle management for the daemon, including:
 - Worker dataclass for state representation
 - SQLite database for state persistence across daemon restarts
-- Process spawning and tracking
+- Process spawning and tracking via cross-platform spawner
 - Health monitoring via heartbeat files
 - Auto-restart on worker crash with exponential backoff
 """
@@ -22,7 +22,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from mab.spawner import ProcessInfo, SpawnerError, get_spawner
+
+if TYPE_CHECKING:
+    from mab.spawner import Spawner
 
 logger = logging.getLogger("mab.workers")
 
@@ -437,7 +442,7 @@ class WorkerManager:
     """Manages worker lifecycle with process spawning and health monitoring.
 
     The WorkerManager handles:
-    - Spawning worker processes (cross-platform)
+    - Spawning worker processes (cross-platform via spawner module)
     - Monitoring worker health via heartbeat files
     - Detecting crashed workers and auto-restart with exponential backoff
     - Graceful and forceful worker termination
@@ -448,6 +453,8 @@ class WorkerManager:
         mab_dir: Path,
         heartbeat_dir: Path | None = None,
         health_config: HealthConfig | None = None,
+        spawner_type: str = "subprocess",
+        test_mode: bool = False,
     ) -> None:
         """Initialize WorkerManager.
 
@@ -455,13 +462,23 @@ class WorkerManager:
             mab_dir: Global .mab directory (for database).
             heartbeat_dir: Directory for heartbeat files.
             health_config: Health monitoring configuration.
+            spawner_type: Type of spawner to use ("subprocess" or "tmux").
+            test_mode: If True, use placeholder scripts instead of Claude CLI.
         """
         self.mab_dir = mab_dir
         self.db = WorkerDatabase(mab_dir / "workers.db")
         self.heartbeat_dir = heartbeat_dir or mab_dir / "heartbeat"
         self.health_config = health_config or HealthConfig()
         self._active_processes: dict[str, subprocess.Popen[bytes]] = {}
+        self._active_process_info: dict[str, ProcessInfo] = {}
         self._pending_restarts: dict[str, asyncio.Task[None]] = {}
+        self._test_mode = test_mode
+
+        # Initialize cross-platform spawner
+        logs_dir = mab_dir / "logs"
+        self._spawner: Spawner = get_spawner(spawner_type, logs_dir=logs_dir, test_mode=test_mode)
+        self._spawner_type = spawner_type
+
         self._ensure_heartbeat_dir()
 
     def _ensure_heartbeat_dir(self) -> None:
@@ -549,18 +566,25 @@ class WorkerManager:
         self.db.insert_worker(worker)
 
         try:
-            # Spawn the process
-            process = await self._spawn_process(worker)
-            worker.pid = process.pid
+            # Spawn the process via cross-platform spawner
+            process_info = await self._spawn_process(worker)
+            worker.pid = process_info.pid
             worker.status = WorkerStatus.RUNNING
-            worker.started_at = datetime.now().isoformat()
+            worker.started_at = process_info.started_at
 
-            # Track the process
-            self._active_processes[worker.id] = process
+            # Track the process info
+            self._active_process_info[worker.id] = process_info
+            if process_info.process:
+                self._active_processes[worker.id] = process_info.process
 
             # Initial heartbeat
             self._update_heartbeat(worker.id)
             worker.last_heartbeat = datetime.now().isoformat()
+
+            logger.info(
+                f"Worker {worker.id} spawned successfully (PID {worker.pid}, "
+                f"log: {process_info.log_file})"
+            )
 
             self.db.update_worker(worker)
             return worker
@@ -571,74 +595,37 @@ class WorkerManager:
             self.db.update_worker(worker)
             raise WorkerSpawnError(f"Failed to spawn worker: {e}") from e
 
-    async def _spawn_process(self, worker: Worker) -> subprocess.Popen[bytes]:
-        """Spawn the actual worker process.
+    async def _spawn_process(self, worker: Worker) -> ProcessInfo:
+        """Spawn the actual worker process using cross-platform spawner.
 
-        This creates a subprocess that runs the worker agent script.
-        The subprocess is platform-independent (no AppleScript).
+        This uses the configured spawner (subprocess or tmux) to create
+        a Claude CLI process with the appropriate role-specific prompt.
 
         Args:
             worker: Worker to spawn process for.
 
         Returns:
-            Subprocess.Popen instance.
+            ProcessInfo from the spawner.
         """
-        # Build environment for worker
-        env = os.environ.copy()
-        env["WORKER_ID"] = worker.id
-        env["WORKER_ROLE"] = worker.role
-        env["WORKER_PROJECT"] = worker.project_path
-        env["WORKER_HEARTBEAT_FILE"] = str(self._get_heartbeat_file(worker.id))
+        # Additional environment variables for heartbeat
+        env_vars = {
+            "WORKER_HEARTBEAT_FILE": str(self._get_heartbeat_file(worker.id)),
+            "WORKER_TOWN": worker.town_name,
+        }
 
-        # Get the worker script path
-        mab_root = Path(__file__).parent.parent
-        worker_script = mab_root / "scripts" / "worker_agent.py"
-
-        # If worker script doesn't exist, use a simple placeholder command
-        # This allows testing the infrastructure without the full worker implementation
-        if not worker_script.exists():
-            # Create a minimal worker that just maintains heartbeat
-            cmd = [
-                "python3",
-                "-c",
-                """
-import time
-import os
-from pathlib import Path
-
-heartbeat_file = Path(os.environ.get('WORKER_HEARTBEAT_FILE', '/tmp/heartbeat'))
-print(f"Worker {os.environ.get('WORKER_ID')} started")
-
-while True:
-    heartbeat_file.write_text(str(time.time()))
-    time.sleep(10)
-""",
-            ]
-        else:
-            cmd = ["python3", str(worker_script)]
-
-        # Spawn the process
-        process = subprocess.Popen(
-            cmd,
-            env=env,
-            cwd=worker.project_path,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=True,  # Detach from parent
-        )
-
-        # Give it a moment to start
-        await asyncio.sleep(0.1)
-
-        # Check if it crashed immediately
-        if process.poll() is not None:
-            stdout, stderr = process.communicate()
-            raise WorkerSpawnError(
-                f"Worker process exited immediately with code {process.returncode}: "
-                f"{stderr.decode()}"
+        try:
+            process_info = await self._spawner.spawn(
+                role=worker.role,
+                project_path=worker.project_path,
+                worker_id=worker.id,
+                env_vars=env_vars,
             )
+            return process_info
 
-        return process
+        except SpawnerError as e:
+            raise WorkerSpawnError(
+                f"Spawner failed for {worker.id}: {e.message}"
+            ) from e
 
     async def stop(
         self,
@@ -670,7 +657,15 @@ while True:
         worker.status = WorkerStatus.STOPPING
         self.db.update_worker(worker)
 
-        if worker.pid is not None:
+        # Use spawner's terminate if we have process info
+        process_info = self._active_process_info.get(worker_id)
+        if process_info:
+            exit_code = await self._spawner.terminate(
+                process_info, graceful=graceful, timeout=timeout
+            )
+            worker.exit_code = exit_code
+        elif worker.pid is not None:
+            # Fallback to direct signal handling
             try:
                 if graceful:
                     os.kill(worker.pid, signal.SIGTERM)
@@ -689,8 +684,9 @@ while True:
             except (OSError, ProcessLookupError):
                 pass  # Process already gone
 
-        # Remove from active processes
+        # Remove from active tracking
         self._active_processes.pop(worker_id, None)
+        self._active_process_info.pop(worker_id, None)
 
         # Cleanup heartbeat
         self._cleanup_heartbeat(worker_id)
@@ -794,6 +790,7 @@ while True:
 
                 # Cleanup
                 self._active_processes.pop(worker.id, None)
+                self._active_process_info.pop(worker.id, None)
                 self._cleanup_heartbeat(worker.id)
 
         return crashed_workers
@@ -951,6 +948,8 @@ while True:
     async def _restart_worker(self, worker: Worker) -> Worker:
         """Restart a worker by spawning a new process with the same configuration.
 
+        Uses the cross-platform spawner for consistent behavior.
+
         Args:
             worker: Worker to restart.
 
@@ -960,73 +959,45 @@ while True:
         # Mark restart time
         worker.last_restart_at = datetime.now().isoformat()
 
-        # Spawn new process
-        env = os.environ.copy()
-        env["WORKER_ID"] = worker.id
-        env["WORKER_ROLE"] = worker.role
-        env["WORKER_PROJECT"] = worker.project_path
-        env["WORKER_HEARTBEAT_FILE"] = str(self._get_heartbeat_file(worker.id))
+        # Additional environment variables for heartbeat
+        env_vars = {
+            "WORKER_HEARTBEAT_FILE": str(self._get_heartbeat_file(worker.id)),
+            "WORKER_TOWN": worker.town_name,
+        }
 
-        # Get the worker script path
-        mab_root = Path(__file__).parent.parent
-        worker_script = mab_root / "scripts" / "worker_agent.py"
-
-        # Use placeholder if script doesn't exist
-        if not worker_script.exists():
-            cmd = [
-                "python3",
-                "-c",
-                """
-import time
-import os
-from pathlib import Path
-
-heartbeat_file = Path(os.environ.get('WORKER_HEARTBEAT_FILE', '/tmp/heartbeat'))
-print(f"Worker {os.environ.get('WORKER_ID')} restarted")
-
-while True:
-    heartbeat_file.write_text(str(time.time()))
-    time.sleep(10)
-""",
-            ]
-        else:
-            cmd = ["python3", str(worker_script)]
-
-        # Spawn the process
-        process = subprocess.Popen(
-            cmd,
-            env=env,
-            cwd=worker.project_path,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=True,
-        )
-
-        # Give it a moment to start
-        await asyncio.sleep(0.1)
-
-        # Check if it crashed immediately
-        if process.poll() is not None:
-            stdout, stderr = process.communicate()
-            raise WorkerSpawnError(
-                f"Worker process exited immediately with code {process.returncode}: "
-                f"{stderr.decode()}"
+        try:
+            process_info = await self._spawner.spawn(
+                role=worker.role,
+                project_path=worker.project_path,
+                worker_id=worker.id,
+                env_vars=env_vars,
             )
+        except SpawnerError as e:
+            raise WorkerSpawnError(
+                f"Restart failed for {worker.id}: {e.message}"
+            ) from e
 
         # Update worker state
-        worker.pid = process.pid
+        worker.pid = process_info.pid
         worker.status = WorkerStatus.RUNNING
-        worker.started_at = datetime.now().isoformat()
+        worker.started_at = process_info.started_at
         worker.stopped_at = None
         worker.exit_code = None
         worker.error_message = None
 
-        # Track the process
-        self._active_processes[worker.id] = process
+        # Track the process info
+        self._active_process_info[worker.id] = process_info
+        if process_info.process:
+            self._active_processes[worker.id] = process_info.process
 
         # Initial heartbeat
         self._update_heartbeat(worker.id)
         worker.last_heartbeat = datetime.now().isoformat()
+
+        logger.info(
+            f"Worker {worker.id} restarted successfully (PID {worker.pid}, "
+            f"log: {process_info.log_file})"
+        )
 
         self.db.update_worker(worker)
         return worker
