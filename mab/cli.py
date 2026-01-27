@@ -18,6 +18,8 @@ from mab.daemon import (
     DaemonState,
     status_to_json,
 )
+from mab.rpc import DaemonNotRunningError as RPCDaemonNotRunningError
+from mab.rpc import get_default_client
 from mab.towns import (
     PortConflictError,
     TownError,
@@ -488,17 +490,22 @@ def restart(ctx: click.Context, daemon: bool) -> None:
     """Restart the MAB daemon.
 
     Stops the daemon if running, then starts it again.
+    Fails if daemon is not currently running.
     """
     daemon_instance: Daemon = ctx.obj["daemon"]
+
+    # Check if daemon is running first
+    if not daemon_instance.is_running():
+        click.echo("Error: Daemon is not running. Use 'mab start' to start it.", err=True)
+        raise SystemExit(1)
 
     click.echo("Restarting MAB daemon...")
 
     try:
-        # Stop if running
-        if daemon_instance.is_running():
-            click.echo("Stopping current daemon...")
-            daemon_instance.stop(graceful=True)
-            click.echo("Daemon stopped.")
+        # Stop the running daemon
+        click.echo("Stopping current daemon...")
+        daemon_instance.stop(graceful=True)
+        click.echo("Daemon stopped.")
 
         # Start again
         click.echo("Starting daemon...")
@@ -508,6 +515,315 @@ def restart(ctx: click.Context, daemon: bool) -> None:
     except DaemonAlreadyRunningError as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1)
+    except DaemonNotRunningError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
+# Valid worker roles
+VALID_ROLES = ("dev", "qa", "tech-lead", "manager", "reviewer")
+
+
+@cli.command()
+@click.option(
+    "--role",
+    "-r",
+    type=click.Choice(VALID_ROLES),
+    required=True,
+    help="Agent role to spawn",
+)
+@click.option(
+    "--count",
+    "-c",
+    type=int,
+    default=1,
+    help="Number of workers to spawn",
+)
+@click.option(
+    "--project",
+    "-p",
+    type=click.Path(exists=True, file_okay=False, resolve_path=True),
+    default=None,
+    help="Project directory (defaults to current directory)",
+)
+@click.pass_context
+def spawn(ctx: click.Context, role: str, count: int, project: str | None) -> None:
+    """Spawn worker agents.
+
+    Creates new worker agents of the specified role. Workers run in the
+    background managed by the daemon.
+
+    \b
+    Examples:
+      mab spawn --role dev          # Spawn a dev worker
+      mab spawn --role qa -c 2      # Spawn 2 QA workers
+    """
+    project_path = project or str(ctx.obj["town_path"])
+
+    try:
+        client = get_default_client()
+
+        for i in range(count):
+            result = client.call(
+                "worker.spawn",
+                {"role": role, "project_path": project_path},
+            )
+            click.echo(
+                f"Spawned {role} worker: {result['worker_id']} (PID {result['pid']})"
+            )
+
+    except RPCDaemonNotRunningError:
+        click.echo("Error: Daemon is not running. Start it with 'mab start -d'", err=True)
+        raise SystemExit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
+@cli.command("list")
+@click.option(
+    "--role",
+    "-r",
+    type=click.Choice(VALID_ROLES),
+    default=None,
+    help="Filter by role",
+)
+@click.option(
+    "--status",
+    "-s",
+    type=click.Choice(["running", "stopped", "crashed", "all"]),
+    default="all",
+    help="Filter by status",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output as JSON",
+)
+@click.pass_context
+def list_workers(
+    ctx: click.Context,
+    role: str | None,
+    status: str,
+    json_output: bool,
+) -> None:
+    """List active workers.
+
+    Shows running workers with their status, role, and current task.
+    """
+    import json
+
+    try:
+        client = get_default_client()
+
+        params: dict[str, str] = {}
+        if role:
+            params["role"] = role
+        if status != "all":
+            params["status"] = status
+
+        result = client.call("worker.list", params)
+        workers = result.get("workers", [])
+
+        if json_output:
+            click.echo(json.dumps(workers, indent=2))
+            return
+
+        if not workers:
+            click.echo("No workers running.")
+            return
+
+        click.echo(f"{'ID':<20} {'ROLE':<12} {'STATUS':<10} {'PID':<8} {'PROJECT'}")
+        click.echo("-" * 70)
+
+        for w in workers:
+            worker_id = w.get("id", "")[:18]
+            worker_role = w.get("role", "")
+            worker_status = w.get("status", "")
+            worker_pid = str(w.get("pid", ""))
+            worker_project = w.get("project_path", "-")
+            if len(worker_project) > 20:
+                worker_project = "..." + worker_project[-17:]
+
+            status_color = "green" if worker_status == "running" else "red"
+            status_str = click.style(worker_status, fg=status_color)
+
+            click.echo(
+                f"{worker_id:<20} {worker_role:<12} {status_str:<20} {worker_pid:<8} {worker_project}"
+            )
+
+    except RPCDaemonNotRunningError:
+        click.echo("No workers running (daemon not running).")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
+@cli.group()
+@click.pass_context
+def config(ctx: click.Context) -> None:
+    """Manage MAB configuration.
+
+    View and modify MAB configuration for the current project or globally.
+    """
+    pass
+
+
+@config.command("show")
+@click.option(
+    "--global",
+    "show_global",
+    is_flag=True,
+    help="Show global configuration",
+)
+@click.pass_context
+def config_show(ctx: click.Context, show_global: bool) -> None:
+    """Show current configuration.
+
+    Displays the configuration file contents for the current project
+    or global settings.
+    """
+    if show_global:
+        config_path = MAB_HOME / "config.yaml"
+    else:
+        town_path: Path = ctx.obj["town_path"]
+        config_path = town_path / ".mab" / "config.yaml"
+
+    if not config_path.exists():
+        location = "globally" if show_global else f"in {ctx.obj['town_path']}"
+        click.echo(f"Error: MAB not initialized {location}", err=True)
+        click.echo("Run 'mab init' to create configuration.")
+        raise SystemExit(1)
+
+    click.echo(f"# Config: {config_path}")
+    click.echo(config_path.read_text())
+
+
+@config.command("get")
+@click.argument("key")
+@click.pass_context
+def config_get(ctx: click.Context, key: str) -> None:
+    """Get a configuration value.
+
+    KEY is the configuration key in dot notation (e.g., workers.max_workers).
+    """
+    import yaml
+
+    town_path: Path = ctx.obj["town_path"]
+    config_path = town_path / ".mab" / "config.yaml"
+
+    if not config_path.exists():
+        click.echo("Error: MAB not initialized in this directory", err=True)
+        raise SystemExit(1)
+
+    try:
+        config_data = yaml.safe_load(config_path.read_text())
+
+        # Navigate dot notation
+        value = config_data
+        for part in key.split("."):
+            if isinstance(value, dict):
+                value = value.get(part)
+            else:
+                value = None
+                break
+
+        if value is None:
+            click.echo(f"Key '{key}' not found")
+            raise SystemExit(1)
+
+        click.echo(value)
+
+    except yaml.YAMLError as e:
+        click.echo(f"Error parsing config: {e}", err=True)
+        raise SystemExit(1)
+
+
+@cli.command()
+@click.option(
+    "--follow",
+    "-f",
+    is_flag=True,
+    help="Follow log output",
+)
+@click.option(
+    "--lines",
+    "-n",
+    type=int,
+    default=50,
+    help="Number of lines to show",
+)
+@click.option(
+    "--worker",
+    "-w",
+    default=None,
+    help="Filter by worker ID",
+)
+@click.pass_context
+def logs(ctx: click.Context, follow: bool, lines: int, worker: str | None) -> None:
+    """View worker logs.
+
+    Shows logs from running workers. Use --follow to stream logs in real-time.
+
+    \b
+    Examples:
+      mab logs              # Show recent logs
+      mab logs -f           # Follow log output
+      mab logs -n 100       # Show last 100 lines
+    """
+    import subprocess
+
+    # Determine log file location
+    town_path: Path = ctx.obj["town_path"]
+    town_logs_dir = town_path / ".mab" / "logs"
+    daemon_log = MAB_HOME / "daemon.log"
+
+    # Check for logs
+    log_files = []
+
+    if daemon_log.exists():
+        log_files.append(daemon_log)
+
+    if town_logs_dir.exists():
+        log_files.extend(town_logs_dir.glob("*.log"))
+
+    if not log_files:
+        click.echo("No logs found.")
+        click.echo("Start workers with 'mab start' to generate logs.")
+        return
+
+    if follow:
+        # Use tail -f for following logs
+        try:
+            files_to_tail = [str(daemon_log)] if daemon_log.exists() else []
+            if town_logs_dir.exists():
+                worker_logs = list(town_logs_dir.glob("*.log"))
+                files_to_tail.extend(str(f) for f in worker_logs)
+
+            if not files_to_tail:
+                click.echo("No log files to follow.")
+                return
+
+            click.echo("Following logs (Ctrl+C to stop)...")
+            subprocess.run(["tail", "-f"] + files_to_tail)
+
+        except KeyboardInterrupt:
+            pass
+    else:
+        # Show recent logs from daemon log
+        if daemon_log.exists():
+            log_lines = daemon_log.read_text().splitlines()
+
+            # Filter by worker if specified
+            if worker:
+                log_lines = [line for line in log_lines if worker in line]
+
+            # Show last N lines
+            for line in log_lines[-lines:]:
+                click.echo(line)
+        else:
+            click.echo("No daemon logs found.")
 
 
 @cli.group()

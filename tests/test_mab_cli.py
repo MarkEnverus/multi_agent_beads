@@ -246,10 +246,10 @@ class TestMabSpawnCommand:
 
     def test_spawn_invalid_role_rejected(self) -> None:
         """Test spawn rejects invalid role."""
-        with patch("mab.cli.get_default_client") as mock_client:
-            mock_client.return_value.call.side_effect = Exception("Invalid role")
-            result = self.runner.invoke(cli, ["spawn", "--role", "invalid"])
-            assert result.exit_code == 1
+        # Invalid role is rejected at CLI validation layer (exit code 2)
+        result = self.runner.invoke(cli, ["spawn", "--role", "invalid"])
+        assert result.exit_code == 2
+        assert "invalid" in result.output.lower() or "invalid choice" in result.output.lower()
 
 
 class TestMabListCommand:
