@@ -186,6 +186,45 @@
 {# Toast Notifications Container #}
 <div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
 
+{# Log Viewer Modal #}
+<div id="log-modal" class="fixed inset-0 z-50 hidden">
+    <div class="fixed inset-0 bg-gray-900/80" onclick="closeLogModal()"></div>
+    <div class="fixed inset-4 md:inset-10 bg-gray-800 rounded-lg shadow-xl flex flex-col">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+            <div>
+                <h3 id="log-modal-title" class="text-lg font-semibold text-white">Worker Logs</h3>
+                <p id="log-modal-subtitle" class="text-sm text-gray-400">Streaming live logs...</p>
+            </div>
+            <div class="flex items-center space-x-4">
+                <button onclick="toggleLogPause()" id="log-pause-btn"
+                        class="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-md transition-colors">
+                    Pause
+                </button>
+                <button onclick="clearLogViewer()"
+                        class="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-md transition-colors">
+                    Clear
+                </button>
+                <button onclick="closeLogModal()"
+                        class="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors">
+                    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <div id="log-viewer" class="flex-1 overflow-auto p-4 font-mono text-sm bg-gray-900">
+            <div class="text-gray-500">Connecting to log stream...</div>
+        </div>
+        <div class="px-6 py-3 border-t border-gray-700 flex items-center justify-between text-sm">
+            <span id="log-status" class="text-gray-400">
+                <span class="inline-block h-2 w-2 rounded-full bg-yellow-500 mr-2"></span>
+                Connecting...
+            </span>
+            <span id="log-count" class="text-gray-500">0 entries</span>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -444,6 +483,13 @@
                     <span class="${statusClass} text-sm font-medium">${worker.status.toUpperCase()}</span>
                     <div class="flex items-center space-x-2">
                         ${worker.status === 'running' ? `
+                            <button onclick="viewWorkerLogs('${worker.id}')"
+                                    class="p-1.5 text-gray-400 hover:text-primary-400 hover:bg-gray-700 rounded transition-colors"
+                                    title="View Logs">
+                                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                            </button>
                             <button onclick="restartWorker('${worker.id}')"
                                     class="p-1.5 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 rounded transition-colors"
                                     title="Restart">
@@ -588,5 +634,217 @@
             setTimeout(() => toast.remove(), 300);
         }, 3000);
     }
+
+    // Log viewer functionality
+    let logEventSource = null;
+    let logPaused = false;
+    let logEntryCount = 0;
+    let currentLogWorkerId = null;
+
+    function viewWorkerLogs(workerId) {
+        currentLogWorkerId = workerId;
+        logEntryCount = 0;
+        logPaused = false;
+
+        // Update modal title
+        document.getElementById('log-modal-title').textContent = `Logs: ${workerId}`;
+        document.getElementById('log-modal-subtitle').textContent = 'Streaming live logs...';
+        document.getElementById('log-pause-btn').textContent = 'Pause';
+        document.getElementById('log-count').textContent = '0 entries';
+
+        // Clear previous content
+        const viewer = document.getElementById('log-viewer');
+        viewer.innerHTML = '<div class="text-gray-500">Connecting to log stream...</div>';
+
+        // Update status
+        updateLogStatus('connecting');
+
+        // Show modal
+        document.getElementById('log-modal').classList.remove('hidden');
+
+        // Connect to SSE stream
+        connectLogStream(workerId);
+    }
+
+    function connectLogStream(workerId) {
+        // Close existing connection
+        if (logEventSource) {
+            logEventSource.close();
+        }
+
+        logEventSource = new EventSource(`/api/workers/${workerId}/logs/stream`);
+
+        logEventSource.onopen = function() {
+            updateLogStatus('connected');
+            document.getElementById('log-modal-subtitle').textContent = 'Streaming live logs...';
+        };
+
+        logEventSource.onmessage = function(event) {
+            if (logPaused) return;
+
+            try {
+                const entry = JSON.parse(event.data);
+                appendLogEntry(entry);
+            } catch (e) {
+                console.error('Failed to parse log entry:', e);
+            }
+        };
+
+        logEventSource.addEventListener('error', function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'fatal') {
+                    updateLogStatus('error');
+                    appendLogMessage(`Error: ${data.message}`, 'error');
+                } else {
+                    appendLogMessage(`Warning: ${data.message}`, 'warning');
+                }
+            } catch (e) {
+                // Connection error
+                updateLogStatus('disconnected');
+            }
+        });
+
+        logEventSource.addEventListener('info', function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                appendLogMessage(data.message, 'info');
+            } catch (e) {
+                // Ignore
+            }
+        });
+
+        logEventSource.onerror = function() {
+            updateLogStatus('disconnected');
+        };
+    }
+
+    function appendLogEntry(entry) {
+        const viewer = document.getElementById('log-viewer');
+
+        // Remove "connecting" message if present
+        const connectingMsg = viewer.querySelector('.text-gray-500');
+        if (connectingMsg && connectingMsg.textContent.includes('Connecting')) {
+            connectingMsg.remove();
+        }
+
+        const div = document.createElement('div');
+        div.className = 'py-1 border-b border-gray-800';
+
+        // Color-code by event type
+        const eventColors = {
+            'SESSION_START': 'text-green-400',
+            'SESSION_END': 'text-green-400',
+            'CLAIM': 'text-blue-400',
+            'CLOSE': 'text-purple-400',
+            'WORK_START': 'text-yellow-400',
+            'TESTS': 'text-cyan-400',
+            'TESTS_PASSED': 'text-green-400',
+            'TESTS_FAILED': 'text-red-400',
+            'ERROR': 'text-red-400',
+            'BLOCKED': 'text-orange-400',
+            'PR_CREATE': 'text-indigo-400',
+            'PR_CREATED': 'text-indigo-400',
+            'PR_MERGED': 'text-green-400',
+        };
+
+        const eventColor = eventColors[entry.event] || 'text-gray-300';
+
+        div.innerHTML = `
+            <span class="text-gray-500">${entry.timestamp}</span>
+            <span class="${eventColor} font-medium ml-2">${entry.event}</span>
+            ${entry.message ? `<span class="text-gray-400 ml-2">${escapeHtml(entry.message)}</span>` : ''}
+        `;
+
+        viewer.appendChild(div);
+
+        // Auto-scroll to bottom
+        viewer.scrollTop = viewer.scrollHeight;
+
+        // Update count
+        logEntryCount++;
+        document.getElementById('log-count').textContent = `${logEntryCount} entries`;
+    }
+
+    function appendLogMessage(message, type = 'info') {
+        const viewer = document.getElementById('log-viewer');
+        const div = document.createElement('div');
+
+        const typeColors = {
+            'info': 'text-blue-400',
+            'warning': 'text-yellow-400',
+            'error': 'text-red-400'
+        };
+
+        div.className = `py-1 ${typeColors[type] || 'text-gray-400'}`;
+        div.textContent = `[${type.toUpperCase()}] ${message}`;
+
+        viewer.appendChild(div);
+        viewer.scrollTop = viewer.scrollHeight;
+    }
+
+    function updateLogStatus(status) {
+        const statusEl = document.getElementById('log-status');
+        const statusConfig = {
+            'connecting': { color: 'bg-yellow-500', text: 'Connecting...' },
+            'connected': { color: 'bg-green-500', text: 'Live' },
+            'disconnected': { color: 'bg-red-500', text: 'Disconnected' },
+            'paused': { color: 'bg-gray-500', text: 'Paused' },
+            'error': { color: 'bg-red-500', text: 'Error' }
+        };
+
+        const config = statusConfig[status] || statusConfig['connecting'];
+        statusEl.innerHTML = `
+            <span class="inline-block h-2 w-2 rounded-full ${config.color} mr-2"></span>
+            ${config.text}
+        `;
+    }
+
+    function toggleLogPause() {
+        logPaused = !logPaused;
+        const btn = document.getElementById('log-pause-btn');
+
+        if (logPaused) {
+            btn.textContent = 'Resume';
+            updateLogStatus('paused');
+            document.getElementById('log-modal-subtitle').textContent = 'Paused';
+        } else {
+            btn.textContent = 'Pause';
+            updateLogStatus('connected');
+            document.getElementById('log-modal-subtitle').textContent = 'Streaming live logs...';
+        }
+    }
+
+    function clearLogViewer() {
+        const viewer = document.getElementById('log-viewer');
+        viewer.innerHTML = '<div class="text-gray-500">Log cleared</div>';
+        logEntryCount = 0;
+        document.getElementById('log-count').textContent = '0 entries';
+    }
+
+    function closeLogModal() {
+        document.getElementById('log-modal').classList.add('hidden');
+
+        // Close SSE connection
+        if (logEventSource) {
+            logEventSource.close();
+            logEventSource = null;
+        }
+
+        currentLogWorkerId = null;
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Close modal on Escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && !document.getElementById('log-modal').classList.contains('hidden')) {
+            closeLogModal();
+        }
+    });
 </script>
 {% endblock %}
