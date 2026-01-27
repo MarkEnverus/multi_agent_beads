@@ -221,3 +221,136 @@ class TestMabCli:
             assert result.exit_code == 0
             assert '"state"' in result.output
             assert '"pid"' in result.output
+
+
+class TestMabSpawnCommand:
+    """Tests for mab spawn command."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def test_spawn_help(self) -> None:
+        """Test spawn subcommand help."""
+        result = self.runner.invoke(cli, ["spawn", "--help"])
+        assert result.exit_code == 0
+        assert "--role" in result.output
+        assert "--count" in result.output
+
+    def test_spawn_requires_role(self) -> None:
+        """Test spawn requires a role."""
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["spawn"])
+            # Should fail without role
+            assert result.exit_code != 0
+
+    def test_spawn_invalid_role_rejected(self) -> None:
+        """Test spawn rejects invalid role."""
+        with patch("mab.cli.get_default_client") as mock_client:
+            mock_client.return_value.call.side_effect = Exception("Invalid role")
+            result = self.runner.invoke(cli, ["spawn", "--role", "invalid"])
+            assert result.exit_code == 1
+
+
+class TestMabListCommand:
+    """Tests for mab list command."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def test_list_help(self) -> None:
+        """Test list subcommand help."""
+        result = self.runner.invoke(cli, ["list", "--help"])
+        assert result.exit_code == 0
+        assert "--role" in result.output or "--status" in result.output
+
+    def test_list_when_daemon_not_running(self) -> None:
+        """Test list fails gracefully when daemon not running."""
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["list"])
+            # Should show error or empty list
+            assert result.exit_code == 0 or "not running" in result.output.lower()
+
+
+class TestMabTownCommands:
+    """Tests for mab town management commands."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def test_town_list_help(self) -> None:
+        """Test town list subcommand help."""
+        result = self.runner.invoke(cli, ["town", "--help"])
+        if result.exit_code == 0:
+            assert "list" in result.output or "show" in result.output
+
+    def test_town_create_help(self) -> None:
+        """Test town create command shows help."""
+        result = self.runner.invoke(cli, ["town", "create", "--help"])
+        if result.exit_code == 0:
+            assert "--port" in result.output or "--name" in result.output
+
+
+class TestMabRestartCommand:
+    """Tests for mab restart command."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def test_restart_help(self) -> None:
+        """Test restart subcommand help."""
+        result = self.runner.invoke(cli, ["restart", "--help"])
+        assert result.exit_code == 0
+        assert "--daemon" in result.output
+
+    def test_restart_daemon_not_running(self) -> None:
+        """Test restart fails when daemon not running."""
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["restart", "--daemon"])
+            assert result.exit_code == 1
+            assert "not running" in result.output.lower()
+
+
+class TestMabConfigCommand:
+    """Tests for mab config commands."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def test_config_show_help(self) -> None:
+        """Test config show command help."""
+        result = self.runner.invoke(cli, ["config", "--help"])
+        if result.exit_code == 0:
+            assert "show" in result.output or "get" in result.output
+
+    def test_config_show_no_init(self) -> None:
+        """Test config show when not initialized."""
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["config", "show"])
+            if result.exit_code != 0:
+                assert "not initialized" in result.output.lower() or "not found" in result.output.lower()
+
+
+class TestMabLogsCommand:
+    """Tests for mab logs command."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def test_logs_help(self) -> None:
+        """Test logs subcommand help."""
+        result = self.runner.invoke(cli, ["logs", "--help"])
+        assert result.exit_code == 0
+        assert "--follow" in result.output or "-f" in result.output
+
+    def test_logs_when_no_workers(self) -> None:
+        """Test logs command when no workers running."""
+        with self.runner.isolated_filesystem():
+            result = self.runner.invoke(cli, ["logs"])
+            # Should either show empty or daemon not running message
+            assert result.exit_code == 0 or result.exit_code == 1

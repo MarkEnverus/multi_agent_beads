@@ -396,6 +396,88 @@ class TestDaemonCLIIntegration:
         assert "restart" in result.output
 
 
+class TestDaemonEnsureMabDir:
+    """Tests for _ensure_mab_dir method."""
+
+    def test_ensure_mab_dir_creates_directories(self, tmp_path: Path) -> None:
+        """Test _ensure_mab_dir creates necessary directories."""
+        mab_dir = tmp_path / "new-mab"
+        assert not mab_dir.exists()
+
+        daemon = Daemon(mab_dir=mab_dir)
+        daemon._ensure_mab_dir()
+
+        assert mab_dir.exists()
+        assert daemon.log_file.parent.exists()
+
+    def test_ensure_mab_dir_idempotent(self, tmp_path: Path) -> None:
+        """Test _ensure_mab_dir is idempotent (can be called multiple times)."""
+        mab_dir = tmp_path / ".mab"
+        daemon = Daemon(mab_dir=mab_dir)
+
+        # Call multiple times
+        daemon._ensure_mab_dir()
+        daemon._ensure_mab_dir()
+        daemon._ensure_mab_dir()
+
+        assert mab_dir.exists()
+
+
+class TestDaemonInstallSignalHandlers:
+    """Tests for signal handler installation."""
+
+    def test_install_signal_handlers(self, tmp_path: Path) -> None:
+        """Test signal handlers are installed."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        original_sigterm = signal.getsignal(signal.SIGTERM)
+
+        try:
+            daemon._install_signal_handlers()
+
+            # Verify handlers are installed
+            new_sigterm = signal.getsignal(signal.SIGTERM)
+            assert new_sigterm == daemon._signal_handler
+        finally:
+            # Restore original handlers
+            signal.signal(signal.SIGTERM, original_sigterm)
+
+
+class TestDaemonGetStatusWithLogs:
+    """Tests for get_status with log file parsing."""
+
+    def test_get_status_parses_log_timestamp(self, tmp_path: Path) -> None:
+        """Test get_status parses startup timestamp from log."""
+        mab_dir = tmp_path / ".mab"
+        mab_dir.mkdir()
+        pid_file = mab_dir / "daemon.pid"
+        pid_file.write_text(str(os.getpid()))
+
+        log_file = mab_dir / "daemon.log"
+        log_file.write_text("2026-01-26 10:00:00 [INFO] Daemon started\n")
+
+        daemon = Daemon(mab_dir=mab_dir)
+        status = daemon.get_status()
+
+        assert status.state == DaemonState.RUNNING
+        assert status.started_at == "2026-01-26 10:00:00"
+
+    def test_get_status_handles_malformed_log(self, tmp_path: Path) -> None:
+        """Test get_status handles malformed log gracefully."""
+        mab_dir = tmp_path / ".mab"
+        mab_dir.mkdir()
+        pid_file = mab_dir / "daemon.pid"
+        pid_file.write_text(str(os.getpid()))
+
+        log_file = mab_dir / "daemon.log"
+        log_file.write_text("malformed log line without timestamp\n")
+
+        daemon = Daemon(mab_dir=mab_dir)
+        status = daemon.get_status()
+
+        assert status.state == DaemonState.RUNNING
+        assert status.started_at is None  # Couldn't parse
+
+
 class TestGlobalDaemonLocation:
     """Tests for global daemon at ~/.mab/ location."""
 
