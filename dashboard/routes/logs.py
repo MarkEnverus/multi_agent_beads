@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from dashboard.config import LOG_FILE
@@ -29,6 +29,7 @@ class LogEntry(BaseModel):
     message: str | None = Field(None, description="Event message/details")
     role: str | None = Field(None, description="Inferred agent role")
     bead_id: str | None = Field(None, description="Associated bead ID if any")
+    level: str = Field("info", description="Log level (error, warn, info)")
 
 
 # Log line pattern: [TIMESTAMP] [PID] EVENT_TYPE: details
@@ -41,6 +42,33 @@ BEAD_ID_PATTERN = re.compile(r"(multi_agent_beads-\w+)")
 
 # SSE retry interval in milliseconds (sent to client for reconnection)
 SSE_RETRY_MS = 3000
+
+# Log level classification based on event types
+LOG_LEVEL_EVENTS: dict[str, set[str]] = {
+    "error": {"ERROR", "TESTS_FAILED", "CI_FAILED"},
+    "warn": {"BLOCKED", "NO_WORK", "TESTS_FAILED"},
+    "info": {
+        "SESSION_START", "SESSION_END", "CLAIM", "READ", "WORK_START",
+        "TESTS", "TESTS_PASSED", "CLOSE", "BEAD_CREATE", "PR_CREATE",
+        "PR_CREATED", "PR_MERGED", "CI", "CI_PASSED",
+    },
+}
+
+
+def _get_log_level(event: str) -> str:
+    """Determine log level from event type.
+
+    Args:
+        event: The event type string.
+
+    Returns:
+        Log level: "error", "warn", or "info".
+    """
+    if event in LOG_LEVEL_EVENTS["error"]:
+        return "error"
+    if event in LOG_LEVEL_EVENTS["warn"]:
+        return "warn"
+    return "info"
 
 
 def _parse_log_line(line: str) -> dict[str, Any] | None:
@@ -87,6 +115,9 @@ def _parse_log_line(line: str) -> dict[str, Any] | None:
     # Infer role from event content
     role = _infer_role_from_content(event, message)
 
+    # Determine log level
+    level = _get_log_level(event)
+
     return {
         "timestamp": timestamp_str,
         "pid": pid,
@@ -94,6 +125,7 @@ def _parse_log_line(line: str) -> dict[str, Any] | None:
         "message": message,
         "role": role,
         "bead_id": bead_id,
+        "level": level,
     }
 
 
@@ -123,6 +155,7 @@ def _read_recent_logs(
     limit: int = 100,
     role: str | None = None,
     bead_id: str | None = None,
+    level: str | None = None,
 ) -> list[dict[str, Any]]:
     """Read recent log entries from file.
 
@@ -130,6 +163,9 @@ def _read_recent_logs(
         limit: Maximum number of entries to return.
         role: Filter by agent role.
         bead_id: Filter by bead ID.
+        level: Filter by minimum log level (error, warn, info).
+               "error" shows only errors, "warn" shows errors and warnings,
+               "info" shows all.
 
     Returns:
         List of log entries, most recent first.
@@ -143,6 +179,10 @@ def _read_recent_logs(
         logger.debug("Log file does not exist: %s", log_path)
         return []
 
+    # Define level hierarchy for filtering
+    level_hierarchy = {"error": 0, "warn": 1, "info": 2}
+    min_level = level_hierarchy.get(level, 2) if level else 2
+
     entries = []
     try:
         with open(log_path, encoding="utf-8") as f:
@@ -153,6 +193,10 @@ def _read_recent_logs(
                     if role and entry.get("role") != role:
                         continue
                     if bead_id and entry.get("bead_id") != bead_id:
+                        continue
+                    # Apply level filter
+                    entry_level = level_hierarchy.get(entry.get("level", "info"), 2)
+                    if entry_level > min_level:
                         continue
                     entries.append(entry)
 
@@ -213,6 +257,7 @@ def _format_sse_error(message: str, error_type: str = "error") -> str:
 async def _tail_log_file(
     role: str | None = None,
     bead_id: str | None = None,
+    level: str | None = None,
 ) -> AsyncIterator[str]:
     """Async generator that yields new log entries as SSE events.
 
@@ -223,6 +268,7 @@ async def _tail_log_file(
     Args:
         role: Filter by agent role.
         bead_id: Filter by bead ID.
+        level: Minimum log level to include (error, warn, info).
 
     Yields:
         SSE-formatted event strings.
@@ -232,6 +278,10 @@ async def _tail_log_file(
     last_inode: int | None = None
     error_count = 0
     max_consecutive_errors = 5
+
+    # Define level hierarchy for filtering
+    level_hierarchy = {"error": 0, "warn": 1, "info": 2}
+    min_level = level_hierarchy.get(level, 2) if level else 2
 
     # Send initial retry interval to client
     yield f"retry: {SSE_RETRY_MS}\n\n"
@@ -287,6 +337,10 @@ async def _tail_log_file(
                             continue
                         if bead_id and entry.get("bead_id") != bead_id:
                             continue
+                        # Apply level filter
+                        entry_level = level_hierarchy.get(entry.get("level", "info"), 2)
+                        if entry_level > min_level:
+                            continue
 
                         # Yield as SSE event
                         yield _format_sse_event(entry)
@@ -335,23 +389,38 @@ async def get_recent_logs(
     limit: int = Query(100, ge=1, le=1000, description="Maximum entries to return"),
     role: str | None = Query(None, description="Filter by agent role"),
     bead_id: str | None = Query(None, description="Filter by bead ID"),
+    level: str | None = Query(
+        None,
+        description="Minimum log level (error, warn, info). "
+        "'error' shows only errors, 'warn' shows errors and warnings, "
+        "'info' shows all entries.",
+    ),
 ) -> list[dict[str, Any]]:
     """Get recent log entries.
 
     Returns log entries from the claude.log file, most recent first.
-    Supports filtering by role and/or bead ID.
+    Supports filtering by role, bead ID, and log level.
 
     Raises:
         LogFileError: If the log file cannot be read.
     """
-    logger.debug("Fetching recent logs: limit=%d, role=%s, bead_id=%s", limit, role, bead_id)
-    return _read_recent_logs(limit=limit, role=role, bead_id=bead_id)
+    logger.debug(
+        "Fetching recent logs: limit=%d, role=%s, bead_id=%s, level=%s",
+        limit, role, bead_id, level,
+    )
+    return _read_recent_logs(limit=limit, role=role, bead_id=bead_id, level=level)
 
 
 @router.get("/stream")
 async def stream_logs(
     role: str | None = Query(None, description="Filter by agent role"),
     bead_id: str | None = Query(None, description="Filter by bead ID"),
+    level: str | None = Query(
+        None,
+        description="Minimum log level (error, warn, info). "
+        "'error' shows only errors, 'warn' shows errors and warnings, "
+        "'info' shows all entries.",
+    ),
 ) -> StreamingResponse:
     """Stream live log entries via Server-Sent Events.
 
@@ -359,7 +428,7 @@ async def stream_logs(
     as they are written to claude.log.
 
     SSE Format:
-        data: {"timestamp": "...", "pid": 123, "event": "CLAIM", ...}
+        data: {"timestamp": "...", "pid": 123, "event": "CLAIM", "level": "info", ...}
 
     Error events are sent as:
         event: error
@@ -372,9 +441,9 @@ async def stream_logs(
     Handles log file rotation gracefully - if the log file is truncated
     or rotated, streaming continues from the beginning of the new file.
     """
-    logger.info("Starting SSE log stream: role=%s, bead_id=%s", role, bead_id)
+    logger.info("Starting SSE log stream: role=%s, bead_id=%s, level=%s", role, bead_id, level)
     return StreamingResponse(
-        _tail_log_file(role=role, bead_id=bead_id),
+        _tail_log_file(role=role, bead_id=bead_id, level=level),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -382,3 +451,64 @@ async def stream_logs(
             "X-Accel-Buffering": "no",  # Disable nginx buffering
         },
     )
+
+
+@router.get("/export")
+async def export_logs(
+    format: str = Query("json", description="Export format (json or text)"),
+    limit: int = Query(1000, ge=1, le=10000, description="Maximum entries to export"),
+    role: str | None = Query(None, description="Filter by agent role"),
+    bead_id: str | None = Query(None, description="Filter by bead ID"),
+    level: str | None = Query(None, description="Minimum log level (error, warn, info)"),
+) -> Response:
+    """Export log entries as a downloadable file.
+
+    Supports JSON and plain text formats. Entries are returned in
+    chronological order (oldest first) for text format, and newest
+    first for JSON format.
+
+    Args:
+        format: Export format - "json" or "text".
+        limit: Maximum number of entries to export.
+        role: Filter by agent role.
+        bead_id: Filter by bead ID.
+        level: Minimum log level filter.
+
+    Returns:
+        Downloadable file with log entries.
+    """
+    logger.info(
+        "Exporting logs: format=%s, limit=%d, role=%s, bead_id=%s, level=%s",
+        format, limit, role, bead_id, level,
+    )
+
+    entries = _read_recent_logs(limit=limit, role=role, bead_id=bead_id, level=level)
+
+    if format == "text":
+        # Reverse to chronological order for text format
+        entries.reverse()
+        lines = []
+        for entry in entries:
+            line = f"[{entry['timestamp']}] [{entry['pid']}] {entry['event']}"
+            if entry.get("message"):
+                line += f": {entry['message']}"
+            lines.append(line)
+
+        content = "\n".join(lines)
+        return Response(
+            content=content,
+            media_type="text/plain",
+            headers={
+                "Content-Disposition": "attachment; filename=claude-logs.txt",
+            },
+        )
+    else:
+        # JSON format (default)
+        content = json.dumps(entries, indent=2)
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": "attachment; filename=claude-logs.json",
+            },
+        )
