@@ -115,7 +115,10 @@ class BeadParseError(BeadError):
         raw_output: str | None = None,
         bead_id: str | None = None,
     ) -> None:
-        detail = f"raw_output: {raw_output[:200]}..." if raw_output and len(raw_output) > 200 else raw_output
+        if raw_output and len(raw_output) > 200:
+            detail = f"raw_output: {raw_output[:200]}..."
+        else:
+            detail = raw_output
         super().__init__(message, bead_id=bead_id, detail=detail, status_code=500)
         self.raw_output = raw_output
 

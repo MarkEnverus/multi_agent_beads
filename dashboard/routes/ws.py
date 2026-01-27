@@ -57,7 +57,9 @@ class WebSocketMessage:
 
     type: MessageType
     data: dict[str, Any] = field(default_factory=dict)
-    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat().replace("+00:00", "Z"))
+    timestamp: str = field(
+        default_factory=lambda: datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    )
 
     def to_json(self) -> str:
         """Serialize to JSON string."""
