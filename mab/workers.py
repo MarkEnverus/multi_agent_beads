@@ -107,6 +107,7 @@ class Worker:
     error_message: str | None = None
     last_restart_at: str | None = None
     auto_restart_enabled: bool = True
+    town_name: str = "default"  # Town this worker belongs to
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -125,11 +126,19 @@ class Worker:
             "error_message": self.error_message,
             "last_restart_at": self.last_restart_at,
             "auto_restart_enabled": self.auto_restart_enabled,
+            "town_name": self.town_name,
         }
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Worker":
         """Create Worker from database row."""
+        # Handle legacy rows without town_name column
+        town_name = "default"
+        try:
+            town_name = row["town_name"] or "default"
+        except (KeyError, IndexError):
+            pass
+
         return cls(
             id=row["id"],
             role=row["role"],
@@ -145,6 +154,7 @@ class Worker:
             error_message=row["error_message"],
             last_restart_at=row["last_restart_at"],
             auto_restart_enabled=bool(row["auto_restart_enabled"]),
+            town_name=town_name,
         )
 
 
@@ -214,7 +224,8 @@ class WorkerDatabase:
                     exit_code INTEGER,
                     error_message TEXT,
                     last_restart_at TEXT,
-                    auto_restart_enabled INTEGER DEFAULT 1
+                    auto_restart_enabled INTEGER DEFAULT 1,
+                    town_name TEXT DEFAULT 'default'
                 )
             """)
             conn.execute("""
@@ -223,6 +234,20 @@ class WorkerDatabase:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_workers_project ON workers(project_path)
             """)
+
+            # Migration: Add town_name column if it doesn't exist (for existing DBs)
+            cursor = conn.execute("PRAGMA table_info(workers)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if "town_name" not in columns:
+                conn.execute(
+                    "ALTER TABLE workers ADD COLUMN town_name TEXT DEFAULT 'default'"
+                )
+
+            # Create town index (must be after migration in case column was just added)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_workers_town ON workers(town_name)
+            """)
+
             conn.commit()
 
     def insert_worker(self, worker: Worker) -> None:
@@ -233,8 +258,9 @@ class WorkerDatabase:
                 INSERT INTO workers (
                     id, role, project_path, status, pid, created_at,
                     started_at, stopped_at, crash_count, last_heartbeat,
-                    exit_code, error_message, last_restart_at, auto_restart_enabled
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    exit_code, error_message, last_restart_at, auto_restart_enabled,
+                    town_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     worker.id,
@@ -251,6 +277,7 @@ class WorkerDatabase:
                     worker.error_message,
                     worker.last_restart_at,
                     1 if worker.auto_restart_enabled else 0,
+                    worker.town_name,
                 ),
             )
             conn.commit()
@@ -272,7 +299,8 @@ class WorkerDatabase:
                     exit_code = ?,
                     error_message = ?,
                     last_restart_at = ?,
-                    auto_restart_enabled = ?
+                    auto_restart_enabled = ?,
+                    town_name = ?
                 WHERE id = ?
             """,
                 (
@@ -288,6 +316,7 @@ class WorkerDatabase:
                     worker.error_message,
                     worker.last_restart_at,
                     1 if worker.auto_restart_enabled else 0,
+                    worker.town_name,
                     worker.id,
                 ),
             )
@@ -308,6 +337,7 @@ class WorkerDatabase:
         status: WorkerStatus | None = None,
         project_path: str | None = None,
         role: str | None = None,
+        town_name: str | None = None,
     ) -> list[Worker]:
         """List workers with optional filters."""
         conditions = []
@@ -322,6 +352,9 @@ class WorkerDatabase:
         if role is not None:
             conditions.append("role = ?")
             params.append(role)
+        if town_name is not None:
+            conditions.append("town_name = ?")
+            params.append(town_name)
 
         query = "SELECT * FROM workers"
         if conditions:
@@ -342,17 +375,28 @@ class WorkerDatabase:
             conn.commit()
             return cursor.rowcount > 0
 
-    def count_workers(self, status: WorkerStatus | None = None) -> int:
-        """Count workers with optional status filter."""
-        if status is None:
-            query = "SELECT COUNT(*) FROM workers"
-            params: tuple[Any, ...] = ()
-        else:
-            query = "SELECT COUNT(*) FROM workers WHERE status = ?"
-            params = (status.value,)
+    def count_workers(
+        self,
+        status: WorkerStatus | None = None,
+        town_name: str | None = None,
+    ) -> int:
+        """Count workers with optional status and town filters."""
+        conditions = []
+        params: list[Any] = []
+
+        if status is not None:
+            conditions.append("status = ?")
+            params.append(status.value)
+        if town_name is not None:
+            conditions.append("town_name = ?")
+            params.append(town_name)
+
+        query = "SELECT COUNT(*) FROM workers"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
 
         with self._get_connection() as conn:
-            cursor = conn.execute(query, params)
+            cursor = conn.execute(query, tuple(params))
             result = cursor.fetchone()
             return int(result[0]) if result else 0
 
@@ -475,6 +519,7 @@ class WorkerManager:
         role: str,
         project_path: str,
         auto_restart: bool = True,
+        town_name: str = "default",
     ) -> Worker:
         """Spawn a new worker process.
 
@@ -482,6 +527,7 @@ class WorkerManager:
             role: Worker role (dev, qa, tech_lead, manager, reviewer).
             project_path: Path to project for this worker.
             auto_restart: Whether to auto-restart on crash.
+            town_name: Town this worker belongs to.
 
         Returns:
             Created Worker object.
@@ -498,6 +544,7 @@ class WorkerManager:
             role=role,
             project_path=project_path,
             status=WorkerStatus.STARTING,
+            town_name=town_name,
         )
         self.db.insert_worker(worker)
 
@@ -707,6 +754,7 @@ while True:
         status: WorkerStatus | None = None,
         project_path: str | None = None,
         role: str | None = None,
+        town_name: str | None = None,
     ) -> list[Worker]:
         """List workers with optional filters.
 
@@ -714,6 +762,7 @@ while True:
             status: Filter by status.
             project_path: Filter by project path.
             role: Filter by role.
+            town_name: Filter by town name.
 
         Returns:
             List of matching workers.
@@ -722,6 +771,7 @@ while True:
             status=status,
             project_path=project_path,
             role=role,
+            town_name=town_name,
         )
 
     async def health_check(self) -> list[Worker]:
@@ -774,9 +824,16 @@ while True:
 
         return True
 
-    def count_running(self) -> int:
-        """Count currently running workers."""
-        return self.db.count_workers(status=WorkerStatus.RUNNING)
+    def count_running(self, town_name: str | None = None) -> int:
+        """Count currently running workers.
+
+        Args:
+            town_name: Optional filter by town name.
+
+        Returns:
+            Number of running workers.
+        """
+        return self.db.count_workers(status=WorkerStatus.RUNNING, town_name=town_name)
 
     async def auto_restart(self, worker: Worker) -> Worker | None:
         """Attempt to auto-restart a crashed worker with exponential backoff.

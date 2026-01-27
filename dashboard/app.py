@@ -19,6 +19,7 @@ from dashboard.config import (
     PROJECT_ROOT,
     STATIC_DIR,
     TEMPLATES_DIR,
+    TOWN_NAME,
     setup_logging,
 )
 from dashboard.exceptions import (
@@ -31,6 +32,7 @@ from dashboard.routes.agents import _get_active_agents
 from dashboard.routes.agents import router as agents_router
 from dashboard.routes.beads import router as beads_router
 from dashboard.routes.logs import router as logs_router
+from dashboard.routes.towns import router as towns_router
 from dashboard.routes.workers import router as workers_router
 from dashboard.routes.ws import router as ws_router
 from dashboard.services import BeadService
@@ -45,15 +47,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifespan context manager for startup and shutdown logging."""
     # Startup
     logger.info(
-        "Dashboard starting: host=%s, port=%d, log_level=%s",
+        "Dashboard starting: host=%s, port=%d, log_level=%s, town=%s",
         HOST,
         PORT,
         LOG_LEVEL_STR,
+        TOWN_NAME,
     )
-    logger.info("Routers registered: /api/agents, /api/beads, /api/logs, /api/workers, /ws")
+    logger.info(
+        "Routers registered: /api/agents, /api/beads, /api/logs, "
+        "/api/towns, /api/workers, /ws"
+    )
     yield
     # Shutdown
-    logger.info("Dashboard shutting down")
+    logger.info("Dashboard shutting down (town=%s)", TOWN_NAME)
 
 
 # Create FastAPI application
@@ -113,6 +119,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.include_router(agents_router)
 app.include_router(beads_router)
 app.include_router(logs_router)
+app.include_router(towns_router)
 app.include_router(workers_router)
 app.include_router(ws_router)
 
@@ -143,6 +150,8 @@ async def admin_page(request: Request) -> HTMLResponse:
         {
             "request": request,
             "project_path": str(PROJECT_ROOT),
+            "town_name": TOWN_NAME,
+            "port": PORT,
         },
     )
 

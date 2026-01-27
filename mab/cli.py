@@ -18,6 +18,14 @@ from mab.daemon import (
     DaemonState,
     status_to_json,
 )
+from mab.towns import (
+    PortConflictError,
+    TownError,
+    TownExistsError,
+    TownManager,
+    TownNotFoundError,
+    TownStatus,
+)
 from mab.version import __version__
 
 
@@ -499,6 +507,318 @@ def restart(ctx: click.Context, daemon: bool) -> None:
             click.echo("Daemon restarted successfully.")
     except DaemonAlreadyRunningError as e:
         click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
+@cli.group()
+@click.pass_context
+def town(ctx: click.Context) -> None:
+    """Manage orchestration towns.
+
+    Towns are isolated orchestration contexts, each with its own:
+    - Dashboard on a unique port
+    - Worker pool
+    - Configuration
+
+    Multiple towns can run simultaneously for different projects or environments.
+    """
+    ctx.ensure_object(dict)
+    ctx.obj["town_manager"] = TownManager(MAB_HOME)
+
+
+@town.command("create")
+@click.argument("name")
+@click.option(
+    "--port",
+    "-p",
+    type=int,
+    default=None,
+    help="Dashboard port (auto-allocated if not specified)",
+)
+@click.option(
+    "--project",
+    "-P",
+    type=click.Path(exists=True, file_okay=False, resolve_path=True),
+    default=None,
+    help="Project directory path",
+)
+@click.option(
+    "--max-workers",
+    "-w",
+    type=int,
+    default=3,
+    help="Maximum concurrent workers",
+)
+@click.option(
+    "--roles",
+    "-r",
+    multiple=True,
+    default=["dev", "qa"],
+    help="Default roles to spawn (can be specified multiple times)",
+)
+@click.option(
+    "--description",
+    "-d",
+    default="",
+    help="Human-readable description",
+)
+@click.pass_context
+def town_create(
+    ctx: click.Context,
+    name: str,
+    port: int | None,
+    project: str | None,
+    max_workers: int,
+    roles: tuple[str, ...],
+    description: str,
+) -> None:
+    """Create a new orchestration town.
+
+    NAME is the unique identifier for the town (alphanumeric with underscores).
+
+    Examples:
+
+        mab town create staging --port 8001
+
+        mab town create dev --project /path/to/project --roles dev --roles qa
+    """
+    manager: TownManager = ctx.obj["town_manager"]
+
+    try:
+        new_town = manager.create(
+            name=name,
+            port=port,
+            project_path=project,
+            max_workers=max_workers,
+            default_roles=list(roles),
+            description=description,
+        )
+
+        click.secho(f"Created town '{name}' on port {new_town.port}", fg="green")
+        click.echo(f"  Max workers: {new_town.max_workers}")
+        click.echo(f"  Default roles: {', '.join(new_town.default_roles)}")
+        if new_town.project_path:
+            click.echo(f"  Project: {new_town.project_path}")
+
+        click.echo("\nNext steps:")
+        click.echo(f"  1. Start town dashboard: mab town start {name}")
+        click.echo(f"  2. Open dashboard: http://127.0.0.1:{new_town.port}")
+
+    except TownExistsError:
+        click.secho(f"Error: Town '{name}' already exists", fg="red", err=True)
+        raise SystemExit(1)
+    except PortConflictError as e:
+        click.secho(f"Error: {e}", fg="red", err=True)
+        raise SystemExit(1)
+    except TownError as e:
+        click.secho(f"Error: {e}", fg="red", err=True)
+        raise SystemExit(1)
+
+
+@town.command("list")
+@click.option(
+    "--status",
+    "-s",
+    type=click.Choice(["running", "stopped", "all"]),
+    default="all",
+    help="Filter by status",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output as JSON",
+)
+@click.pass_context
+def town_list(
+    ctx: click.Context,
+    status: str,
+    json_output: bool,
+) -> None:
+    """List all towns.
+
+    Shows town name, port, status, and worker count.
+    """
+    import json
+
+    manager: TownManager = ctx.obj["town_manager"]
+
+    status_filter = None
+    if status == "running":
+        status_filter = TownStatus.RUNNING
+    elif status == "stopped":
+        status_filter = TownStatus.STOPPED
+
+    towns = manager.list_towns(status=status_filter)
+
+    if json_output:
+        output = [t.to_dict() for t in towns]
+        click.echo(json.dumps(output, indent=2))
+        return
+
+    if not towns:
+        click.echo("No towns found.")
+        click.echo("\nCreate one with: mab town create <name>")
+        return
+
+    click.echo(f"{'NAME':<15} {'PORT':<8} {'STATUS':<10} {'WORKERS':<10} {'PROJECT'}")
+    click.echo("-" * 70)
+
+    for t in towns:
+        status_color = "green" if t.status == TownStatus.RUNNING else "red"
+        status_str = click.style(t.status.value, fg=status_color)
+        project = t.project_path or "-"
+        if len(project) > 25:
+            project = "..." + project[-22:]
+
+        # Get worker count for this town (would need RPC call in real impl)
+        workers = "-"
+
+        click.echo(f"{t.name:<15} {t.port:<8} {status_str:<20} {workers:<10} {project}")
+
+
+@town.command("delete")
+@click.argument("name")
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Force delete even if running",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
+@click.pass_context
+def town_delete(
+    ctx: click.Context,
+    name: str,
+    force: bool,
+    yes: bool,
+) -> None:
+    """Delete a town.
+
+    NAME is the town to delete. Running towns must be stopped first
+    unless --force is used.
+    """
+    manager: TownManager = ctx.obj["town_manager"]
+
+    try:
+        existing_town = manager.get(name)
+    except TownNotFoundError:
+        click.secho(f"Error: Town '{name}' not found", fg="red", err=True)
+        raise SystemExit(1)
+
+    if not yes:
+        msg = f"Delete town '{name}'"
+        if existing_town.status == TownStatus.RUNNING:
+            msg += " (RUNNING)"
+        msg += "?"
+        if not click.confirm(msg):
+            click.echo("Aborted.")
+            return
+
+    try:
+        manager.delete(name, force=force)
+        click.secho(f"Deleted town '{name}'", fg="green")
+    except TownError as e:
+        click.secho(f"Error: {e}", fg="red", err=True)
+        raise SystemExit(1)
+
+
+@town.command("show")
+@click.argument("name")
+@click.pass_context
+def town_show(ctx: click.Context, name: str) -> None:
+    """Show details of a town.
+
+    NAME is the town to show.
+    """
+    manager: TownManager = ctx.obj["town_manager"]
+
+    try:
+        t = manager.get(name)
+    except TownNotFoundError:
+        click.secho(f"Error: Town '{name}' not found", fg="red", err=True)
+        raise SystemExit(1)
+
+    status_color = "green" if t.status == TownStatus.RUNNING else "red"
+
+    click.echo(f"Town: {click.style(t.name, bold=True)}")
+    click.echo(f"  Status: {click.style(t.status.value, fg=status_color)}")
+    click.echo(f"  Port: {t.port}")
+    click.echo(f"  Max Workers: {t.max_workers}")
+    click.echo(f"  Default Roles: {', '.join(t.default_roles)}")
+
+    if t.project_path:
+        click.echo(f"  Project: {t.project_path}")
+    if t.description:
+        click.echo(f"  Description: {t.description}")
+    if t.pid:
+        click.echo(f"  PID: {t.pid}")
+    if t.started_at:
+        click.echo(f"  Started: {t.started_at}")
+
+    click.echo(f"  Created: {t.created_at}")
+
+
+@town.command("update")
+@click.argument("name")
+@click.option(
+    "--port",
+    "-p",
+    type=int,
+    default=None,
+    help="New dashboard port",
+)
+@click.option(
+    "--max-workers",
+    "-w",
+    type=int,
+    default=None,
+    help="New maximum concurrent workers",
+)
+@click.option(
+    "--description",
+    "-d",
+    default=None,
+    help="New description",
+)
+@click.pass_context
+def town_update(
+    ctx: click.Context,
+    name: str,
+    port: int | None,
+    max_workers: int | None,
+    description: str | None,
+) -> None:
+    """Update town configuration.
+
+    NAME is the town to update.
+    """
+    manager: TownManager = ctx.obj["town_manager"]
+
+    try:
+        updated = manager.update(
+            name=name,
+            port=port,
+            max_workers=max_workers,
+            description=description,
+        )
+        click.secho(f"Updated town '{name}'", fg="green")
+        click.echo(f"  Port: {updated.port}")
+        click.echo(f"  Max Workers: {updated.max_workers}")
+
+    except TownNotFoundError:
+        click.secho(f"Error: Town '{name}' not found", fg="red", err=True)
+        raise SystemExit(1)
+    except PortConflictError as e:
+        click.secho(f"Error: {e}", fg="red", err=True)
+        raise SystemExit(1)
+    except TownError as e:
+        click.secho(f"Error: {e}", fg="red", err=True)
         raise SystemExit(1)
 
 

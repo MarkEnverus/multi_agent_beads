@@ -21,16 +21,24 @@ TEMPLATES_DIR = DASHBOARD_DIR / "templates"
 STATIC_DIR = DASHBOARD_DIR / "static"
 
 # Server configuration
-HOST = "127.0.0.1"
-PORT = 8000
+HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
+PORT = int(os.environ.get("DASHBOARD_PORT", "8000"))
+TOWN_NAME = os.environ.get("DASHBOARD_TOWN", "default")
 
 # CORS allowed origins (localhost only for development)
+# Dynamically include configured port plus common development ports
 CORS_ORIGINS = [
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
+    f"http://localhost:{PORT}",
+    f"http://127.0.0.1:{PORT}",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
+# Add default port range for multi-town support (8000-8010)
+for p in range(8000, 8011):
+    if f"http://localhost:{p}" not in CORS_ORIGINS:
+        CORS_ORIGINS.append(f"http://localhost:{p}")
+    if f"http://127.0.0.1:{p}" not in CORS_ORIGINS:
+        CORS_ORIGINS.append(f"http://127.0.0.1:{p}")
 
 # Logging configuration
 # Log level can be set via DASHBOARD_LOG_LEVEL environment variable
