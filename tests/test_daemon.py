@@ -323,53 +323,71 @@ class TestDaemonSignalHandler:
 
 
 class TestDaemonCLIIntegration:
-    """Integration tests for daemon with CLI."""
+    """Integration tests for daemon with CLI.
+
+    These tests mock MAB_HOME to use a temp directory, ensuring tests are
+    isolated from any real daemon running at ~/.mab/.
+    """
 
     def test_status_command_stopped(self, tmp_path: Path) -> None:
         """Test status shows stopped when daemon not running."""
+        from unittest.mock import patch
+
         from click.testing import CliRunner
 
         from mab.cli import cli
 
         runner = CliRunner()
+        mab_dir = tmp_path / ".mab"
 
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["status"])
+        # Patch MAB_HOME so CLI creates daemon pointing to temp directory
+        with patch("mab.cli.MAB_HOME", mab_dir):
+            with runner.isolated_filesystem(temp_dir=tmp_path):
+                result = runner.invoke(cli, ["status"])
 
-            assert result.exit_code == 0
-            assert "STOPPED" in result.output or "stopped" in result.output.lower()
+                assert result.exit_code == 0
+                assert "STOPPED" in result.output or "stopped" in result.output.lower()
 
     def test_status_json_output(self, tmp_path: Path) -> None:
         """Test status --json outputs valid JSON."""
         import json
+        from unittest.mock import patch
 
         from click.testing import CliRunner
 
         from mab.cli import cli
 
         runner = CliRunner()
+        mab_dir = tmp_path / ".mab"
 
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["status", "--json"])
+        # Patch MAB_HOME so CLI creates daemon pointing to temp directory
+        with patch("mab.cli.MAB_HOME", mab_dir):
+            with runner.isolated_filesystem(temp_dir=tmp_path):
+                result = runner.invoke(cli, ["status", "--json"])
 
-            assert result.exit_code == 0
-            data = json.loads(result.output)
-            assert "state" in data
-            assert data["state"] == "stopped"
+                assert result.exit_code == 0
+                data = json.loads(result.output)
+                assert "state" in data
+                assert data["state"] == "stopped"
 
     def test_stop_not_running_error(self, tmp_path: Path) -> None:
         """Test stop --all fails when daemon not running."""
+        from unittest.mock import patch
+
         from click.testing import CliRunner
 
         from mab.cli import cli
 
         runner = CliRunner()
+        mab_dir = tmp_path / ".mab"
 
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["stop", "--all"])
+        # Patch MAB_HOME so CLI creates daemon pointing to temp directory
+        with patch("mab.cli.MAB_HOME", mab_dir):
+            with runner.isolated_filesystem(temp_dir=tmp_path):
+                result = runner.invoke(cli, ["stop", "--all"])
 
-            assert result.exit_code == 1
-            assert "not running" in result.output.lower()
+                assert result.exit_code == 1
+                assert "not running" in result.output.lower()
 
     def test_restart_help(self) -> None:
         """Test restart command help."""
