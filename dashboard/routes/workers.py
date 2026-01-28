@@ -19,6 +19,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from dashboard.config import LOG_FILE
+from mab.daemon import (
+    MAB_HOME,
+    Daemon,
+    DaemonAlreadyRunningError,
+)
+from mab.daemon import (
+    DaemonNotRunningError as DaemonNotRunning,
+)
 from mab.rpc import DaemonNotRunningError, RPCClient, RPCError, get_default_client
 
 logger = logging.getLogger(__name__)
@@ -172,6 +180,347 @@ async def get_health_status() -> dict[str, Any]:
     except Exception as e:
         _handle_rpc_error(e, "get_health_status")
         raise
+
+
+class DaemonStartRequest(BaseModel):
+    """Request model for starting the daemon."""
+
+    foreground: bool = Field(default=False, description="Run in foreground mode")
+
+
+class DaemonStopRequest(BaseModel):
+    """Request model for stopping the daemon."""
+
+    graceful: bool = Field(default=True, description="Wait for workers to complete")
+    timeout: float = Field(default=60.0, description="Timeout in seconds")
+
+
+class ProjectInitRequest(BaseModel):
+    """Request model for initializing a project."""
+
+    project_path: str = Field(..., description="Path to project directory")
+    template: str = Field(
+        default="default",
+        description="Config template (default, minimal, full)",
+    )
+    force: bool = Field(default=False, description="Overwrite existing config")
+
+
+class ProjectInitResponse(BaseModel):
+    """Response model for project initialization."""
+
+    success: bool = Field(..., description="Whether initialization succeeded")
+    project_path: str = Field(..., description="Path to initialized project")
+    mab_dir: str = Field(..., description="Path to .mab directory")
+    message: str = Field(..., description="Status message")
+
+
+def _get_daemon() -> Daemon:
+    """Get a Daemon instance for the current project."""
+    return Daemon(mab_dir=MAB_HOME)
+
+
+@router.post("/daemon/start")
+async def start_daemon(request: DaemonStartRequest | None = None) -> dict[str, Any]:
+    """Start the MAB daemon.
+
+    Starts the daemon in background mode. The daemon process will fork
+    and this endpoint returns immediately after the fork succeeds.
+    """
+    daemon = _get_daemon()
+    foreground = request.foreground if request else False
+
+    # Check if already running
+    if daemon.is_running():
+        status = daemon.get_status()
+        return {
+            "success": False,
+            "message": f"Daemon already running (PID {status.pid})",
+            "already_running": True,
+            "status": status.to_dict(),
+        }
+
+    try:
+        # Run daemon start in thread pool since it involves I/O
+        # Note: start() with foreground=False will fork and return in parent
+        await asyncio.to_thread(daemon.start, foreground)
+
+        # Give the daemon a moment to fully initialize
+        await asyncio.sleep(0.5)
+
+        # Get updated status
+        status = daemon.get_status()
+        logger.info("Daemon started (PID %s)", status.pid)
+
+        return {
+            "success": True,
+            "message": "Daemon started successfully",
+            "status": status.to_dict(),
+        }
+    except DaemonAlreadyRunningError as e:
+        logger.warning("Daemon already running: %s", e)
+        return {
+            "success": False,
+            "message": str(e),
+            "already_running": True,
+        }
+    except Exception as e:
+        logger.exception("Failed to start daemon: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start daemon: {e}",
+        )
+
+
+@router.post("/daemon/stop")
+async def stop_daemon(request: DaemonStopRequest | None = None) -> dict[str, Any]:
+    """Stop the MAB daemon.
+
+    Gracefully stops the daemon and all running workers.
+    """
+    daemon = _get_daemon()
+    graceful = request.graceful if request else True
+    timeout = request.timeout if request else 60.0
+
+    # Check if running
+    if not daemon.is_running():
+        return {
+            "success": False,
+            "message": "Daemon is not running",
+            "already_stopped": True,
+        }
+
+    try:
+        # Run stop in thread pool since it involves I/O and waiting
+        await asyncio.to_thread(daemon.stop, graceful, timeout)
+        logger.info("Daemon stopped (graceful=%s)", graceful)
+
+        return {
+            "success": True,
+            "message": "Daemon stopped successfully",
+        }
+    except DaemonNotRunning:
+        return {
+            "success": False,
+            "message": "Daemon is not running",
+            "already_stopped": True,
+        }
+    except Exception as e:
+        logger.exception("Failed to stop daemon: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to stop daemon: {e}",
+        )
+
+
+@router.post("/daemon/restart")
+async def restart_daemon() -> dict[str, Any]:
+    """Restart the MAB daemon.
+
+    Stops the daemon if running, then starts it again.
+    """
+    daemon = _get_daemon()
+
+    try:
+        # Check current state
+        was_running = daemon.is_running()
+
+        if was_running:
+            # Stop first
+            await asyncio.to_thread(daemon.stop, True, 60.0)
+            logger.info("Daemon stopped for restart")
+
+        # Give time for cleanup
+        await asyncio.sleep(0.5)
+
+        # Start daemon
+        await asyncio.to_thread(daemon.start, False)
+
+        # Give the daemon a moment to initialize
+        await asyncio.sleep(0.5)
+
+        status = daemon.get_status()
+        logger.info("Daemon restarted (PID %s)", status.pid)
+
+        return {
+            "success": True,
+            "message": "Daemon restarted successfully",
+            "was_running": was_running,
+            "status": status.to_dict(),
+        }
+    except Exception as e:
+        logger.exception("Failed to restart daemon: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to restart daemon: {e}",
+        )
+
+
+@router.post("/project/init", response_model=ProjectInitResponse)
+async def init_project(request: ProjectInitRequest) -> dict[str, Any]:
+    """Initialize a MAB project.
+
+    Creates the .mab directory structure and configuration files
+    for the specified project path.
+    """
+    project_path = Path(request.project_path).resolve()
+
+    # Validate project path exists
+    if not project_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Project path does not exist: {project_path}",
+        )
+
+    if not project_path.is_dir():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Project path is not a directory: {project_path}",
+        )
+
+    mab_dir = project_path / ".mab"
+    config_file = mab_dir / "config.yaml"
+    logs_dir = mab_dir / "logs"
+    heartbeat_dir = mab_dir / "heartbeat"
+
+    # Check if already initialized
+    if mab_dir.exists() and config_file.exists() and not request.force:
+        return {
+            "success": False,
+            "project_path": str(project_path),
+            "mab_dir": str(mab_dir),
+            "message": "Project already initialized. Use force=true to reinitialize.",
+        }
+
+    def do_init() -> dict[str, Any]:
+        """Perform the initialization (runs in thread pool)."""
+        # Create directory structure
+        mab_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(exist_ok=True)
+        heartbeat_dir.mkdir(exist_ok=True)
+
+        # Generate config
+        project_name = project_path.name
+        has_beads = (project_path / ".beads").exists()
+
+        if request.template == "minimal":
+            config_content = f'''# MAB Configuration File (Minimal)
+project:
+  name: "{project_name}"
+
+workers:
+  max_workers: 2
+'''
+        elif request.template == "full":
+            config_content = f'''# MAB Configuration File (Full)
+project:
+  name: "{project_name}"
+  description: ""
+  issue_prefix: ""
+
+workers:
+  max_workers: 5
+  default_roles:
+    - dev
+    - qa
+    - reviewer
+  restart_policy: always
+  heartbeat_interval: 30
+  max_failures: 3
+
+roles:
+  dev:
+    labels: [dev, feature, bug]
+    max_priority: 3
+  qa:
+    labels: [qa, test]
+    max_priority: 2
+  reviewer:
+    labels: [review]
+    max_priority: 2
+
+beads:
+  enabled: {str(has_beads).lower()}
+  path: ".beads"
+
+logging:
+  level: info
+  retention_days: 7
+'''
+        else:
+            config_content = f'''# MAB Configuration File
+project:
+  name: "{project_name}"
+  description: ""
+
+workers:
+  max_workers: 3
+  default_roles:
+    - dev
+    - qa
+'''
+
+        if has_beads:
+            config_content += "\n# Note: Existing beads setup detected at .beads/\n"
+
+        config_file.write_text(config_content)
+
+        # Create .gitignore
+        gitignore_file = mab_dir / ".gitignore"
+        gitignore_content = """# MAB local files
+!config.yaml
+logs/
+*.log
+heartbeat/
+*.pid
+*.lock
+*.sock
+"""
+        gitignore_file.write_text(gitignore_content)
+
+        return {
+            "success": True,
+            "project_path": str(project_path),
+            "mab_dir": str(mab_dir),
+            "message": f"Initialized MAB project at {mab_dir}",
+        }
+
+    try:
+        result = await asyncio.to_thread(do_init)
+        logger.info("Initialized project at %s", project_path)
+        return result
+    except Exception as e:
+        logger.exception("Failed to initialize project: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initialize project: {e}",
+        )
+
+
+@router.get("/project/status")
+async def get_project_status(project_path: str) -> dict[str, Any]:
+    """Get initialization status for a project.
+
+    Returns whether the project has a .mab configuration.
+    """
+    path = Path(project_path).resolve()
+
+    if not path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Project path does not exist: {path}",
+        )
+
+    mab_dir = path / ".mab"
+    config_file = mab_dir / "config.yaml"
+    beads_dir = path / ".beads"
+
+    return {
+        "project_path": str(path),
+        "initialized": mab_dir.exists() and config_file.exists(),
+        "has_beads": beads_dir.exists(),
+        "mab_dir": str(mab_dir) if mab_dir.exists() else None,
+    }
 
 
 @router.get("", response_model=WorkerListResponse)

@@ -39,13 +39,13 @@
     </div>
 </div>
 
-{# Daemon Status Card #}
+{# Daemon Status Card with Controls #}
 <div class="mb-6">
     <div id="daemon-status" class="bg-gray-800 rounded-lg border border-gray-700 p-6">
         <div class="flex items-center justify-between">
             <div class="flex items-center space-x-4">
                 <div class="flex-shrink-0">
-                    <div class="h-12 w-12 rounded-full bg-gray-700 flex items-center justify-center">
+                    <div id="daemon-icon" class="h-12 w-12 rounded-full bg-gray-700 flex items-center justify-center">
                         <svg class="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
                         </svg>
@@ -56,18 +56,107 @@
                     <p id="daemon-state" class="text-gray-400">Loading...</p>
                 </div>
             </div>
-            <div class="flex items-center space-x-6 text-sm">
-                <div>
-                    <span class="text-gray-500">PID:</span>
-                    <span id="daemon-pid" class="text-gray-300 ml-1">-</span>
+            <div class="flex items-center space-x-6">
+                {# Status info #}
+                <div class="flex items-center space-x-6 text-sm">
+                    <div>
+                        <span class="text-gray-500">PID:</span>
+                        <span id="daemon-pid" class="text-gray-300 ml-1">-</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Uptime:</span>
+                        <span id="daemon-uptime" class="text-gray-300 ml-1">-</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Workers:</span>
+                        <span id="daemon-workers" class="text-primary-400 font-semibold ml-1">0</span>
+                    </div>
+                </div>
+                {# Control buttons #}
+                <div id="daemon-controls" class="flex items-center space-x-2 ml-4">
+                    <button
+                        id="daemon-start-btn"
+                        onclick="startDaemon()"
+                        class="px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors flex items-center space-x-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Start Daemon"
+                    >
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>Start</span>
+                    </button>
+                    <button
+                        id="daemon-stop-btn"
+                        onclick="stopDaemon()"
+                        class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors flex items-center space-x-1.5 disabled:opacity-50 disabled:cursor-not-allowed hidden"
+                        title="Stop Daemon"
+                    >
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                        </svg>
+                        <span>Stop</span>
+                    </button>
+                    <button
+                        id="daemon-restart-btn"
+                        onclick="restartDaemon()"
+                        class="px-3 py-1.5 text-sm bg-yellow-600 hover:bg-yellow-700 text-white rounded-md transition-colors flex items-center space-x-1.5 disabled:opacity-50 disabled:cursor-not-allowed hidden"
+                        title="Restart Daemon"
+                    >
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        <span>Restart</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Project Initialization Section #}
+<div class="mb-6">
+    <div id="project-init" class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-4">
+                <div class="flex-shrink-0">
+                    <div id="project-icon" class="h-12 w-12 rounded-full bg-gray-700 flex items-center justify-center">
+                        <svg class="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
+                    </div>
                 </div>
                 <div>
-                    <span class="text-gray-500">Uptime:</span>
-                    <span id="daemon-uptime" class="text-gray-300 ml-1">-</span>
+                    <h2 class="text-lg font-semibold text-white">Project Configuration</h2>
+                    <p id="project-path-display" class="text-gray-400 text-sm">{{ project_path }}</p>
                 </div>
-                <div>
-                    <span class="text-gray-500">Workers:</span>
-                    <span id="daemon-workers" class="text-primary-400 font-semibold ml-1">0</span>
+            </div>
+            <div class="flex items-center space-x-6">
+                {# Project status #}
+                <div class="flex items-center space-x-4 text-sm">
+                    <div>
+                        <span class="text-gray-500">Status:</span>
+                        <span id="project-status" class="text-gray-300 ml-1">Checking...</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Beads:</span>
+                        <span id="project-beads-status" class="text-gray-300 ml-1">-</span>
+                    </div>
+                </div>
+                {# Init button #}
+                <div class="ml-4">
+                    <button
+                        id="project-init-btn"
+                        onclick="initProject()"
+                        class="px-3 py-1.5 text-sm bg-primary-600 hover:bg-primary-700 text-white rounded-md transition-colors flex items-center space-x-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Initialize Project"
+                    >
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                        </svg>
+                        <span>Initialize</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -340,10 +429,14 @@
     // Store worker data
     let workers = [];
 
+    // Project path from server
+    const projectPath = "{{ project_path }}";
+
     // Initialize on page load
     document.addEventListener('DOMContentLoaded', function() {
         connectWebSocket();
         refreshAll();
+        refreshProjectStatus();
         // Refresh every 10 seconds as backup
         setInterval(refreshAll, 10000);
     });
@@ -466,15 +559,30 @@
         const uptimeEl = document.getElementById('daemon-uptime');
         const workersEl = document.getElementById('daemon-workers');
         const statusCard = document.getElementById('daemon-status');
+        const iconEl = document.getElementById('daemon-icon');
+        const startBtn = document.getElementById('daemon-start-btn');
+        const stopBtn = document.getElementById('daemon-stop-btn');
+        const restartBtn = document.getElementById('daemon-restart-btn');
 
         // Update state with color
         const state = data.state || 'unknown';
         let stateClass = 'text-gray-400';
-        if (state === 'running') stateClass = 'text-green-400';
-        else if (state === 'stopped') stateClass = 'text-red-400';
-        else if (state === 'starting') stateClass = 'text-yellow-400';
+        let iconBg = 'bg-gray-700';
+        if (state === 'running') {
+            stateClass = 'text-green-400';
+            iconBg = 'bg-green-900/50';
+        } else if (state === 'stopped') {
+            stateClass = 'text-red-400';
+            iconBg = 'bg-red-900/50';
+        } else if (state === 'starting') {
+            stateClass = 'text-yellow-400';
+            iconBg = 'bg-yellow-900/50';
+        }
 
         stateEl.innerHTML = `Status: <span class="${stateClass} font-semibold">${state.toUpperCase()}</span>`;
+
+        // Update icon background
+        iconEl.className = `h-12 w-12 rounded-full ${iconBg} flex items-center justify-center`;
 
         // Update PID
         pidEl.textContent = data.pid || '-';
@@ -488,6 +596,231 @@
 
         // Update workers count
         workersEl.textContent = data.workers_count || 0;
+
+        // Update control buttons based on state
+        const isRunning = state === 'running';
+        startBtn.classList.toggle('hidden', isRunning);
+        stopBtn.classList.toggle('hidden', !isRunning);
+        restartBtn.classList.toggle('hidden', !isRunning);
+    }
+
+    // Daemon control functions
+    async function startDaemon() {
+        const btn = document.getElementById('daemon-start-btn');
+        btn.disabled = true;
+        btn.innerHTML = `
+            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Starting...</span>
+        `;
+
+        try {
+            const response = await fetch('/api/workers/daemon/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                showToast('Daemon started successfully', 'success');
+                refreshAll();
+            } else if (data.already_running) {
+                showToast('Daemon is already running', 'warning');
+            } else {
+                showToast(data.message || 'Failed to start daemon', 'error');
+            }
+        } catch (error) {
+            console.error('Failed to start daemon:', error);
+            showToast('Failed to start daemon', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = `
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>Start</span>
+            `;
+            refreshDaemonStatus();
+        }
+    }
+
+    async function stopDaemon() {
+        if (!confirm('Stop the daemon? This will stop all running workers.')) return;
+
+        const btn = document.getElementById('daemon-stop-btn');
+        btn.disabled = true;
+        btn.innerHTML = `
+            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Stopping...</span>
+        `;
+
+        try {
+            const response = await fetch('/api/workers/daemon/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ graceful: true })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                showToast('Daemon stopped successfully', 'success');
+                refreshAll();
+            } else if (data.already_stopped) {
+                showToast('Daemon is already stopped', 'warning');
+            } else {
+                showToast(data.message || 'Failed to stop daemon', 'error');
+            }
+        } catch (error) {
+            console.error('Failed to stop daemon:', error);
+            showToast('Failed to stop daemon', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = `
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                </svg>
+                <span>Stop</span>
+            `;
+            refreshDaemonStatus();
+        }
+    }
+
+    async function restartDaemon() {
+        if (!confirm('Restart the daemon? Workers will be stopped and restarted.')) return;
+
+        const btn = document.getElementById('daemon-restart-btn');
+        btn.disabled = true;
+        btn.innerHTML = `
+            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Restarting...</span>
+        `;
+
+        try {
+            const response = await fetch('/api/workers/daemon/restart', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                showToast('Daemon restarted successfully', 'success');
+                refreshAll();
+            } else {
+                showToast(data.message || 'Failed to restart daemon', 'error');
+            }
+        } catch (error) {
+            console.error('Failed to restart daemon:', error);
+            showToast('Failed to restart daemon', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = `
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>Restart</span>
+            `;
+            refreshDaemonStatus();
+        }
+    }
+
+    // Project initialization functions
+    async function refreshProjectStatus() {
+        const statusEl = document.getElementById('project-status');
+        const beadsEl = document.getElementById('project-beads-status');
+        const initBtn = document.getElementById('project-init-btn');
+        const iconEl = document.getElementById('project-icon');
+
+        try {
+            const response = await fetch(`/api/workers/project/status?project_path=${encodeURIComponent(projectPath)}`);
+            if (response.ok) {
+                const data = await response.json();
+
+                if (data.initialized) {
+                    statusEl.innerHTML = '<span class="text-green-400">Initialized</span>';
+                    iconEl.className = 'h-12 w-12 rounded-full bg-green-900/50 flex items-center justify-center';
+                    initBtn.querySelector('span').textContent = 'Reinitialize';
+                } else {
+                    statusEl.innerHTML = '<span class="text-yellow-400">Not Initialized</span>';
+                    iconEl.className = 'h-12 w-12 rounded-full bg-yellow-900/50 flex items-center justify-center';
+                    initBtn.querySelector('span').textContent = 'Initialize';
+                }
+
+                beadsEl.innerHTML = data.has_beads
+                    ? '<span class="text-green-400">Found</span>'
+                    : '<span class="text-gray-400">Not found</span>';
+            }
+        } catch (error) {
+            console.error('Failed to get project status:', error);
+            statusEl.textContent = 'Unknown';
+        }
+    }
+
+    async function initProject() {
+        const btn = document.getElementById('project-init-btn');
+        const statusEl = document.getElementById('project-status');
+
+        // Check if already initialized
+        const isReinit = statusEl.textContent.includes('Initialized');
+        if (isReinit && !confirm('Project is already initialized. Reinitialize with new config?')) {
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerHTML = `
+            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Initializing...</span>
+        `;
+
+        try {
+            const response = await fetch('/api/workers/project/init', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    project_path: projectPath,
+                    template: 'default',
+                    force: isReinit
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                showToast('Project initialized successfully', 'success');
+                refreshProjectStatus();
+            } else {
+                showToast(data.message || 'Failed to initialize project', 'error');
+            }
+        } catch (error) {
+            console.error('Failed to initialize project:', error);
+            showToast('Failed to initialize project', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = `
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                <span>Initialize</span>
+            `;
+            refreshProjectStatus();
+        }
     }
 
     async function refreshHealthStatus() {
