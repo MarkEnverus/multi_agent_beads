@@ -1,0 +1,116 @@
+# Dashboard Smoke Test
+# Run this test to verify basic dashboard functionality via Chrome MCP
+#
+# Prerequisites:
+#   - Dashboard running at http://localhost:8000
+#   - Chrome MCP tools available
+#
+# To run: Claude agent executes each step using Chrome DevTools MCP tools
+
+name: Dashboard Smoke Test
+description: Verify dashboard loads correctly and core functionality works
+
+steps:
+  - name: Navigate to Dashboard
+    action: navigate_page
+    params:
+      url: http://localhost:8000
+      type: url
+      timeout: 10000
+    expect:
+      - Page loads without error
+      - No JavaScript exceptions
+
+  - name: Take Initial Snapshot
+    action: take_snapshot
+    expect:
+      - Kanban Board header visible
+      - Agent sidebar visible
+      - Three columns present (Ready, In Progress, Done)
+      - Refresh Now button visible
+      - Dependencies button visible
+
+  - name: Verify Page Title
+    action: evaluate_script
+    params:
+      function: "() => document.title"
+    expect:
+      - Title contains "Kanban Board"
+
+  - name: Click Dependencies Button
+    action: click
+    params:
+      uid: "[find uid for #depgraph-toggle in snapshot]"
+    expect:
+      - Dependency graph view becomes visible
+      - Kanban view becomes hidden
+
+  - name: Take Graph Snapshot
+    action: take_snapshot
+    expect:
+      - Dependency graph container visible
+      - Mermaid diagram rendered (if dependencies exist)
+
+  - name: Press Escape to Return
+    action: press_key
+    params:
+      key: Escape
+    expect:
+      - Kanban view becomes visible again
+      - Dependency graph view hidden
+
+  - name: Click Refresh Button
+    action: click
+    params:
+      uid: "[find uid for Refresh Now button in snapshot]"
+    expect:
+      - Network request made to /partials/kanban
+      - Kanban content refreshes
+
+  - name: Check Console for Errors
+    action: list_console_messages
+    params:
+      types: ["error", "warn"]
+    expect:
+      - No JavaScript errors
+      - No network errors (404s, 500s)
+
+  - name: Check Network Requests
+    action: list_network_requests
+    expect:
+      - /health returns 200
+      - /partials/kanban returns 200
+      - /partials/agents returns 200
+      - No failed requests
+
+  - name: Navigate to Admin Page
+    action: navigate_page
+    params:
+      url: http://localhost:8000/admin
+      type: url
+    expect:
+      - Admin page loads
+      - Daemon status card visible
+
+  - name: Take Admin Snapshot
+    action: take_snapshot
+    expect:
+      - MAB Daemon status visible
+      - Worker spawn form visible
+      - Workers list visible
+      - Health statistics visible
+
+  - name: Final Screenshot
+    action: take_screenshot
+    params:
+      filePath: tests/mcp/screenshots/smoke_test_final.png
+    expect:
+      - Screenshot saved successfully
+
+on_failure:
+  - action: take_screenshot
+    params:
+      filePath: tests/mcp/screenshots/smoke_test_failure.png
+  - action: list_console_messages
+    params:
+      types: ["error", "warn"]

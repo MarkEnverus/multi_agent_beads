@@ -1,0 +1,160 @@
+# Create Bead Test
+# Test the bead creation flow from the admin page
+#
+# Prerequisites:
+#   - Dashboard running at http://localhost:8000
+#   - bd CLI available and configured
+#   - Chrome MCP tools available
+#
+# NOTE: This test creates a real bead in the system
+
+name: Create Bead Test
+description: Test the bead creation flow from admin page modal
+
+steps:
+  - name: Navigate to Admin
+    action: navigate_page
+    params:
+      url: http://localhost:8000/admin
+      type: url
+      timeout: 10000
+    expect:
+      - Admin page loads successfully
+
+  - name: Take Snapshot to Find New Bead Button
+    action: take_snapshot
+    expect:
+      - New Bead button (#new-bead-btn) visible
+
+  - name: Click New Bead Button
+    action: click
+    params:
+      uid: "[find uid for #new-bead-btn in snapshot]"
+    expect:
+      - Create bead modal opens
+      - Modal is no longer hidden
+
+  - name: Take Modal Snapshot
+    action: take_snapshot
+    expect:
+      - Create bead modal visible
+      - Title input visible
+      - Description textarea visible
+      - Type dropdown visible
+      - Priority dropdown visible
+      - Labels input visible
+
+  - name: Fill Title
+    action: fill
+    params:
+      uid: "[find uid for #bead-title in snapshot]"
+      value: "[MCP Test] Automated test bead"
+    expect:
+      - Title field populated
+
+  - name: Fill Description
+    action: fill
+    params:
+      uid: "[find uid for #bead-description in snapshot]"
+      value: |
+        This bead was created by an automated MCP test.
+
+        ## Purpose
+        Verify the create bead form works correctly.
+
+        ## Cleanup
+        This bead should be closed/deleted after test verification.
+    expect:
+      - Description field populated
+
+  - name: Select Type (Task)
+    action: fill
+    params:
+      uid: "[find uid for #bead-type in snapshot]"
+      value: task
+    expect:
+      - Type dropdown shows "Task"
+
+  - name: Select Priority (P3)
+    action: fill
+    params:
+      uid: "[find uid for #bead-priority in snapshot]"
+      value: "3"
+    expect:
+      - Priority dropdown shows "P3 - Low"
+
+  - name: Fill Labels
+    action: fill
+    params:
+      uid: "[find uid for #bead-labels in snapshot]"
+      value: test,mcp
+    expect:
+      - Labels field populated
+
+  - name: Take Pre-Submit Screenshot
+    action: take_screenshot
+    params:
+      filePath: tests/mcp/screenshots/create_bead_pre_submit.png
+
+  - name: Submit Form
+    action: click
+    params:
+      uid: "[find uid for submit button in modal snapshot]"
+    expect:
+      - Network request made to /api/beads POST
+      - Modal closes on success
+      - Success message shown (if implemented)
+
+  - name: Check Network Request
+    action: list_network_requests
+    params:
+      resourceTypes: ["xhr", "fetch"]
+    expect:
+      - POST /api/beads request made
+      - Response status 200 or 201 on success
+
+  - name: Verify Bead Created
+    action: evaluate_script
+    params:
+      function: |
+        () => {
+          // Check if modal is closed (hidden class present)
+          const modal = document.getElementById('create-bead-modal');
+          return modal ? modal.classList.contains('hidden') : null;
+        }
+    expect:
+      - Modal is hidden (closed) on success
+
+  - name: Navigate to Main Dashboard
+    action: navigate_page
+    params:
+      url: http://localhost:8000
+      type: url
+    expect:
+      - Dashboard loads
+
+  - name: Verify Bead in Kanban
+    action: take_snapshot
+    expect:
+      - New test bead appears in Ready column
+      - Or confirmation that bead was created
+
+  - name: Final Screenshot
+    action: take_screenshot
+    params:
+      filePath: tests/mcp/screenshots/create_bead_final.png
+
+on_failure:
+  - action: take_screenshot
+    params:
+      filePath: tests/mcp/screenshots/create_bead_failure.png
+  - action: list_console_messages
+    params:
+      types: ["error", "warn"]
+  - action: list_network_requests
+
+cleanup:
+  description: |
+    After test, delete the test bead:
+    bd list --status=open | grep "MCP Test"
+    bd close <bead-id> --reason="MCP test cleanup"

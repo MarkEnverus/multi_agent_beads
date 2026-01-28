@@ -1,0 +1,115 @@
+# Admin Page Test
+# Comprehensive test of the admin page functionality
+#
+# Prerequisites:
+#   - Dashboard running at http://localhost:8000
+#   - Chrome MCP tools available
+
+name: Admin Page Test
+description: Verify admin page components and functionality
+
+steps:
+  - name: Navigate to Admin
+    action: navigate_page
+    params:
+      url: http://localhost:8000/admin
+      type: url
+      timeout: 10000
+    expect:
+      - Admin page loads
+
+  - name: Take Initial Snapshot
+    action: take_snapshot
+    expect:
+      - Title contains "Admin"
+      - Daemon status card (#daemon-status) visible
+      - Spawn form (#spawn-form) visible
+      - Workers list (#workers-list) visible
+
+  - name: Verify Daemon Status Card
+    action: take_snapshot
+    expect:
+      - MAB Daemon header visible
+      - Status indicator visible (running/stopped)
+      - Start/Stop/Restart buttons present
+
+  - name: Verify Health Statistics
+    action: take_snapshot
+    expect:
+      - Healthy workers count (#stat-healthy) visible
+      - Unhealthy workers count (#stat-unhealthy) visible
+      - Crashed workers count (#stat-crashed) visible
+      - Total restarts count (#stat-restarts) visible
+
+  - name: Verify Spawn Form Fields
+    action: take_snapshot
+    expect:
+      - Role dropdown (#spawn-role) visible with options (dev, qa, reviewer, tech_lead, manager)
+      - Project path input (#spawn-project) visible and pre-populated
+      - Auto-restart checkbox (#spawn-autorestart) visible and checked by default
+      - Spawn button visible and enabled
+
+  - name: Verify Filter Controls
+    action: take_snapshot
+    expect:
+      - Status filter (#filter-status) visible
+      - Role filter (#filter-role) visible
+      - Refresh button (#refresh-btn) visible
+
+  - name: Open New Bead Modal
+    action: click
+    params:
+      uid: "[find uid for #new-bead-btn in snapshot]"
+    expect:
+      - Create bead modal (#create-bead-modal) becomes visible
+
+  - name: Verify Bead Form Fields
+    action: take_snapshot
+    expect:
+      - Title input (#bead-title) visible
+      - Description textarea (#bead-description) visible
+      - Type dropdown (#bead-type) visible
+      - Priority dropdown (#bead-priority) visible
+      - Labels input (#bead-labels) visible
+      - Submit button visible
+
+  - name: Close Bead Modal
+    action: press_key
+    params:
+      key: Escape
+    expect:
+      - Create bead modal becomes hidden
+
+  - name: Verify Log Modal
+    action: take_snapshot
+    expect:
+      - Log modal container (#log-modal) exists (hidden)
+      - Pause button (#log-pause-btn) exists
+      - Log viewer (#log-viewer) exists
+
+  - name: Check Console for Errors
+    action: list_console_messages
+    params:
+      types: ["error"]
+    expect:
+      - No JavaScript errors
+
+  - name: Verify API Endpoints
+    action: list_network_requests
+    params:
+      resourceTypes: ["xhr", "fetch"]
+    expect:
+      - /api/workers/daemon/status called
+      - /api/workers/health called
+      - /api/workers called
+
+  - name: Final Screenshot
+    action: take_screenshot
+    params:
+      filePath: tests/mcp/screenshots/admin_test_final.png
+
+on_failure:
+  - action: take_screenshot
+    params:
+      filePath: tests/mcp/screenshots/admin_test_failure.png
+  - action: list_console_messages

@@ -1,0 +1,108 @@
+# Worker Spawn Test
+# Test the worker spawn flow from the admin page
+#
+# Prerequisites:
+#   - Dashboard running at http://localhost:8000
+#   - MAB daemon running (or test will verify error handling)
+#   - Chrome MCP tools available
+#
+# CAUTION: This test spawns a real worker if daemon is running
+
+name: Worker Spawn Test
+description: Test the worker spawn flow from admin page
+
+steps:
+  - name: Navigate to Admin
+    action: navigate_page
+    params:
+      url: http://localhost:8000/admin
+      type: url
+      timeout: 10000
+    expect:
+      - Admin page loads successfully
+
+  - name: Take Snapshot to Find Form Elements
+    action: take_snapshot
+    expect:
+      - Spawn form visible
+      - Role dropdown visible
+      - Project input visible
+      - Spawn button visible
+
+  - name: Select Role (Dev)
+    action: fill
+    params:
+      uid: "[find uid for #spawn-role in snapshot]"
+      value: dev
+    expect:
+      - Role dropdown shows "Developer"
+
+  - name: Verify Project Path Pre-filled
+    action: evaluate_script
+    params:
+      function: "() => document.getElementById('spawn-project').value"
+    expect:
+      - Returns non-empty project path
+
+  - name: Verify Auto-restart Checked
+    action: evaluate_script
+    params:
+      function: "() => document.getElementById('spawn-autorestart').checked"
+    expect:
+      - Returns true
+
+  - name: Click Spawn Button
+    action: click
+    params:
+      uid: "[find uid for spawn form submit button in snapshot]"
+    expect:
+      - Network request made to /api/workers POST
+      - Response indicates success or appropriate error
+
+  - name: Check Network Request
+    action: list_network_requests
+    params:
+      resourceTypes: ["xhr", "fetch"]
+    expect:
+      - POST /api/workers request made
+      - Response status noted (200 if daemon running, 503 if not)
+
+  - name: Take Post-Spawn Snapshot
+    action: take_snapshot
+    params:
+      includeSnapshot: true
+    expect:
+      - If successful, new worker appears in workers list
+      - If daemon not running, appropriate error shown
+
+  - name: Verify Workers List Updated
+    action: evaluate_script
+    params:
+      function: |
+        () => {
+          const workersList = document.getElementById('workers-list');
+          return workersList ? workersList.innerText : '';
+        }
+    expect:
+      - Workers list content retrieved
+      - Shows new worker or appropriate message
+
+  - name: Check Console for Errors
+    action: list_console_messages
+    params:
+      types: ["error"]
+    expect:
+      - No unexpected JavaScript errors
+      - Network errors handled gracefully if daemon not running
+
+  - name: Screenshot Final State
+    action: take_screenshot
+    params:
+      filePath: tests/mcp/screenshots/spawn_worker_final.png
+
+on_failure:
+  - action: take_screenshot
+    params:
+      filePath: tests/mcp/screenshots/spawn_worker_failure.png
+  - action: list_console_messages
+  - action: list_network_requests
