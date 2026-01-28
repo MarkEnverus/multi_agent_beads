@@ -61,12 +61,19 @@ class TestHealthStatusEndpoint:
     def test_health_status(self, client: TestClient) -> None:
         """Test getting health status."""
         mock_result = {
-            "healthy_count": 2,
-            "unhealthy_count": 1,
-            "crashed_count": 0,
+            "healthy_workers": 2,
+            "unhealthy_workers": 1,
+            "crashed_workers": 0,
             "total_restarts": 5,
-            "health_check_interval": 30.0,
-            "max_restart_count": 3,
+            "workers_at_max_restarts": 0,
+            "config": {
+                "health_check_interval_seconds": 30.0,
+                "heartbeat_timeout_seconds": 60.0,
+                "max_restart_count": 3,
+                "restart_backoff_base_seconds": 5.0,
+                "restart_backoff_max_seconds": 300.0,
+                "auto_restart_enabled": True,
+            },
         }
 
         with patch("dashboard.routes.workers.get_default_client") as mock_get_client:
@@ -78,9 +85,10 @@ class TestHealthStatusEndpoint:
 
             assert response.status_code == 200
             data = response.json()
-            assert data["healthy_count"] == 2
-            assert data["unhealthy_count"] == 1
+            assert data["healthy_workers"] == 2
+            assert data["unhealthy_workers"] == 1
             assert data["total_restarts"] == 5
+            assert data["config"]["max_restart_count"] == 3
 
 
 class TestListWorkersEndpoint:

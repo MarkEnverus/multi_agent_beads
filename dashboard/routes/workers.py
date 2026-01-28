@@ -68,15 +68,38 @@ class DaemonStatusResponse(BaseModel):
     workers_count: int = Field(default=0, description="Number of running workers")
 
 
+class HealthConfigResponse(BaseModel):
+    """Response model for health configuration."""
+
+    health_check_interval_seconds: float = Field(
+        ..., description="Health check interval in seconds"
+    )
+    heartbeat_timeout_seconds: float = Field(
+        ..., description="Heartbeat timeout in seconds"
+    )
+    max_restart_count: int = Field(
+        ..., description="Max allowed restarts before giving up"
+    )
+    restart_backoff_base_seconds: float = Field(
+        ..., description="Base restart backoff delay in seconds"
+    )
+    restart_backoff_max_seconds: float = Field(
+        ..., description="Maximum restart backoff delay in seconds"
+    )
+    auto_restart_enabled: bool = Field(..., description="Whether auto-restart is enabled")
+
+
 class HealthStatusResponse(BaseModel):
     """Response model for health status."""
 
-    healthy_count: int = Field(..., description="Number of healthy workers")
-    unhealthy_count: int = Field(..., description="Number of unhealthy workers")
-    crashed_count: int = Field(..., description="Number of crashed workers")
+    healthy_workers: int = Field(..., description="Number of healthy workers")
+    unhealthy_workers: int = Field(..., description="Number of unhealthy workers")
+    crashed_workers: int = Field(..., description="Number of crashed workers")
     total_restarts: int = Field(..., description="Total restart count across all workers")
-    health_check_interval: float = Field(..., description="Health check interval in seconds")
-    max_restart_count: int = Field(..., description="Max allowed restarts before giving up")
+    workers_at_max_restarts: int = Field(
+        ..., description="Workers that have hit max restart limit"
+    )
+    config: HealthConfigResponse = Field(..., description="Health configuration")
 
 
 def _get_rpc_client() -> RPCClient:
