@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -155,6 +155,24 @@ async def admin_page(request: Request) -> HTMLResponse:
             "port": PORT,
         },
     )
+
+
+@app.get("/agents")
+async def agents_redirect() -> RedirectResponse:
+    """Redirect /agents to main dashboard where agents sidebar is shown."""
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/beads")
+async def beads_redirect() -> RedirectResponse:
+    """Redirect /beads to main dashboard where kanban board with beads is shown."""
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/logs")
+async def logs_redirect() -> RedirectResponse:
+    """Redirect /logs to admin page where worker logs are accessible."""
+    return RedirectResponse(url="/admin", status_code=302)
 
 
 @app.get("/partials/kanban", response_class=HTMLResponse)
