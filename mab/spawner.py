@@ -54,6 +54,270 @@ ROLE_TO_LABEL = {
     "reviewer": "review",
 }
 
+# Default worktrees directory name
+WORKTREES_DIR = ".worktrees"
+
+
+def is_git_repo(path: Path) -> bool:
+    """Check if path is inside a git repository.
+
+    Args:
+        path: Directory path to check.
+
+    Returns:
+        True if path is a git repo or inside one.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=str(path),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def get_git_root(path: Path) -> Path | None:
+    """Get the root directory of the git repository.
+
+    Args:
+        path: Directory path inside the repo.
+
+    Returns:
+        Path to git root, or None if not a git repo.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(path),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return Path(result.stdout.strip())
+        return None
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+
+def create_worktree(
+    project_path: Path,
+    worker_id: str,
+    bead_id: str | None = None,
+) -> tuple[Path, str]:
+    """Create an isolated git worktree for a worker.
+
+    Args:
+        project_path: Path to the main project (git repo root).
+        worker_id: Unique identifier for the worker.
+        bead_id: Optional bead ID for branch naming.
+
+    Returns:
+        Tuple of (worktree_path, branch_name).
+
+    Raises:
+        SpawnerError: If worktree creation fails.
+    """
+    git_root = get_git_root(project_path)
+    if git_root is None:
+        raise SpawnerError(
+            message=f"Not a git repository: {project_path}",
+            detail="Git worktree isolation requires a git repository",
+        )
+
+    # Create worktrees directory if needed
+    worktrees_dir = git_root / WORKTREES_DIR
+    worktrees_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate branch name based on worker/bead
+    branch_name = f"worker/{worker_id}"
+    if bead_id:
+        branch_name = f"bead/{bead_id}"
+
+    # Worktree path
+    worktree_path = worktrees_dir / worker_id
+
+    # Check if worktree already exists
+    if worktree_path.exists():
+        logger.warning(f"Worktree already exists at {worktree_path}, removing first")
+        remove_worktree(git_root, worktree_path)
+
+    # Create the worktree with a new branch from HEAD
+    try:
+        result = subprocess.run(
+            ["git", "worktree", "add", "-b", branch_name, str(worktree_path), "HEAD"],
+            cwd=str(git_root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            # Branch might already exist, try without -b
+            result = subprocess.run(
+                ["git", "worktree", "add", str(worktree_path), branch_name],
+                cwd=str(git_root),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                raise SpawnerError(
+                    message=f"Failed to create worktree: {result.stderr}",
+                    worker_id=worker_id,
+                    detail="git worktree add failed",
+                )
+
+        logger.info(f"Created worktree at {worktree_path} on branch {branch_name}")
+        return worktree_path, branch_name
+
+    except subprocess.TimeoutExpired:
+        raise SpawnerError(
+            message="Timeout creating git worktree",
+            worker_id=worker_id,
+        )
+    except FileNotFoundError:
+        raise SpawnerError(
+            message="git command not found",
+            detail="Ensure git is installed and in PATH",
+        )
+
+
+def remove_worktree(git_root: Path, worktree_path: Path) -> bool:
+    """Remove a git worktree and optionally its branch.
+
+    Args:
+        git_root: Path to the git repository root.
+        worktree_path: Path to the worktree to remove.
+
+    Returns:
+        True if removal succeeded, False otherwise.
+    """
+    if not worktree_path.exists():
+        return True
+
+    try:
+        # First try normal removal
+        result = subprocess.run(
+            ["git", "worktree", "remove", str(worktree_path)],
+            cwd=str(git_root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            # Force removal if normal fails (e.g., uncommitted changes)
+            logger.warning(f"Normal worktree removal failed, forcing: {result.stderr}")
+            result = subprocess.run(
+                ["git", "worktree", "remove", "--force", str(worktree_path)],
+                cwd=str(git_root),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+        if result.returncode == 0:
+            logger.info(f"Removed worktree at {worktree_path}")
+            return True
+        else:
+            logger.error(f"Failed to remove worktree: {result.stderr}")
+            return False
+
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        logger.error(f"Error removing worktree: {e}")
+        return False
+
+
+def cleanup_stale_worktrees(project_path: Path, active_worker_ids: set[str] | None = None) -> int:
+    """Clean up stale worktrees that don't belong to active workers.
+
+    Args:
+        project_path: Path to the project (git repo root).
+        active_worker_ids: Set of currently active worker IDs. If None, cleans all.
+
+    Returns:
+        Number of worktrees removed.
+    """
+    git_root = get_git_root(project_path)
+    if git_root is None:
+        return 0
+
+    worktrees_dir = git_root / WORKTREES_DIR
+    if not worktrees_dir.exists():
+        return 0
+
+    removed = 0
+    for worktree_path in worktrees_dir.iterdir():
+        if not worktree_path.is_dir():
+            continue
+
+        worker_id = worktree_path.name
+        if active_worker_ids is None or worker_id not in active_worker_ids:
+            if remove_worktree(git_root, worktree_path):
+                removed += 1
+
+    # Prune any dangling worktree references
+    try:
+        subprocess.run(
+            ["git", "worktree", "prune"],
+            cwd=str(git_root),
+            capture_output=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    return removed
+
+
+def list_worktrees(project_path: Path) -> list[dict[str, str]]:
+    """List all worktrees in a project.
+
+    Args:
+        project_path: Path to the project (git repo root).
+
+    Returns:
+        List of dicts with 'path', 'branch', 'commit' keys.
+    """
+    git_root = get_git_root(project_path)
+    if git_root is None:
+        return []
+
+    try:
+        result = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=str(git_root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return []
+
+        worktrees = []
+        current: dict[str, str] = {}
+        for line in result.stdout.split("\n"):
+            if line.startswith("worktree "):
+                if current:
+                    worktrees.append(current)
+                current = {"path": line[9:]}
+            elif line.startswith("HEAD "):
+                current["commit"] = line[5:]
+            elif line.startswith("branch "):
+                current["branch"] = line[7:]
+
+        if current:
+            worktrees.append(current)
+
+        return worktrees
+
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
 
 @dataclass
 class ProcessInfo:
@@ -67,6 +331,8 @@ class ProcessInfo:
     started_at: str
     master_fd: int | None = None  # PTY master fd for I/O
     process: subprocess.Popen[bytes] | None = None
+    worktree_path: Path | None = None  # Isolated worktree for this worker
+    worktree_branch: str | None = None  # Branch name for the worktree
 
 
 class SpawnerError(Exception):
@@ -220,6 +486,7 @@ class SubprocessSpawner(Spawner):
         logs_dir: Path,
         claude_path: str | None = None,
         test_mode: bool = False,
+        use_worktrees: bool = True,
     ) -> None:
         """Initialize the subprocess spawner.
 
@@ -227,11 +494,14 @@ class SubprocessSpawner(Spawner):
             logs_dir: Directory for worker log files.
             claude_path: Path to claude CLI. Auto-detected if None.
             test_mode: If True, use placeholder script instead of Claude CLI.
+            use_worktrees: If True, create isolated git worktrees for each worker.
         """
         self.logs_dir = logs_dir
         self.test_mode = test_mode
+        self.use_worktrees = use_worktrees
         self._claude_path = claude_path
         self._active_fds: dict[str, int] = {}
+        self._worktrees: dict[str, tuple[Path, str]] = {}  # worker_id -> (path, branch)
 
     @property
     def claude_path(self) -> str:
@@ -282,11 +552,15 @@ class SubprocessSpawner(Spawner):
         project_path: str,
         worker_id: str,
         env_vars: dict[str, str] | None = None,
+        bead_id: str | None = None,
     ) -> ProcessInfo:
         """Spawn a worker using subprocess with PTY.
 
         Creates a pseudo-terminal for the Claude CLI process, allowing
         proper interactive behavior while running headless.
+
+        If use_worktrees is enabled, creates an isolated git worktree for
+        the worker to operate in, preventing conflicts between concurrent workers.
         """
         project = Path(project_path).resolve()
         if not project.is_dir():
@@ -302,12 +576,36 @@ class SubprocessSpawner(Spawner):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = self.logs_dir / f"{worker_id}_{timestamp}.log"
 
+        # Create isolated worktree if enabled and in a git repo
+        worktree_path: Path | None = None
+        worktree_branch: str | None = None
+        working_dir = project  # Default to project directory
+
+        if self.use_worktrees and is_git_repo(project):
+            try:
+                worktree_path, worktree_branch = create_worktree(
+                    project, worker_id, bead_id
+                )
+                self._worktrees[worker_id] = (worktree_path, worktree_branch)
+                working_dir = worktree_path
+                logger.info(f"Worker {worker_id} will use worktree at {worktree_path}")
+            except SpawnerError as e:
+                logger.warning(
+                    f"Failed to create worktree for {worker_id}, "
+                    f"falling back to shared directory: {e.message}"
+                )
+
         # Build environment
         env = os.environ.copy()
         env["WORKER_ID"] = worker_id
         env["WORKER_ROLE"] = role
         env["WORKER_PROJECT"] = str(project)
+        env["WORKER_WORKING_DIR"] = str(working_dir)
         env["TERM"] = "xterm-256color"  # For PTY compatibility
+
+        if worktree_path:
+            env["WORKER_WORKTREE"] = str(worktree_path)
+            env["WORKER_BRANCH"] = worktree_branch or ""
 
         if env_vars:
             env.update(env_vars)
@@ -356,7 +654,7 @@ while True:
                 full_prompt,
             ]
 
-        logger.info(f"Spawning worker {worker_id} (role={role}) at {project}")
+        logger.info(f"Spawning worker {worker_id} (role={role}) at {working_dir}")
         logger.debug(f"Command: {' '.join(cmd[:2])}...")
         logger.debug(f"Log file: {log_file}")
 
@@ -367,13 +665,13 @@ while True:
             # Create pseudo-terminal
             master_fd, slave_fd = pty.openpty()
 
-            # Fork the process
+            # Fork the process - use working_dir (worktree) instead of project
             process = subprocess.Popen(
                 cmd,
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
-                cwd=str(project),
+                cwd=str(working_dir),
                 env=env,
                 start_new_session=True,
             )
@@ -413,9 +711,17 @@ while True:
                 started_at=datetime.now().isoformat(),
                 master_fd=master_fd,
                 process=process,
+                worktree_path=worktree_path,
+                worktree_branch=worktree_branch,
             )
 
         except OSError as e:
+            # Clean up worktree if spawn failed
+            if worktree_path and is_git_repo(project):
+                git_root = get_git_root(project)
+                if git_root:
+                    remove_worktree(git_root, worktree_path)
+                self._worktrees.pop(worker_id, None)
             raise SpawnerError(
                 message=f"Failed to spawn process: {e}",
                 role=role,
@@ -511,6 +817,24 @@ while True:
                 os.close(master_fd)
             except OSError:
                 pass
+
+        # Clean up worktree if one was created
+        worktree_info = self._worktrees.pop(worker_id, None)
+        if worktree_info:
+            worktree_path, _ = worktree_info
+            project_path = Path(process_info.project_path)
+            git_root = get_git_root(project_path)
+            if git_root:
+                logger.info(f"Cleaning up worktree at {worktree_path}")
+                remove_worktree(git_root, worktree_path)
+
+        # Also check process_info for worktree (in case terminate called externally)
+        if process_info.worktree_path and process_info.worktree_path.exists():
+            project_path = Path(process_info.project_path)
+            git_root = get_git_root(project_path)
+            if git_root and worker_id not in self._worktrees:
+                logger.info(f"Cleaning up worktree from process_info at {process_info.worktree_path}")
+                remove_worktree(git_root, process_info.worktree_path)
 
         # Get exit code
         if process_info.process:

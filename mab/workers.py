@@ -24,7 +24,13 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mab.spawner import ProcessInfo, SpawnerError, get_spawner
+from mab.spawner import (
+    ProcessInfo,
+    SpawnerError,
+    get_git_root,
+    get_spawner,
+    remove_worktree,
+)
 
 if TYPE_CHECKING:
     from mab.spawner import Spawner
@@ -113,6 +119,8 @@ class Worker:
     last_restart_at: str | None = None
     auto_restart_enabled: bool = True
     town_name: str = "default"  # Town this worker belongs to
+    worktree_path: str | None = None  # Path to isolated git worktree
+    worktree_branch: str | None = None  # Branch name for the worktree
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -132,6 +140,8 @@ class Worker:
             "last_restart_at": self.last_restart_at,
             "auto_restart_enabled": self.auto_restart_enabled,
             "town_name": self.town_name,
+            "worktree_path": self.worktree_path,
+            "worktree_branch": self.worktree_branch,
         }
 
     @classmethod
@@ -141,6 +151,15 @@ class Worker:
         town_name = "default"
         try:
             town_name = row["town_name"] or "default"
+        except (KeyError, IndexError):
+            pass
+
+        # Handle legacy rows without worktree columns
+        worktree_path = None
+        worktree_branch = None
+        try:
+            worktree_path = row["worktree_path"]
+            worktree_branch = row["worktree_branch"]
         except (KeyError, IndexError):
             pass
 
@@ -160,6 +179,8 @@ class Worker:
             last_restart_at=row["last_restart_at"],
             auto_restart_enabled=bool(row["auto_restart_enabled"]),
             town_name=town_name,
+            worktree_path=worktree_path,
+            worktree_branch=worktree_branch,
         )
 
 
@@ -230,7 +251,9 @@ class WorkerDatabase:
                     error_message TEXT,
                     last_restart_at TEXT,
                     auto_restart_enabled INTEGER DEFAULT 1,
-                    town_name TEXT DEFAULT 'default'
+                    town_name TEXT DEFAULT 'default',
+                    worktree_path TEXT,
+                    worktree_branch TEXT
                 )
             """)
             conn.execute("""
@@ -240,12 +263,23 @@ class WorkerDatabase:
                 CREATE INDEX IF NOT EXISTS idx_workers_project ON workers(project_path)
             """)
 
-            # Migration: Add town_name column if it doesn't exist (for existing DBs)
+            # Migration: Add columns if they don't exist (for existing DBs)
             cursor = conn.execute("PRAGMA table_info(workers)")
             columns = {row[1] for row in cursor.fetchall()}
+
             if "town_name" not in columns:
                 conn.execute(
                     "ALTER TABLE workers ADD COLUMN town_name TEXT DEFAULT 'default'"
+                )
+
+            if "worktree_path" not in columns:
+                conn.execute(
+                    "ALTER TABLE workers ADD COLUMN worktree_path TEXT"
+                )
+
+            if "worktree_branch" not in columns:
+                conn.execute(
+                    "ALTER TABLE workers ADD COLUMN worktree_branch TEXT"
                 )
 
             # Create town index (must be after migration in case column was just added)
@@ -264,8 +298,8 @@ class WorkerDatabase:
                     id, role, project_path, status, pid, created_at,
                     started_at, stopped_at, crash_count, last_heartbeat,
                     exit_code, error_message, last_restart_at, auto_restart_enabled,
-                    town_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    town_name, worktree_path, worktree_branch
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     worker.id,
@@ -283,6 +317,8 @@ class WorkerDatabase:
                     worker.last_restart_at,
                     1 if worker.auto_restart_enabled else 0,
                     worker.town_name,
+                    worker.worktree_path,
+                    worker.worktree_branch,
                 ),
             )
             conn.commit()
@@ -305,7 +341,9 @@ class WorkerDatabase:
                     error_message = ?,
                     last_restart_at = ?,
                     auto_restart_enabled = ?,
-                    town_name = ?
+                    town_name = ?,
+                    worktree_path = ?,
+                    worktree_branch = ?
                 WHERE id = ?
             """,
                 (
@@ -322,6 +360,8 @@ class WorkerDatabase:
                     worker.last_restart_at,
                     1 if worker.auto_restart_enabled else 0,
                     worker.town_name,
+                    worker.worktree_path,
+                    worker.worktree_branch,
                     worker.id,
                 ),
             )
@@ -572,6 +612,11 @@ class WorkerManager:
             worker.status = WorkerStatus.RUNNING
             worker.started_at = process_info.started_at
 
+            # Store worktree info if created
+            if process_info.worktree_path:
+                worker.worktree_path = str(process_info.worktree_path)
+                worker.worktree_branch = process_info.worktree_branch
+
             # Track the process info
             self._active_process_info[worker.id] = process_info
             if process_info.process:
@@ -581,9 +626,13 @@ class WorkerManager:
             self._update_heartbeat(worker.id)
             worker.last_heartbeat = datetime.now().isoformat()
 
+            worktree_info = ""
+            if worker.worktree_path:
+                worktree_info = f", worktree: {worker.worktree_path}"
+
             logger.info(
                 f"Worker {worker.id} spawned successfully (PID {worker.pid}, "
-                f"log: {process_info.log_file})"
+                f"log: {process_info.log_file}{worktree_info})"
             )
 
             self.db.update_worker(worker)
@@ -690,6 +739,18 @@ class WorkerManager:
 
         # Cleanup heartbeat
         self._cleanup_heartbeat(worker_id)
+
+        # Cleanup worktree if one exists (fallback in case spawner didn't clean it)
+        if worker.worktree_path:
+            worktree_path = Path(worker.worktree_path)
+            if worktree_path.exists():
+                git_root = get_git_root(Path(worker.project_path))
+                if git_root:
+                    logger.info(f"Cleaning up worktree at {worktree_path}")
+                    remove_worktree(git_root, worktree_path)
+            # Clear worktree info from worker
+            worker.worktree_path = None
+            worker.worktree_branch = None
 
         # Update worker state
         worker.status = WorkerStatus.STOPPED
