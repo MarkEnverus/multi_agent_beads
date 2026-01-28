@@ -1,5 +1,7 @@
 # Multi-Agent Beads (MAB)
 
+> **TL;DR:** Spawn multiple Claude Code agents with different roles (Developer, QA, Reviewer, etc.) to work on your codebase autonomously. Uses [Beads](https://github.com/steveyegge/beads) for task coordination and dependency management.
+
 Multi-agent SDLC orchestration system where Developer, QA, Tech Lead, Manager, and Code Reviewer agents work concurrently on shared codebases with proper task handoffs.
 
 ## Table of Contents
@@ -52,8 +54,7 @@ MAB coordinates multiple Claude Code agents to work on software development task
 ### Option 1: Install with uv (Recommended)
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-org/multi_agent_beads.git
+# Navigate to the project directory
 cd multi_agent_beads
 
 # Install dependencies and create virtual environment
@@ -68,17 +69,12 @@ uv tool install .
 ```bash
 # Install from local directory
 pipx install .
-
-# Or install from git URL
-pipx install git+https://github.com/your-org/multi_agent_beads.git
 ```
 
 ### Option 3: Development Install
 
 ```bash
-# Clone and install with dev dependencies
-git clone https://github.com/your-org/multi_agent_beads.git
-cd multi_agent_beads
+# Install with dev dependencies for testing and linting
 uv sync --all-extras
 
 # Verify installation
