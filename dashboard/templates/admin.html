@@ -432,14 +432,64 @@
     // Project path from server
     const projectPath = "{{ project_path }}";
 
+    // Polling configuration
+    let pollInterval = 10000;  // Base interval: 10 seconds
+    const minPollInterval = 10000;  // Minimum: 10 seconds
+    const maxPollInterval = 60000;  // Maximum: 60 seconds when daemon offline
+    let pollTimer = null;
+    let consecutiveFailures = 0;
+
+    // Debounce utility - prevents rapid-fire API calls
+    function debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+
+    // Debounced refresh functions (300ms debounce)
+    const debouncedRefreshAll = debounce(refreshAllImmediate, 300);
+    const debouncedRefreshWorkers = debounce(refreshWorkersImmediate, 300);
+    const debouncedRefreshDaemonStatus = debounce(refreshDaemonStatusImmediate, 300);
+
     // Initialize on page load
     document.addEventListener('DOMContentLoaded', function() {
         connectWebSocket();
-        refreshAll();
+        refreshAllImmediate();  // Initial refresh immediately
         refreshProjectStatus();
-        // Refresh every 10 seconds as backup
-        setInterval(refreshAll, 10000);
+        // Start adaptive polling
+        startAdaptivePolling();
     });
+
+    // Adaptive polling - increases interval when daemon is offline
+    function startAdaptivePolling() {
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(() => {
+            debouncedRefreshAll();
+        }, pollInterval);
+    }
+
+    function adjustPollInterval(daemonRunning) {
+        const previousInterval = pollInterval;
+        if (daemonRunning) {
+            // Daemon running: use base interval, reset failures
+            pollInterval = minPollInterval;
+            consecutiveFailures = 0;
+        } else {
+            // Daemon offline: exponential backoff
+            consecutiveFailures++;
+            pollInterval = Math.min(maxPollInterval, minPollInterval * Math.pow(1.5, consecutiveFailures));
+        }
+        // Restart polling if interval changed
+        if (previousInterval !== pollInterval) {
+            startAdaptivePolling();
+        }
+    }
 
     // WebSocket connection management
     function connectWebSocket() {
@@ -529,27 +579,38 @@
         }
     }
 
-    // API calls
-    async function refreshAll() {
+    // API calls - use debounced versions for event handlers
+    function refreshAll() {
+        debouncedRefreshAll();
+    }
+
+    async function refreshAllImmediate() {
         await Promise.all([
-            refreshDaemonStatus(),
-            refreshHealthStatus(),
-            refreshWorkers()
+            refreshDaemonStatusImmediate(),
+            refreshHealthStatusImmediate(),
+            refreshWorkersImmediate()
         ]);
     }
 
-    async function refreshDaemonStatus() {
+    function refreshDaemonStatus() {
+        debouncedRefreshDaemonStatus();
+    }
+
+    async function refreshDaemonStatusImmediate() {
         try {
             const response = await fetch('/api/workers/daemon/status');
             if (response.ok) {
                 const data = await response.json();
                 updateDaemonStatus(data);
+                adjustPollInterval(data.state === 'running');
             } else if (response.status === 503) {
                 updateDaemonStatus({ state: 'stopped' });
+                adjustPollInterval(false);
             }
         } catch (error) {
             console.error('Failed to fetch daemon status:', error);
             updateDaemonStatus({ state: 'unknown' });
+            adjustPollInterval(false);
         }
     }
 
@@ -823,7 +884,7 @@
         }
     }
 
-    async function refreshHealthStatus() {
+    async function refreshHealthStatusImmediate() {
         try {
             const response = await fetch('/api/workers/health');
             if (response.ok) {
@@ -838,7 +899,11 @@
         }
     }
 
-    async function refreshWorkers() {
+    function refreshWorkers() {
+        debouncedRefreshWorkers();
+    }
+
+    async function refreshWorkersImmediate() {
         const statusFilter = document.getElementById('filter-status').value;
         const roleFilter = document.getElementById('filter-role').value;
 
