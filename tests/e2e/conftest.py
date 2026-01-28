@@ -114,6 +114,17 @@ def dashboard_page(page_with_server: Page, server_url: str) -> Page:
 
 
 @pytest.fixture
+def admin_page(page_with_server: Page, server_url: str) -> Page:
+    """Navigate to the admin page and wait for initial load."""
+    page_with_server.goto(f"{server_url}/admin")
+    # Wait for admin page content to load
+    page_with_server.wait_for_selector("#daemon-status", state="attached")
+    # Give time for API calls to complete
+    page_with_server.wait_for_timeout(1000)
+    return page_with_server
+
+
+@pytest.fixture
 def mobile_page(
     dashboard_server: subprocess.Popen,
     browser: Browser,
