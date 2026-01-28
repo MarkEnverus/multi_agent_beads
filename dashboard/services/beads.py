@@ -29,8 +29,9 @@ logger = logging.getLogger(__name__)
 # Valid bead ID pattern: prefix-shortid (e.g., multi_agent_beads-abc123)
 BEAD_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_]+-[a-zA-Z0-9]+$")
 
-# Command timeout in seconds
-DEFAULT_TIMEOUT = 30
+# Command timeout in seconds - shorter for dashboard responsiveness
+# The bd CLI should respond quickly; if it takes > 10s something is wrong
+DEFAULT_TIMEOUT = 10
 
 
 class _BeadCache:

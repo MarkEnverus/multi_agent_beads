@@ -1,5 +1,9 @@
-"""REST API endpoints for agent status monitoring."""
+"""REST API endpoints for agent status monitoring.
 
+All file I/O operations are wrapped with asyncio.to_thread() to avoid blocking the event loop.
+"""
+
+import asyncio
 import logging
 import re
 from datetime import datetime
@@ -213,7 +217,8 @@ async def list_agents() -> list[dict[str, Any]]:
     Raises:
         LogFileError: If the log file cannot be read.
     """
-    return _get_active_agents()
+    # Run blocking file I/O in thread pool to avoid blocking event loop
+    return await asyncio.to_thread(_get_active_agents)
 
 
 @router.get("/{role}", response_model=list[AgentStatus])
@@ -239,7 +244,8 @@ async def list_agents_by_role(role: str) -> list[dict[str, Any]]:
             detail=f"Invalid role: {role}. Valid roles: {', '.join(sorted(VALID_ROLES))}",
         )
 
-    agents = _get_active_agents()
+    # Run blocking file I/O in thread pool to avoid blocking event loop
+    agents = await asyncio.to_thread(_get_active_agents)
     filtered = [a for a in agents if a["role"] == role_normalized]
     logger.debug("Found %d agents with role %s", len(filtered), role_normalized)
     return filtered

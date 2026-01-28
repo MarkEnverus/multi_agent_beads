@@ -1,6 +1,6 @@
 """Tests for worker management API endpoints."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -136,9 +136,9 @@ class TestListWorkersEndpoint:
             assert len(data["workers"]) == 1
             assert data["workers"][0]["status"] == "running"
 
-            # Verify correct params were passed
+            # Verify correct params were passed (ANY for timeout parameter)
             mock_client.call.assert_called_once_with(
-                "worker.list", {"status": "running"}
+                "worker.list", {"status": "running"}, ANY
             )
 
 

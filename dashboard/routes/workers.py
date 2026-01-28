@@ -2,6 +2,8 @@
 
 This module provides API endpoints for managing workers through the MAB daemon,
 including listing, spawning, stopping, monitoring, and log streaming for worker agents.
+
+All RPC calls are wrapped with asyncio.to_thread() to avoid blocking the event loop.
 """
 
 import asyncio
@@ -102,6 +104,10 @@ class HealthStatusResponse(BaseModel):
     config: HealthConfigResponse = Field(..., description="Health configuration")
 
 
+# Shorter timeout for dashboard operations to prevent long waits
+DASHBOARD_RPC_TIMEOUT = 5.0
+
+
 def _get_rpc_client() -> RPCClient:
     """Get RPC client for daemon communication."""
     return get_default_client()
@@ -137,7 +143,10 @@ async def get_daemon_status() -> dict[str, Any]:
     """
     try:
         client = _get_rpc_client()
-        result = client.call("daemon.status")
+        # Run blocking RPC call in thread pool to avoid blocking event loop
+        result = await asyncio.to_thread(
+            client.call, "daemon.status", None, DASHBOARD_RPC_TIMEOUT
+        )
         logger.debug("Daemon status: %s", result)
         return result
     except Exception as e:
@@ -154,7 +163,10 @@ async def get_health_status() -> dict[str, Any]:
     """
     try:
         client = _get_rpc_client()
-        result = client.call("health.status")
+        # Run blocking RPC call in thread pool to avoid blocking event loop
+        result = await asyncio.to_thread(
+            client.call, "health.status", None, DASHBOARD_RPC_TIMEOUT
+        )
         logger.debug("Health status: %s", result)
         return result
     except Exception as e:
@@ -185,7 +197,10 @@ async def list_workers(
         if role:
             params["role"] = role
 
-        result = client.call("worker.list", params)
+        # Run blocking RPC call in thread pool to avoid blocking event loop
+        result = await asyncio.to_thread(
+            client.call, "worker.list", params, DASHBOARD_RPC_TIMEOUT
+        )
         workers = result.get("workers", [])
         logger.debug("Listed %d workers", len(workers))
         return {"workers": workers, "total": len(workers)}
@@ -203,7 +218,10 @@ async def get_worker(worker_id: str) -> dict[str, Any]:
     """
     try:
         client = _get_rpc_client()
-        result = client.call("worker.get", {"worker_id": worker_id})
+        # Run blocking RPC call in thread pool to avoid blocking event loop
+        result = await asyncio.to_thread(
+            client.call, "worker.get", {"worker_id": worker_id}, DASHBOARD_RPC_TIMEOUT
+        )
         worker = result.get("worker")
         if not worker:
             raise HTTPException(status_code=404, detail=f"Worker not found: {worker_id}")
@@ -226,14 +244,17 @@ async def spawn_worker(request: WorkerSpawnRequest) -> dict[str, Any]:
     """
     try:
         client = _get_rpc_client()
-        result = client.call(
+        # Run blocking RPC call in thread pool to avoid blocking event loop
+        # Use longer timeout for spawn operations
+        result = await asyncio.to_thread(
+            client.call,
             "worker.spawn",
             {
                 "role": request.role,
                 "project_path": request.project_path,
                 "auto_restart": request.auto_restart,
             },
-            timeout=60.0,  # Spawning can take time
+            60.0,  # Spawning can take time
         )
         logger.info(
             "Spawned worker: %s (role=%s, project=%s)",
@@ -262,14 +283,16 @@ async def stop_worker(
     """
     try:
         client = _get_rpc_client()
-        result = client.call(
+        # Run blocking RPC call in thread pool to avoid blocking event loop
+        result = await asyncio.to_thread(
+            client.call,
             "worker.stop",
             {
                 "worker_id": worker_id,
                 "graceful": graceful,
                 "timeout": timeout,
             },
-            timeout=timeout + 5.0,  # Allow time for operation plus buffer
+            timeout + 5.0,  # Allow time for operation plus buffer
         )
         worker = result.get("worker", {})
         logger.info("Stopped worker: %s", worker_id)
@@ -296,27 +319,32 @@ async def restart_worker(
         client = _get_rpc_client()
 
         # First get the worker details
-        get_result = client.call("worker.get", {"worker_id": worker_id})
+        # Run blocking RPC call in thread pool to avoid blocking event loop
+        get_result = await asyncio.to_thread(
+            client.call, "worker.get", {"worker_id": worker_id}, DASHBOARD_RPC_TIMEOUT
+        )
         worker = get_result.get("worker")
         if not worker:
             raise HTTPException(status_code=404, detail=f"Worker not found: {worker_id}")
 
         # Stop the worker
-        client.call(
+        await asyncio.to_thread(
+            client.call,
             "worker.stop",
             {"worker_id": worker_id, "graceful": graceful, "timeout": 30.0},
-            timeout=35.0,
+            35.0,
         )
 
         # Spawn a new worker with same config
-        result = client.call(
+        result = await asyncio.to_thread(
+            client.call,
             "worker.spawn",
             {
                 "role": worker["role"],
                 "project_path": worker["project_path"],
                 "auto_restart": worker.get("auto_restart", True),
             },
-            timeout=60.0,
+            60.0,
         )
         logger.info("Restarted worker: %s -> %s", worker_id, result.get("worker_id"))
         return result
@@ -499,7 +527,10 @@ async def stream_worker_logs(
     """
     try:
         client = _get_rpc_client()
-        result = client.call("worker.get", {"worker_id": worker_id})
+        # Run blocking RPC call in thread pool to avoid blocking event loop
+        result = await asyncio.to_thread(
+            client.call, "worker.get", {"worker_id": worker_id}, DASHBOARD_RPC_TIMEOUT
+        )
         worker = result.get("worker")
 
         if not worker:
@@ -573,7 +604,10 @@ async def get_worker_recent_logs(
     """
     try:
         client = _get_rpc_client()
-        result = client.call("worker.get", {"worker_id": worker_id})
+        # Run blocking RPC call in thread pool to avoid blocking event loop
+        result = await asyncio.to_thread(
+            client.call, "worker.get", {"worker_id": worker_id}, DASHBOARD_RPC_TIMEOUT
+        )
         worker = result.get("worker")
 
         if not worker:
@@ -596,20 +630,21 @@ async def get_worker_recent_logs(
         if not log_path.exists():
             return []
 
-        # Read and filter logs
-        entries = []
-        try:
-            lines = log_path.read_text(encoding="utf-8").splitlines()
-            for line in lines:
-                entry = _parse_log_line(line)
-                if entry and entry["pid"] == worker_pid:
-                    entries.append(entry)
-        except OSError as e:
-            logger.warning("Failed to read log file %s: %s", log_path, e)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to read log file: {e}",
-            )
+        # Read and filter logs (run file I/O in thread pool)
+        def read_and_filter_logs() -> list[dict[str, Any]]:
+            entries = []
+            try:
+                lines = log_path.read_text(encoding="utf-8").splitlines()
+                for line in lines:
+                    entry = _parse_log_line(line)
+                    if entry and entry["pid"] == worker_pid:
+                        entries.append(entry)
+            except OSError as e:
+                logger.warning("Failed to read log file %s: %s", log_path, e)
+                raise
+            return entries
+
+        entries = await asyncio.to_thread(read_and_filter_logs)
 
         # Return most recent first, limited
         entries.reverse()
@@ -617,6 +652,11 @@ async def get_worker_recent_logs(
 
     except HTTPException:
         raise
+    except OSError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to read log file: {e}",
+        )
     except Exception as e:
         _handle_rpc_error(e, f"get_worker_recent_logs({worker_id})")
         raise

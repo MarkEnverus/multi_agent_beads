@@ -1,5 +1,9 @@
-"""REST API endpoints for bead operations."""
+"""REST API endpoints for bead operations.
 
+All BeadService calls are wrapped with asyncio.to_thread() to avoid blocking the event loop.
+"""
+
+import asyncio
 import logging
 from typing import Any
 
@@ -51,7 +55,10 @@ async def list_beads(
         BeadParseError: If output parsing fails.
     """
     logger.debug("Listing beads: status=%s, label=%s, priority=%s", status, label, priority)
-    return BeadService.list_beads(status=status, label=label, priority=priority)
+    # Run blocking subprocess call in thread pool to avoid blocking event loop
+    return await asyncio.to_thread(
+        BeadService.list_beads, status=status, label=label, priority=priority
+    )
 
 
 @router.get("/ready", response_model=list[BeadResponse])
@@ -65,7 +72,8 @@ async def list_ready_beads(
         BeadParseError: If output parsing fails.
     """
     logger.debug("Listing ready beads: label=%s", label)
-    return BeadService.list_ready(label=label)
+    # Run blocking subprocess call in thread pool to avoid blocking event loop
+    return await asyncio.to_thread(BeadService.list_ready, label=label)
 
 
 @router.get("/in-progress", response_model=list[BeadResponse])
@@ -77,7 +85,8 @@ async def list_in_progress_beads() -> list[dict[str, Any]]:
         BeadParseError: If output parsing fails.
     """
     logger.debug("Listing in-progress beads")
-    return BeadService.list_beads(status="in_progress")
+    # Run blocking subprocess call in thread pool to avoid blocking event loop
+    return await asyncio.to_thread(BeadService.list_beads, status="in_progress")
 
 
 @router.get("/{bead_id}", response_model=BeadResponse)
@@ -91,7 +100,8 @@ async def get_bead(bead_id: str) -> dict[str, Any]:
         BeadParseError: If output parsing fails.
     """
     logger.debug("Getting bead: %s", bead_id)
-    return BeadService.get_bead(bead_id)
+    # Run blocking subprocess call in thread pool to avoid blocking event loop
+    return await asyncio.to_thread(BeadService.get_bead, bead_id)
 
 
 @router.post("", response_model=BeadResponse, status_code=201)
@@ -104,7 +114,9 @@ async def create_bead(bead: BeadCreate) -> dict[str, Any]:
         BeadParseError: If output parsing fails.
     """
     logger.info("Creating bead: %s", bead.title)
-    return BeadService.create_bead(
+    # Run blocking subprocess call in thread pool to avoid blocking event loop
+    return await asyncio.to_thread(
+        BeadService.create_bead,
         title=bead.title,
         description=bead.description,
         priority=bead.priority,

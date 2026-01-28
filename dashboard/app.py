@@ -1,5 +1,6 @@
 """Multi-Agent Dashboard - FastAPI application."""
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -177,8 +178,10 @@ async def kanban_partial(
     error_message: str | None = None
 
     try:
-        # Use batch method for efficient data fetching
-        kanban_data = BeadService.get_kanban_data(done_limit=20, use_cache=not refresh)
+        # Run blocking subprocess call in thread pool to avoid blocking event loop
+        kanban_data = await asyncio.to_thread(
+            BeadService.get_kanban_data, done_limit=20, use_cache=not refresh
+        )
         ready_beads = kanban_data["ready_beads"]
         in_progress_beads = kanban_data["in_progress_beads"]
         done_beads = kanban_data["done_beads"]
@@ -208,7 +211,8 @@ async def agents_partial(request: Request) -> HTMLResponse:
     error_message: str | None = None
 
     try:
-        agents = _get_active_agents()
+        # Run blocking file I/O in thread pool to avoid blocking event loop
+        agents = await asyncio.to_thread(_get_active_agents)
     except LogFileError as e:
         logger.warning("Failed to get active agents: %s", e.message)
         error_message = e.message
@@ -318,11 +322,11 @@ async def depgraph_partial(request: Request) -> HTMLResponse:
     error_message: str | None = None
 
     try:
-        # Fetch all beads with blocked_by info
-        blocked_beads = BeadService.list_blocked()
+        # Run blocking subprocess calls in thread pool to avoid blocking event loop
+        blocked_beads = await asyncio.to_thread(BeadService.list_blocked)
 
         # Also get all beads to have complete status info
-        all_beads = BeadService.list_beads()
+        all_beads = await asyncio.to_thread(BeadService.list_beads)
 
         # Merge blocked_by info into all_beads
         blocked_map = {b["id"]: b.get("blocked_by", []) for b in blocked_beads}
@@ -368,7 +372,8 @@ def _render_error_modal(message: str, title: str = "Error") -> str:
 async def bead_detail_partial(request: Request, bead_id: str) -> HTMLResponse:
     """Render the bead detail modal partial."""
     try:
-        bead = BeadService.get_bead(bead_id)
+        # Run blocking subprocess call in thread pool to avoid blocking event loop
+        bead = await asyncio.to_thread(BeadService.get_bead, bead_id)
         return templates.TemplateResponse(
             "partials/bead_modal.html",
             {
