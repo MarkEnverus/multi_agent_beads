@@ -19,6 +19,16 @@
                 <span class="text-sm text-gray-400">Connecting...</span>
             </span>
             <button
+                id="new-bead-btn"
+                class="px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors flex items-center space-x-2"
+                onclick="openCreateBeadModal()"
+            >
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                <span>New Bead</span>
+            </button>
+            <button
                 id="refresh-btn"
                 class="px-3 py-1.5 text-sm bg-primary-600 hover:bg-primary-700 text-white rounded-md transition-colors"
                 onclick="refreshAll()"
@@ -185,6 +195,99 @@
 
 {# Toast Notifications Container #}
 <div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
+
+{# Create Bead Modal #}
+<div id="create-bead-modal" class="fixed inset-0 z-50 hidden">
+    <div class="fixed inset-0 bg-gray-900/80" onclick="closeCreateBeadModal()"></div>
+    <div class="fixed inset-0 flex items-center justify-center p-4">
+        <div class="relative bg-gray-800 rounded-lg shadow-xl border border-gray-700 w-full max-w-lg">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+                <h3 class="text-lg font-semibold text-white">Create New Bead</h3>
+                <button onclick="closeCreateBeadModal()"
+                        class="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors">
+                    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <form id="create-bead-form" onsubmit="submitCreateBead(event)" class="px-6 py-4 space-y-4">
+                {# Title field (required) #}
+                <div>
+                    <label for="bead-title" class="block text-sm font-medium text-gray-400 mb-1">
+                        Title <span class="text-red-400">*</span>
+                    </label>
+                    <input type="text" id="bead-title" name="title" required
+                           class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="Brief description of the task">
+                </div>
+
+                {# Description field (markdown) #}
+                <div>
+                    <label for="bead-description" class="block text-sm font-medium text-gray-400 mb-1">
+                        Description
+                    </label>
+                    <textarea id="bead-description" name="description" rows="4"
+                              class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                              placeholder="Detailed description (supports Markdown)"></textarea>
+                </div>
+
+                {# Type and Priority row #}
+                <div class="grid grid-cols-2 gap-4">
+                    {# Type dropdown #}
+                    <div>
+                        <label for="bead-type" class="block text-sm font-medium text-gray-400 mb-1">Type</label>
+                        <select id="bead-type" name="issue_type"
+                                class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500">
+                            <option value="task">Task</option>
+                            <option value="bug">Bug</option>
+                            <option value="feature">Feature</option>
+                            <option value="epic">Epic</option>
+                        </select>
+                    </div>
+
+                    {# Priority dropdown #}
+                    <div>
+                        <label for="bead-priority" class="block text-sm font-medium text-gray-400 mb-1">Priority</label>
+                        <select id="bead-priority" name="priority"
+                                class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500">
+                            <option value="0">P0 - Critical</option>
+                            <option value="1">P1 - High</option>
+                            <option value="2" selected>P2 - Medium</option>
+                            <option value="3">P3 - Low</option>
+                            <option value="4">P4 - Backlog</option>
+                        </select>
+                    </div>
+                </div>
+
+                {# Labels field (comma-separated tags) #}
+                <div>
+                    <label for="bead-labels" class="block text-sm font-medium text-gray-400 mb-1">
+                        Labels
+                    </label>
+                    <input type="text" id="bead-labels" name="labels"
+                           class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="dev, qa, architecture (comma-separated)">
+                    <p class="mt-1 text-xs text-gray-500">Common labels: dev, qa, architecture, dashboard, docs, bug</p>
+                </div>
+
+                {# Form actions #}
+                <div class="flex items-center justify-end space-x-3 pt-4 border-t border-gray-700">
+                    <button type="button" onclick="closeCreateBeadModal()"
+                            class="px-4 py-2 text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded-md transition-colors">
+                        Cancel
+                    </button>
+                    <button type="submit" id="create-bead-submit"
+                            class="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md transition-colors flex items-center space-x-2">
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                        </svg>
+                        <span>Create Bead</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 {# Log Viewer Modal #}
 <div id="log-modal" class="fixed inset-0 z-50 hidden">
@@ -842,9 +945,108 @@
 
     // Close modal on Escape key
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape' && !document.getElementById('log-modal').classList.contains('hidden')) {
-            closeLogModal();
+        if (e.key === 'Escape') {
+            if (!document.getElementById('log-modal').classList.contains('hidden')) {
+                closeLogModal();
+            }
+            if (!document.getElementById('create-bead-modal').classList.contains('hidden')) {
+                closeCreateBeadModal();
+            }
         }
     });
+
+    // Create Bead Modal functions
+    function openCreateBeadModal() {
+        // Reset form
+        document.getElementById('create-bead-form').reset();
+        // Set default priority to P2
+        document.getElementById('bead-priority').value = '2';
+        // Show modal
+        document.getElementById('create-bead-modal').classList.remove('hidden');
+        // Focus title field
+        setTimeout(() => document.getElementById('bead-title').focus(), 100);
+    }
+
+    function closeCreateBeadModal() {
+        document.getElementById('create-bead-modal').classList.add('hidden');
+    }
+
+    async function submitCreateBead(event) {
+        event.preventDefault();
+
+        const form = document.getElementById('create-bead-form');
+        const submitBtn = document.getElementById('create-bead-submit');
+
+        // Disable submit button and show loading state
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `
+            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Creating...</span>
+        `;
+
+        // Gather form data
+        const title = document.getElementById('bead-title').value.trim();
+        const description = document.getElementById('bead-description').value.trim();
+        const issueType = document.getElementById('bead-type').value;
+        const priority = parseInt(document.getElementById('bead-priority').value, 10);
+        const labelsInput = document.getElementById('bead-labels').value.trim();
+
+        // Parse labels (comma-separated)
+        const labels = labelsInput
+            ? labelsInput.split(',').map(l => l.trim()).filter(l => l.length > 0)
+            : [];
+
+        // Validate required fields
+        if (!title) {
+            showToast('Title is required', 'error');
+            resetSubmitButton();
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/beads', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: title,
+                    description: description || null,
+                    issue_type: issueType,
+                    priority: priority,
+                    labels: labels
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                showToast(`Bead created: ${data.id}`, 'success');
+                closeCreateBeadModal();
+
+                // The bead will appear in the main dashboard's kanban board
+                // which auto-refreshes every 10 seconds
+            } else {
+                const error = await response.json();
+                showToast(error.detail || 'Failed to create bead', 'error');
+            }
+        } catch (error) {
+            console.error('Failed to create bead:', error);
+            showToast('Failed to create bead: Network error', 'error');
+        } finally {
+            resetSubmitButton();
+        }
+    }
+
+    function resetSubmitButton() {
+        const submitBtn = document.getElementById('create-bead-submit');
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            <span>Create Bead</span>
+        `;
+    }
 </script>
 {% endblock %}
