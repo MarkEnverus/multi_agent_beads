@@ -50,6 +50,11 @@ LOG_LEVEL = getattr(logging, LOG_LEVEL_STR, logging.INFO)
 # Cache TTL in seconds for bd list results (reduces subprocess overhead)
 CACHE_TTL_SECONDS = float(os.environ.get("DASHBOARD_CACHE_TTL", "5.0"))
 
+# Agent staleness threshold in minutes
+# Agents with no activity for longer than this are considered stale/inactive
+# This prevents phantom agents from showing when processes die without SESSION_END
+AGENT_STALE_MINUTES = int(os.environ.get("DASHBOARD_AGENT_STALE_MINUTES", "30"))
+
 # Log format for file and console handlers
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"

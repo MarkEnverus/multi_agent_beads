@@ -36,7 +36,9 @@ class TestAgentsEndpoints:
         log_file = tmp_path / "test.log"
         log_file.write_text(log_content)
 
-        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)):
+        # Disable staleness check for test with old timestamps
+        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)), \
+             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999):
             response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
@@ -57,7 +59,9 @@ class TestAgentsEndpoints:
         log_file = tmp_path / "test.log"
         log_file.write_text(log_content)
 
-        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)):
+        # Disable staleness check for test with old timestamps
+        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)), \
+             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999):
             response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
@@ -76,7 +80,9 @@ class TestAgentsEndpoints:
         log_file = tmp_path / "test.log"
         log_file.write_text(log_content)
 
-        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)):
+        # Disable staleness check for test with old timestamps
+        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)), \
+             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999):
             # Filter by qa role
             response = client.get("/api/agents/qa")
             assert response.status_code == 200
@@ -96,6 +102,25 @@ class TestAgentsEndpoints:
         response = client.get("/api/agents/invalid_role")
         assert response.status_code == 400
         assert "Invalid role" in response.json()["detail"]
+
+
+    def test_list_agents_filters_stale_agents(self, tmp_path: Path) -> None:
+        """Test that stale agents (no recent activity) are filtered out."""
+        # Use very old timestamps that will definitely be stale
+        log_content = """[2020-01-01 14:00:00] [1001] SESSION_START
+[2020-01-01 14:00:05] [1001] CLAIM: mab-old - Old stale task
+"""
+        log_file = tmp_path / "test.log"
+        log_file.write_text(log_content)
+
+        # With default staleness threshold (30 min), these old agents should be filtered
+        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)), \
+             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 30):
+            response = client.get("/api/agents")
+            assert response.status_code == 200
+            data = response.json()
+            # Agent with old timestamp should be filtered out
+            assert len(data) == 0
 
 
 class TestLogParsing:

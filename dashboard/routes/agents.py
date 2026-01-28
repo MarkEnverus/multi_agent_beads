@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from dashboard.config import LOG_FILE
+from dashboard.config import AGENT_STALE_MINUTES, LOG_FILE
 from dashboard.exceptions import LogFileError
 
 logger = logging.getLogger(__name__)
@@ -179,8 +179,28 @@ def _format_iso_timestamp(timestamp_str: str) -> str:
         return timestamp_str
 
 
+def _is_agent_stale(timestamp_str: str, stale_minutes: int) -> bool:
+    """Check if an agent's last activity is older than the staleness threshold.
+
+    Args:
+        timestamp_str: The agent's last activity timestamp (YYYY-MM-DD HH:MM:SS).
+        stale_minutes: Threshold in minutes after which an agent is considered stale.
+
+    Returns:
+        True if the agent is stale (no activity for longer than threshold).
+    """
+    try:
+        last_activity = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # noqa: DTZ007
+        now = datetime.now()  # noqa: DTZ005
+        age_minutes = (now - last_activity).total_seconds() / 60
+        return age_minutes > stale_minutes
+    except ValueError:
+        logger.warning("Invalid timestamp format for staleness check: %s", timestamp_str)
+        return True  # Treat unparseable timestamps as stale
+
+
 def _get_active_agents() -> list[dict[str, Any]]:
-    """Get list of currently active (non-ended) agents.
+    """Get list of currently active (non-ended, non-stale) agents.
 
     Returns:
         List of active agent dictionaries.
@@ -191,14 +211,25 @@ def _get_active_agents() -> list[dict[str, Any]]:
     entries = _parse_log_file()
     agents = _extract_agents_from_logs(entries)
 
-    # Filter to only active agents (not ended)
+    # Filter to only active agents (not ended and not stale)
     active = []
     for agent in agents.values():
-        if agent["status"] != "ended":
-            # Infer role from current bead title
-            agent["role"] = _infer_role_from_bead_title(agent.get("current_bead_title"))
-            agent["last_activity"] = _format_iso_timestamp(agent["last_activity"])
-            active.append(agent)
+        if agent["status"] == "ended":
+            continue
+
+        # Check freshness - skip agents that haven't had activity recently
+        if _is_agent_stale(agent["last_activity"], AGENT_STALE_MINUTES):
+            logger.debug(
+                "Skipping stale agent PID %d (last activity: %s)",
+                agent["pid"],
+                agent["last_activity"],
+            )
+            continue
+
+        # Infer role from current bead title
+        agent["role"] = _infer_role_from_bead_title(agent.get("current_bead_title"))
+        agent["last_activity"] = _format_iso_timestamp(agent["last_activity"])
+        active.append(agent)
 
     # Sort by last activity (most recent first)
     active.sort(key=lambda a: a["last_activity"], reverse=True)
