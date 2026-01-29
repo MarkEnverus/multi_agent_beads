@@ -988,6 +988,7 @@
             'running': 'text-green-400',
             'stopped': 'text-gray-400',
             'crashed': 'text-red-400',
+            'failed': 'text-red-400',
             'restarting': 'text-yellow-400'
         }[worker.status] || 'text-gray-400';
 
@@ -995,52 +996,73 @@
             'running': 'bg-green-500',
             'stopped': 'bg-gray-500',
             'crashed': 'bg-red-500',
+            'failed': 'bg-red-500',
             'restarting': 'bg-yellow-500'
         }[worker.status] || 'bg-gray-500';
 
+        // Determine if worker has error info to show
+        const hasCrashInfo = worker.status === 'crashed' || worker.status === 'failed';
+        const errorMsg = worker.error_message ? escapeHtml(worker.error_message) : null;
+        const exitCode = worker.exit_code;
+
         return `
-            <div class="px-6 py-4 flex items-center justify-between hover:bg-gray-700/50 transition-colors">
-                <div class="flex items-center space-x-4">
-                    <span class="h-2 w-2 rounded-full ${statusBg}"></span>
-                    <div>
-                        <p class="text-white font-medium">${worker.id}</p>
-                        <p class="text-sm text-gray-400">
-                            <span class="font-medium">${worker.role}</span>
-                            <span class="mx-1">|</span>
-                            PID: ${worker.pid || '-'}
-                            ${worker.crash_count > 0 ? `<span class="mx-1">|</span> Crashes: ${worker.crash_count}` : ''}
-                        </p>
+            <div class="px-6 py-4 hover:bg-gray-700/50 transition-colors">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-4">
+                        <span class="h-2 w-2 rounded-full ${statusBg}"></span>
+                        <div>
+                            <p class="text-white font-medium">${worker.id}</p>
+                            <p class="text-sm text-gray-400">
+                                <span class="font-medium">${worker.role}</span>
+                                <span class="mx-1">|</span>
+                                PID: ${worker.pid || '-'}
+                                ${worker.crash_count > 0 ? `<span class="mx-1">|</span> Crashes: <span class="text-red-400">${worker.crash_count}</span>` : ''}
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <span class="${statusClass} text-sm font-medium">${worker.status.toUpperCase()}</span>
+                        <div class="flex items-center space-x-2">
+                            ${worker.status === 'running' ? `
+                                <button onclick="viewWorkerLogs('${worker.id}')"
+                                        class="p-1.5 text-gray-400 hover:text-primary-400 hover:bg-gray-700 rounded transition-colors"
+                                        title="View Logs">
+                                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                    </svg>
+                                </button>
+                                <button onclick="restartWorker('${worker.id}')"
+                                        class="p-1.5 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 rounded transition-colors"
+                                        title="Restart">
+                                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                </button>
+                                <button onclick="stopWorker('${worker.id}')"
+                                        class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors"
+                                        title="Stop">
+                                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                                    </svg>
+                                </button>
+                            ` : ''}
+                        </div>
                     </div>
                 </div>
-                <div class="flex items-center space-x-4">
-                    <span class="${statusClass} text-sm font-medium">${worker.status.toUpperCase()}</span>
-                    <div class="flex items-center space-x-2">
-                        ${worker.status === 'running' ? `
-                            <button onclick="viewWorkerLogs('${worker.id}')"
-                                    class="p-1.5 text-gray-400 hover:text-primary-400 hover:bg-gray-700 rounded transition-colors"
-                                    title="View Logs">
-                                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                </svg>
-                            </button>
-                            <button onclick="restartWorker('${worker.id}')"
-                                    class="p-1.5 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 rounded transition-colors"
-                                    title="Restart">
-                                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                </svg>
-                            </button>
-                            <button onclick="stopWorker('${worker.id}')"
-                                    class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors"
-                                    title="Stop">
-                                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-                                </svg>
-                            </button>
-                        ` : ''}
+                ${hasCrashInfo ? `
+                    <div class="mt-2 ml-6 p-2 bg-red-900/30 border border-red-800/50 rounded text-sm">
+                        <div class="flex items-start space-x-2">
+                            <svg class="h-4 w-4 text-red-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                            <div class="text-red-300">
+                                ${exitCode !== null && exitCode !== undefined ? `<span class="text-red-400 font-medium">Exit code: ${exitCode}</span>` : ''}
+                                ${errorMsg ? `<span class="${exitCode !== null && exitCode !== undefined ? 'ml-2' : ''}">${errorMsg}</span>` : '<span class="text-gray-400 italic">No error details available. Check worker log file.</span>'}
+                            </div>
+                        </div>
                     </div>
-                </div>
+                ` : ''}
             </div>
         `;
     }

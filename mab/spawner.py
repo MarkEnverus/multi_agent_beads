@@ -662,6 +662,18 @@ while True:
             # Open log file for writing
             log_fd = os.open(str(log_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
 
+            # Write startup header to log file immediately
+            startup_msg = (
+                f"=== Worker Spawn Log ===\n"
+                f"Worker ID: {worker_id}\n"
+                f"Role: {role}\n"
+                f"Project: {project}\n"
+                f"Working Directory: {working_dir}\n"
+                f"Started: {datetime.now().isoformat()}\n"
+                f"{'=' * 40}\n\n"
+            ).encode('utf-8')
+            os.write(log_fd, startup_msg)
+
             # Create pseudo-terminal
             master_fd, slave_fd = pty.openpty()
 
@@ -689,11 +701,42 @@ while True:
 
             # Check if it crashed immediately
             if process.poll() is not None:
-                # Process already exited
+                # Process already exited - capture any output from PTY first
+                exit_code = process.returncode
+                captured_output = b""
+
+                # Try to read any remaining output from PTY (non-blocking)
+                try:
+                    import select
+                    while True:
+                        readable, _, _ = select.select([master_fd], [], [], 0.1)
+                        if not readable:
+                            break
+                        chunk = os.read(master_fd, 4096)
+                        if not chunk:
+                            break
+                        captured_output += chunk
+                except OSError:
+                    pass
+
+                # Write any captured output to log
+                if captured_output:
+                    os.write(log_fd, captured_output)
+
+                # Write crash information to log file
+                crash_msg = (
+                    f"\n{'=' * 40}\n"
+                    f"=== PROCESS CRASHED ===\n"
+                    f"Exit Code: {exit_code}\n"
+                    f"Crashed At: {datetime.now().isoformat()}\n"
+                    f"{'=' * 40}\n"
+                ).encode('utf-8')
+                os.write(log_fd, crash_msg)
+
                 os.close(master_fd)
                 os.close(log_fd)
                 raise SpawnerError(
-                    message=f"Worker process exited immediately (code {process.returncode})",
+                    message=f"Worker process exited immediately (code {exit_code})",
                     role=role,
                     worker_id=worker_id,
                     detail=f"Check log file: {log_file}",
@@ -742,6 +785,8 @@ while True:
             worker_id: Worker ID for logging.
         """
         loop = asyncio.get_event_loop()
+        bytes_written = 0
+        read_errors = 0
 
         try:
             while True:
@@ -751,7 +796,10 @@ while True:
                         None,
                         lambda: os.read(master_fd, 4096),
                     )
-                except OSError:
+                except OSError as e:
+                    # PTY closed - write final message
+                    read_errors += 1
+                    logger.debug(f"PTY read error for {worker_id}: {e}")
                     break
 
                 if not data:
@@ -759,15 +807,53 @@ while True:
 
                 # Write to log file
                 try:
-                    os.write(log_fd, data)
-                except OSError:
+                    written = os.write(log_fd, data)
+                    bytes_written += written
+                except OSError as e:
+                    logger.error(f"Log write error for {worker_id}: {e}")
                     break
 
         except asyncio.CancelledError:
-            pass
+            # Write cancellation notice to log
+            try:
+                cancel_msg = (
+                    f"\n{'=' * 40}\n"
+                    f"=== LOG STREAM CANCELLED ===\n"
+                    f"Time: {datetime.now().isoformat()}\n"
+                    f"Bytes logged: {bytes_written}\n"
+                    f"{'=' * 40}\n"
+                ).encode('utf-8')
+                os.write(log_fd, cancel_msg)
+            except OSError:
+                pass
         except Exception as e:
             logger.error(f"Error copying PTY output for {worker_id}: {e}")
+            # Write error to log file
+            try:
+                error_msg = (
+                    f"\n{'=' * 40}\n"
+                    f"=== LOG STREAM ERROR ===\n"
+                    f"Error: {e}\n"
+                    f"Time: {datetime.now().isoformat()}\n"
+                    f"{'=' * 40}\n"
+                ).encode('utf-8')
+                os.write(log_fd, error_msg)
+            except OSError:
+                pass
         finally:
+            # Write session end marker if we logged anything
+            if bytes_written > 0:
+                try:
+                    end_msg = (
+                        f"\n{'=' * 40}\n"
+                        f"=== SESSION ENDED ===\n"
+                        f"Time: {datetime.now().isoformat()}\n"
+                        f"Total bytes logged: {bytes_written}\n"
+                        f"{'=' * 40}\n"
+                    ).encode('utf-8')
+                    os.write(log_fd, end_msg)
+                except OSError:
+                    pass
             try:
                 os.close(log_fd)
             except OSError:
