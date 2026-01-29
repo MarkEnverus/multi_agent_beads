@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -184,10 +184,18 @@ async def beads_page(request: Request) -> HTMLResponse:
     )
 
 
-@app.get("/logs")
-async def logs_redirect() -> RedirectResponse:
-    """Redirect /logs to admin page where worker logs are accessible."""
-    return RedirectResponse(url="/admin", status_code=302)
+@app.get("/logs", response_class=HTMLResponse)
+async def logs_page(request: Request) -> HTMLResponse:
+    """Render the dedicated logs page.
+
+    Provides full-screen log viewer with time range selection, regex search,
+    export functionality, and filtering by agent/bead/level. Includes log
+    aggregation statistics and live streaming via SSE.
+    """
+    return templates.TemplateResponse(
+        "logs.html",
+        {"request": request},
+    )
 
 
 @app.get("/partials/kanban", response_class=HTMLResponse)

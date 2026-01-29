@@ -1,0 +1,984 @@
+{% extends "base.html" %}
+
+{% block title %}Logs - Multi-Agent Dashboard{% endblock %}
+
+{% block content %}
+{# Page Header #}
+<div class="mb-6">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-white">Log Viewer</h1>
+            <p class="text-gray-400 mt-1">Search, filter, and analyze agent activity logs</p>
+        </div>
+        <div class="flex items-center space-x-4">
+            <span id="stream-status" class="flex items-center space-x-2">
+                <span class="relative flex h-3 w-3">
+                    <span id="stream-ping" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span id="stream-dot" class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                </span>
+                <span id="stream-text" class="text-sm text-gray-400">Live streaming</span>
+            </span>
+            <button
+                id="toggle-stream-btn"
+                class="px-3 py-1.5 text-sm bg-yellow-600 hover:bg-yellow-700 text-white rounded-md transition-colors"
+                onclick="toggleStream()"
+            >
+                Pause
+            </button>
+            <button
+                id="export-btn"
+                class="px-3 py-1.5 text-sm bg-primary-600 hover:bg-primary-700 text-white rounded-md transition-colors"
+                onclick="showExportModal()"
+            >
+                Export
+            </button>
+        </div>
+    </div>
+</div>
+
+{# Stats Summary Cards #}
+<div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">Total</span>
+            <span class="h-8 w-8 rounded-full bg-primary-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-total" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">Errors</span>
+            <span class="h-8 w-8 rounded-full bg-red-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-errors" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">Warnings</span>
+            <span class="h-8 w-8 rounded-full bg-yellow-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-warnings" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">Sessions</span>
+            <span class="h-8 w-8 rounded-full bg-green-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-sessions" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">Beads Claimed</span>
+            <span class="h-8 w-8 rounded-full bg-blue-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-claims" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">PRs Created</span>
+            <span class="h-8 w-8 rounded-full bg-purple-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-prs" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+</div>
+
+{# Search and Filters #}
+<div class="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-6">
+    <div class="flex flex-wrap items-end gap-4">
+        {# Search Input (Regex) #}
+        <div class="flex-1 min-w-64">
+            <label for="search-input" class="block text-sm font-medium text-gray-400 mb-1">
+                Search (regex supported)
+            </label>
+            <div class="relative">
+                <svg class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input
+                    type="text"
+                    id="search-input"
+                    placeholder="Search by event, message, bead ID... (e.g., /error/i)"
+                    class="w-full bg-gray-700 border border-gray-600 text-white rounded-md pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent font-mono"
+                    onkeyup="debounceSearch()"
+                >
+                <div id="regex-error" class="absolute right-3 top-1/2 -translate-y-1/2 hidden">
+                    <svg class="h-4 w-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" title="Invalid regex">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        {# Time Range Filter #}
+        <div>
+            <label for="filter-time" class="block text-sm font-medium text-gray-400 mb-1">Time Range</label>
+            <select id="filter-time" onchange="applyFilters()"
+                    class="bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm">
+                <option value="">All Time</option>
+                <option value="5m">Last 5 minutes</option>
+                <option value="15m">Last 15 minutes</option>
+                <option value="1h" selected>Last 1 hour</option>
+                <option value="4h">Last 4 hours</option>
+                <option value="24h">Last 24 hours</option>
+                <option value="custom">Custom...</option>
+            </select>
+        </div>
+
+        {# Level Filter #}
+        <div>
+            <label for="filter-level" class="block text-sm font-medium text-gray-400 mb-1">Level</label>
+            <select id="filter-level" onchange="applyFilters()"
+                    class="bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm">
+                <option value="">All Levels</option>
+                <option value="error">Errors Only</option>
+                <option value="warn">Warnings & Errors</option>
+                <option value="info">All (Info+)</option>
+            </select>
+        </div>
+
+        {# Event Type Filter #}
+        <div>
+            <label for="filter-event" class="block text-sm font-medium text-gray-400 mb-1">Event Type</label>
+            <select id="filter-event" onchange="applyFilters()"
+                    class="bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm">
+                <option value="">All Events</option>
+                <option value="SESSION_START">Session Start</option>
+                <option value="SESSION_END">Session End</option>
+                <option value="CLAIM">Claim</option>
+                <option value="CLOSE">Close</option>
+                <option value="WORK_START">Work Start</option>
+                <option value="TESTS">Tests</option>
+                <option value="PR_CREATE">PR Create</option>
+                <option value="ERROR">Error</option>
+                <option value="BLOCKED">Blocked</option>
+            </select>
+        </div>
+
+        {# Role Filter #}
+        <div>
+            <label for="filter-role" class="block text-sm font-medium text-gray-400 mb-1">Agent Role</label>
+            <select id="filter-role" onchange="applyFilters()"
+                    class="bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm">
+                <option value="">All Roles</option>
+                <option value="developer">Developer</option>
+                <option value="qa">QA</option>
+                <option value="reviewer">Reviewer</option>
+                <option value="tech_lead">Tech Lead</option>
+                <option value="manager">Manager</option>
+            </select>
+        </div>
+
+        {# Bead Filter #}
+        <div>
+            <label for="filter-bead" class="block text-sm font-medium text-gray-400 mb-1">Bead ID</label>
+            <input
+                type="text"
+                id="filter-bead"
+                placeholder="e.g., aos7n"
+                class="bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm w-28 font-mono"
+                onkeyup="debounceSearch()"
+            >
+        </div>
+
+        {# Clear Filters #}
+        <button onclick="clearFilters()" class="px-3 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors">
+            Clear Filters
+        </button>
+    </div>
+</div>
+
+{# Main Content: Full-Screen Log Viewer #}
+<div class="bg-gray-800 rounded-lg border border-gray-700">
+    <div class="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
+        <div class="flex items-center space-x-4">
+            <h3 class="text-lg font-semibold text-white">Log Entries</h3>
+            <span id="log-count" class="text-sm text-gray-400">0 entries</span>
+            <span id="filtered-info" class="text-sm text-gray-500 hidden"></span>
+        </div>
+        <div class="flex items-center space-x-4">
+            <label class="flex items-center space-x-2 text-sm text-gray-400 cursor-pointer">
+                <input id="autoscroll" type="checkbox" checked
+                       class="rounded bg-gray-700 border-gray-600 text-primary-500 focus:ring-primary-500 h-4 w-4">
+                <span>Auto-scroll</span>
+            </label>
+            <label class="flex items-center space-x-2 text-sm text-gray-400 cursor-pointer">
+                <input id="show-timestamps" type="checkbox" checked
+                       class="rounded bg-gray-700 border-gray-600 text-primary-500 focus:ring-primary-500 h-4 w-4"
+                       onchange="renderLogs()">
+                <span>Timestamps</span>
+            </label>
+            <label class="flex items-center space-x-2 text-sm text-gray-400 cursor-pointer">
+                <input id="wrap-lines" type="checkbox"
+                       class="rounded bg-gray-700 border-gray-600 text-primary-500 focus:ring-primary-500 h-4 w-4"
+                       onchange="toggleWrap()">
+                <span>Wrap lines</span>
+            </label>
+            <span class="text-sm text-gray-500">|</span>
+            <span class="text-sm text-gray-400">Last updated: <span id="last-updated">-</span></span>
+        </div>
+    </div>
+
+    {# Log Viewer Container #}
+    <div id="log-viewer-container" class="relative" style="height: calc(100vh - 480px); min-height: 400px;">
+        {# Loading state #}
+        <div id="logs-loading" class="absolute inset-0 flex items-center justify-center bg-gray-900">
+            <svg class="animate-spin h-8 w-8 text-primary-500" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </div>
+
+        {# Log entries #}
+        <div id="log-viewer" class="h-full overflow-y-auto p-4 font-mono text-sm bg-gray-900 whitespace-pre"></div>
+
+        {# Empty state #}
+        <div id="logs-empty" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-gray-900">
+            <svg class="h-12 w-12 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <p class="mt-4 text-gray-400">No log entries match your filters</p>
+            <p class="mt-1 text-sm text-gray-500">Try adjusting your search or filter criteria</p>
+        </div>
+    </div>
+
+    {# Footer with entry info #}
+    <div class="px-6 py-3 border-t border-gray-700 flex items-center justify-between text-sm">
+        <div class="flex items-center space-x-4 text-gray-500">
+            <span>Showing <span id="showing-count">0</span> of <span id="total-count">0</span> entries</span>
+            <span class="text-gray-600">|</span>
+            <span>Buffer: <span id="buffer-count">0</span> entries (max 5000)</span>
+        </div>
+        <div class="flex items-center space-x-2">
+            <button onclick="loadMoreLogs()" class="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors">
+                Load More History
+            </button>
+            <button onclick="clearLogs()" class="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors">
+                Clear Display
+            </button>
+        </div>
+    </div>
+</div>
+
+{# Toast Notifications Container #}
+<div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
+
+{# Export Modal #}
+<div id="export-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-gray-900/80">
+    <div class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-700">
+        <h3 class="text-lg font-semibold text-white mb-4">Export Logs</h3>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-1">Format</label>
+                <select id="export-format" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm">
+                    <option value="json">JSON</option>
+                    <option value="text">Plain Text</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-1">Entries</label>
+                <select id="export-scope" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm">
+                    <option value="filtered">Filtered entries only</option>
+                    <option value="all">All entries in buffer</option>
+                    <option value="recent">Last 1000 from server</option>
+                </select>
+            </div>
+            <div class="flex items-center space-x-2 pt-2">
+                <input id="export-apply-filters" type="checkbox" checked
+                       class="rounded bg-gray-700 border-gray-600 text-primary-500 focus:ring-primary-500 h-4 w-4">
+                <label for="export-apply-filters" class="text-sm text-gray-400">Apply current filters</label>
+            </div>
+        </div>
+        <div class="flex justify-end space-x-3 mt-6">
+            <button onclick="hideExportModal()" class="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors">
+                Cancel
+            </button>
+            <button onclick="exportLogs()" class="px-4 py-2 text-sm bg-primary-600 hover:bg-primary-700 text-white rounded-md transition-colors">
+                Export
+            </button>
+        </div>
+    </div>
+</div>
+
+{# Custom Time Range Modal #}
+<div id="time-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-gray-900/80">
+    <div class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-700">
+        <h3 class="text-lg font-semibold text-white mb-4">Custom Time Range</h3>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-1">From</label>
+                <input type="datetime-local" id="time-from"
+                       class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-1">To</label>
+                <input type="datetime-local" id="time-to"
+                       class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm">
+            </div>
+        </div>
+        <div class="flex justify-end space-x-3 mt-6">
+            <button onclick="hideTimeModal()" class="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors">
+                Cancel
+            </button>
+            <button onclick="applyCustomTimeRange()" class="px-4 py-2 text-sm bg-primary-600 hover:bg-primary-700 text-white rounded-md transition-colors">
+                Apply
+            </button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // State
+    let allLogs = [];
+    let filteredLogs = [];
+    let eventSource = null;
+    let isStreaming = true;
+    let searchTimeout = null;
+    let customTimeRange = { from: null, to: null };
+    const MAX_BUFFER_SIZE = 5000;
+
+    // Event colors for log display
+    const eventColors = {
+        'SESSION_START': 'text-green-400',
+        'SESSION_END': 'text-green-400',
+        'CLAIM': 'text-blue-400',
+        'READ': 'text-blue-300',
+        'WORK_START': 'text-cyan-300',
+        'CLOSE': 'text-purple-400',
+        'TESTS': 'text-cyan-400',
+        'TESTS_PASSED': 'text-green-400',
+        'TESTS_FAILED': 'text-red-400',
+        'ERROR': 'text-red-500',
+        'BLOCKED': 'text-orange-400',
+        'NO_WORK': 'text-yellow-400',
+        'BEAD_CREATE': 'text-purple-300',
+        'PR_CREATE': 'text-indigo-400',
+        'PR_CREATED': 'text-indigo-400',
+        'PR_MERGED': 'text-green-400',
+        'CI': 'text-cyan-400',
+        'CI_PASSED': 'text-green-400',
+        'CI_FAILED': 'text-red-400'
+    };
+
+    const levelColors = {
+        'error': 'bg-red-900/30 border-l-2 border-red-500',
+        'warn': 'bg-yellow-900/20 border-l-2 border-yellow-500',
+        'info': ''
+    };
+
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        loadRecentLogs();
+        connectStream();
+
+        // Handle time range custom option
+        document.getElementById('filter-time').addEventListener('change', function(e) {
+            if (e.target.value === 'custom') {
+                showTimeModal();
+            }
+        });
+    });
+
+    // Load recent logs from API
+    async function loadRecentLogs(limit = 500) {
+        try {
+            const response = await fetch(`/api/logs/recent?limit=${limit}`);
+            if (response.ok) {
+                const logs = await response.json();
+                // Add to beginning (they come newest first, we want oldest first)
+                allLogs = logs.reverse();
+                applyFilters();
+                document.getElementById('logs-loading').classList.add('hidden');
+                document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+            }
+        } catch (error) {
+            console.error('Failed to load logs:', error);
+            showToast('Failed to load logs', 'error');
+        }
+    }
+
+    // Load more historical logs
+    async function loadMoreLogs() {
+        const currentOldest = allLogs.length > 0 ? allLogs[0].timestamp : null;
+        try {
+            const response = await fetch('/api/logs/recent?limit=1000');
+            if (response.ok) {
+                const logs = await response.json();
+                // Add older logs that aren't already in buffer
+                const existingTimestamps = new Set(allLogs.map(l => l.timestamp + l.pid));
+                const newLogs = logs.filter(l => !existingTimestamps.has(l.timestamp + l.pid));
+                if (newLogs.length > 0) {
+                    allLogs = [...newLogs.reverse(), ...allLogs];
+                    trimBuffer();
+                    applyFilters();
+                    showToast(`Loaded ${newLogs.length} more entries`, 'success');
+                } else {
+                    showToast('No more historical logs available', 'info');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load more logs:', error);
+            showToast('Failed to load more logs', 'error');
+        }
+    }
+
+    // Connect to SSE stream
+    function connectStream() {
+        if (eventSource) {
+            eventSource.close();
+        }
+
+        const level = document.getElementById('filter-level').value;
+        let url = '/api/logs/stream';
+        if (level) {
+            url += `?level=${level}`;
+        }
+
+        eventSource = new EventSource(url);
+
+        eventSource.onopen = function() {
+            updateStreamStatus('connected');
+        };
+
+        eventSource.onmessage = function(event) {
+            if (!isStreaming) return;
+
+            try {
+                const entry = JSON.parse(event.data);
+                addLogEntry(entry);
+            } catch (e) {
+                console.error('Failed to parse log entry:', e);
+            }
+        };
+
+        eventSource.onerror = function() {
+            updateStreamStatus('disconnected');
+            // Reconnect after delay
+            setTimeout(() => {
+                if (isStreaming) {
+                    connectStream();
+                }
+            }, 3000);
+        };
+
+        eventSource.addEventListener('error', function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'fatal') {
+                    showToast(data.message, 'error');
+                }
+            } catch (e) {
+                // Ignore parse errors for error events
+            }
+        });
+    }
+
+    // Add a new log entry
+    function addLogEntry(entry) {
+        allLogs.push(entry);
+        trimBuffer();
+
+        // Check if entry matches filters
+        if (entryMatchesFilters(entry)) {
+            filteredLogs.push(entry);
+            appendLogEntryToViewer(entry);
+        }
+
+        updateStats();
+        updateCounts();
+    }
+
+    // Trim buffer to max size
+    function trimBuffer() {
+        if (allLogs.length > MAX_BUFFER_SIZE) {
+            allLogs = allLogs.slice(-MAX_BUFFER_SIZE);
+        }
+    }
+
+    // Check if entry matches current filters
+    function entryMatchesFilters(entry) {
+        const search = document.getElementById('search-input').value.trim();
+        const timeRange = document.getElementById('filter-time').value;
+        const level = document.getElementById('filter-level').value;
+        const eventType = document.getElementById('filter-event').value;
+        const role = document.getElementById('filter-role').value;
+        const beadFilter = document.getElementById('filter-bead').value.trim().toLowerCase();
+
+        // Time filter
+        if (!matchesTimeFilter(entry, timeRange)) return false;
+
+        // Level filter
+        if (level && !matchesLevelFilter(entry, level)) return false;
+
+        // Event type filter
+        if (eventType && entry.event !== eventType) return false;
+
+        // Role filter
+        if (role && entry.role !== role) return false;
+
+        // Bead filter
+        if (beadFilter && !(entry.bead_id || '').toLowerCase().includes(beadFilter)) return false;
+
+        // Search (regex)
+        if (search && !matchesSearch(entry, search)) return false;
+
+        return true;
+    }
+
+    // Match time filter
+    function matchesTimeFilter(entry, timeRange) {
+        if (!timeRange || timeRange === 'custom') {
+            if (timeRange === 'custom' && customTimeRange.from && customTimeRange.to) {
+                const entryTime = parseTimestamp(entry.timestamp);
+                return entryTime >= customTimeRange.from && entryTime <= customTimeRange.to;
+            }
+            return true;
+        }
+
+        const entryTime = parseTimestamp(entry.timestamp);
+        if (!entryTime) return true;
+
+        const now = new Date();
+        let cutoff;
+
+        switch (timeRange) {
+            case '5m': cutoff = new Date(now - 5 * 60 * 1000); break;
+            case '15m': cutoff = new Date(now - 15 * 60 * 1000); break;
+            case '1h': cutoff = new Date(now - 60 * 60 * 1000); break;
+            case '4h': cutoff = new Date(now - 4 * 60 * 60 * 1000); break;
+            case '24h': cutoff = new Date(now - 24 * 60 * 60 * 1000); break;
+            default: return true;
+        }
+
+        return entryTime >= cutoff;
+    }
+
+    // Match level filter
+    function matchesLevelFilter(entry, minLevel) {
+        const hierarchy = { 'error': 0, 'warn': 1, 'info': 2 };
+        const entryLevel = hierarchy[entry.level] ?? 2;
+        const filterLevel = hierarchy[minLevel] ?? 2;
+        return entryLevel <= filterLevel;
+    }
+
+    // Match search (supports regex)
+    function matchesSearch(entry, search) {
+        let regex;
+        try {
+            // Check if it looks like a regex pattern (starts with /)
+            if (search.startsWith('/') && search.lastIndexOf('/') > 0) {
+                const lastSlash = search.lastIndexOf('/');
+                const pattern = search.substring(1, lastSlash);
+                const flags = search.substring(lastSlash + 1) || 'i';
+                regex = new RegExp(pattern, flags);
+            } else {
+                // Plain text search (case insensitive)
+                regex = new RegExp(escapeRegex(search), 'i');
+            }
+            document.getElementById('regex-error').classList.add('hidden');
+        } catch (e) {
+            document.getElementById('regex-error').classList.remove('hidden');
+            return false;
+        }
+
+        const searchText = `${entry.event} ${entry.message || ''} ${entry.bead_id || ''} ${entry.role || ''}`;
+        return regex.test(searchText);
+    }
+
+    // Parse timestamp string to Date
+    function parseTimestamp(ts) {
+        if (!ts) return null;
+        try {
+            // Format: "YYYY-MM-DD HH:MM:SS"
+            return new Date(ts.replace(' ', 'T'));
+        } catch {
+            return null;
+        }
+    }
+
+    // Escape special regex characters
+    function escapeRegex(str) {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    // Debounced search
+    function debounceSearch() {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(applyFilters, 300);
+    }
+
+    // Apply all filters
+    function applyFilters() {
+        filteredLogs = allLogs.filter(entry => entryMatchesFilters(entry));
+        renderLogs();
+        updateStats();
+        updateCounts();
+    }
+
+    // Clear all filters
+    function clearFilters() {
+        document.getElementById('search-input').value = '';
+        document.getElementById('filter-time').value = '1h';
+        document.getElementById('filter-level').value = '';
+        document.getElementById('filter-event').value = '';
+        document.getElementById('filter-role').value = '';
+        document.getElementById('filter-bead').value = '';
+        customTimeRange = { from: null, to: null };
+        document.getElementById('regex-error').classList.add('hidden');
+        applyFilters();
+    }
+
+    // Render all logs
+    function renderLogs() {
+        const viewer = document.getElementById('log-viewer');
+        const loading = document.getElementById('logs-loading');
+        const empty = document.getElementById('logs-empty');
+
+        loading.classList.add('hidden');
+
+        if (filteredLogs.length === 0) {
+            viewer.innerHTML = '';
+            empty.classList.remove('hidden');
+            return;
+        }
+
+        empty.classList.add('hidden');
+        viewer.innerHTML = filteredLogs.map(entry => formatLogEntry(entry)).join('');
+
+        // Scroll to bottom if autoscroll enabled
+        const autoscroll = document.getElementById('autoscroll');
+        if (autoscroll && autoscroll.checked) {
+            viewer.scrollTop = viewer.scrollHeight;
+        }
+    }
+
+    // Format a single log entry
+    function formatLogEntry(entry) {
+        const showTimestamps = document.getElementById('show-timestamps').checked;
+        const eventColor = eventColors[entry.event] || 'text-gray-400';
+        const levelClass = levelColors[entry.level] || '';
+
+        let html = `<div class="py-1 hover:bg-gray-800/50 ${levelClass}">`;
+
+        if (showTimestamps) {
+            html += `<span class="text-gray-500">${entry.timestamp}</span> `;
+        }
+
+        html += `<span class="text-gray-600">[${entry.pid}]</span> `;
+        html += `<span class="${eventColor} font-medium">${entry.event}</span>`;
+
+        if (entry.message) {
+            // Highlight bead IDs
+            let message = escapeHtml(entry.message);
+            message = message.replace(/(multi_agent_beads-\w+)/g, '<span class="text-primary-400 cursor-pointer" onclick="filterByBead(\'$1\')">$1</span>');
+            html += `<span class="text-gray-300">: ${message}</span>`;
+        }
+
+        if (entry.role) {
+            html += ` <span class="text-gray-600">[${entry.role}]</span>`;
+        }
+
+        html += '</div>';
+        return html;
+    }
+
+    // Append single entry to viewer (for streaming)
+    function appendLogEntryToViewer(entry) {
+        const viewer = document.getElementById('log-viewer');
+        const empty = document.getElementById('logs-empty');
+
+        empty.classList.add('hidden');
+
+        const div = document.createElement('div');
+        div.innerHTML = formatLogEntry(entry);
+        viewer.appendChild(div.firstChild);
+
+        // Scroll to bottom if autoscroll enabled
+        const autoscroll = document.getElementById('autoscroll');
+        if (autoscroll && autoscroll.checked) {
+            viewer.scrollTop = viewer.scrollHeight;
+        }
+    }
+
+    // Filter by bead (click on bead ID)
+    function filterByBead(beadId) {
+        const shortId = beadId.split('-').pop();
+        document.getElementById('filter-bead').value = shortId;
+        applyFilters();
+    }
+
+    // Update statistics
+    function updateStats() {
+        const errors = allLogs.filter(l => l.level === 'error').length;
+        const warnings = allLogs.filter(l => l.level === 'warn').length;
+        const sessions = allLogs.filter(l => l.event === 'SESSION_START').length;
+        const claims = allLogs.filter(l => l.event === 'CLAIM').length;
+        const prs = allLogs.filter(l => l.event === 'PR_CREATED' || l.event === 'PR_CREATE').length;
+
+        document.getElementById('stat-total').textContent = allLogs.length;
+        document.getElementById('stat-errors').textContent = errors;
+        document.getElementById('stat-warnings').textContent = warnings;
+        document.getElementById('stat-sessions').textContent = sessions;
+        document.getElementById('stat-claims').textContent = claims;
+        document.getElementById('stat-prs').textContent = prs;
+    }
+
+    // Update counts
+    function updateCounts() {
+        document.getElementById('log-count').textContent = filteredLogs.length + ' entries';
+        document.getElementById('showing-count').textContent = filteredLogs.length;
+        document.getElementById('total-count').textContent = allLogs.length;
+        document.getElementById('buffer-count').textContent = allLogs.length;
+
+        const filteredInfo = document.getElementById('filtered-info');
+        if (filteredLogs.length < allLogs.length) {
+            filteredInfo.textContent = `(${allLogs.length - filteredLogs.length} hidden by filters)`;
+            filteredInfo.classList.remove('hidden');
+        } else {
+            filteredInfo.classList.add('hidden');
+        }
+    }
+
+    // Toggle stream
+    function toggleStream() {
+        isStreaming = !isStreaming;
+        const btn = document.getElementById('toggle-stream-btn');
+
+        if (isStreaming) {
+            btn.textContent = 'Pause';
+            btn.className = 'px-3 py-1.5 text-sm bg-yellow-600 hover:bg-yellow-700 text-white rounded-md transition-colors';
+            connectStream();
+        } else {
+            btn.textContent = 'Resume';
+            btn.className = 'px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors';
+            updateStreamStatus('paused');
+        }
+    }
+
+    // Update stream status indicator
+    function updateStreamStatus(status) {
+        const ping = document.getElementById('stream-ping');
+        const dot = document.getElementById('stream-dot');
+        const text = document.getElementById('stream-text');
+
+        switch (status) {
+            case 'connected':
+                ping.className = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75';
+                dot.className = 'relative inline-flex rounded-full h-3 w-3 bg-green-500';
+                text.textContent = 'Live streaming';
+                break;
+            case 'disconnected':
+                ping.className = 'hidden';
+                dot.className = 'relative inline-flex rounded-full h-3 w-3 bg-red-500';
+                text.textContent = 'Reconnecting...';
+                break;
+            case 'paused':
+                ping.className = 'hidden';
+                dot.className = 'relative inline-flex rounded-full h-3 w-3 bg-yellow-500';
+                text.textContent = 'Paused';
+                break;
+        }
+    }
+
+    // Toggle line wrap
+    function toggleWrap() {
+        const viewer = document.getElementById('log-viewer');
+        const wrap = document.getElementById('wrap-lines').checked;
+        viewer.style.whiteSpace = wrap ? 'pre-wrap' : 'pre';
+    }
+
+    // Clear logs display
+    function clearLogs() {
+        allLogs = [];
+        filteredLogs = [];
+        renderLogs();
+        updateStats();
+        updateCounts();
+        showToast('Log display cleared', 'info');
+    }
+
+    // Show export modal
+    function showExportModal() {
+        document.getElementById('export-modal').classList.remove('hidden');
+    }
+
+    // Hide export modal
+    function hideExportModal() {
+        document.getElementById('export-modal').classList.add('hidden');
+    }
+
+    // Export logs
+    async function exportLogs() {
+        const format = document.getElementById('export-format').value;
+        const scope = document.getElementById('export-scope').value;
+        const applyCurrentFilters = document.getElementById('export-apply-filters').checked;
+
+        let logsToExport;
+
+        if (scope === 'recent') {
+            // Fetch from server
+            const level = applyCurrentFilters ? document.getElementById('filter-level').value : '';
+            const role = applyCurrentFilters ? document.getElementById('filter-role').value : '';
+            const bead = applyCurrentFilters ? document.getElementById('filter-bead').value : '';
+
+            let url = `/api/logs/export?format=${format}&limit=1000`;
+            if (level) url += `&level=${level}`;
+            if (role) url += `&role=${role}`;
+            if (bead) url += `&bead_id=${bead}`;
+
+            window.location.href = url;
+            hideExportModal();
+            return;
+        } else if (scope === 'filtered') {
+            logsToExport = filteredLogs;
+        } else {
+            logsToExport = allLogs;
+        }
+
+        // Client-side export
+        let content, filename, mimeType;
+
+        if (format === 'json') {
+            content = JSON.stringify(logsToExport, null, 2);
+            filename = 'claude-logs.json';
+            mimeType = 'application/json';
+        } else {
+            content = logsToExport.map(l => {
+                let line = `[${l.timestamp}] [${l.pid}] ${l.event}`;
+                if (l.message) line += `: ${l.message}`;
+                return line;
+            }).join('\n');
+            filename = 'claude-logs.txt';
+            mimeType = 'text/plain';
+        }
+
+        // Download file
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        hideExportModal();
+        showToast(`Exported ${logsToExport.length} entries`, 'success');
+    }
+
+    // Show custom time range modal
+    function showTimeModal() {
+        // Set default values
+        const now = new Date();
+        const hourAgo = new Date(now - 60 * 60 * 1000);
+        document.getElementById('time-to').value = formatDateTimeLocal(now);
+        document.getElementById('time-from').value = formatDateTimeLocal(hourAgo);
+        document.getElementById('time-modal').classList.remove('hidden');
+    }
+
+    // Hide time modal
+    function hideTimeModal() {
+        document.getElementById('time-modal').classList.add('hidden');
+        // Reset to default if cancelled
+        if (!customTimeRange.from) {
+            document.getElementById('filter-time').value = '1h';
+        }
+    }
+
+    // Apply custom time range
+    function applyCustomTimeRange() {
+        const from = document.getElementById('time-from').value;
+        const to = document.getElementById('time-to').value;
+
+        if (!from || !to) {
+            showToast('Please select both start and end times', 'warning');
+            return;
+        }
+
+        customTimeRange.from = new Date(from);
+        customTimeRange.to = new Date(to);
+
+        if (customTimeRange.from >= customTimeRange.to) {
+            showToast('Start time must be before end time', 'warning');
+            return;
+        }
+
+        hideTimeModal();
+        applyFilters();
+    }
+
+    // Format date for datetime-local input
+    function formatDateTimeLocal(date) {
+        const pad = (n) => n.toString().padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
+    // Helper: escape HTML
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Show toast notification
+    function showToast(message, type = 'info') {
+        const container = document.getElementById('toast-container');
+        const id = 'toast-' + Date.now();
+
+        const bgColor = {
+            'success': 'bg-green-600',
+            'error': 'bg-red-600',
+            'warning': 'bg-yellow-600',
+            'info': 'bg-primary-600'
+        }[type] || 'bg-gray-600';
+
+        const toast = document.createElement('div');
+        toast.id = id;
+        toast.className = `${bgColor} text-white px-4 py-2 rounded-lg shadow-lg transform transition-all duration-300 translate-x-full`;
+        toast.textContent = message;
+
+        container.appendChild(toast);
+
+        // Animate in
+        setTimeout(() => toast.classList.remove('translate-x-full'), 10);
+
+        // Remove after 3 seconds
+        setTimeout(() => {
+            toast.classList.add('translate-x-full');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', function() {
+        if (eventSource) {
+            eventSource.close();
+        }
+    });
+</script>
+{% endblock %}
