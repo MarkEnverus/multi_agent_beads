@@ -86,7 +86,7 @@ class HealthConfig:
         if crash_count <= 0:
             return 0.0
         delay = self.restart_backoff_base_seconds * (2 ** (crash_count - 1))
-        return min(delay, self.restart_backoff_max_seconds)
+        return float(min(delay, self.restart_backoff_max_seconds))
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -268,34 +268,22 @@ class WorkerDatabase:
             columns = {row[1] for row in cursor.fetchall()}
 
             if "town_name" not in columns:
-                conn.execute(
-                    "ALTER TABLE workers ADD COLUMN town_name TEXT DEFAULT 'default'"
-                )
+                conn.execute("ALTER TABLE workers ADD COLUMN town_name TEXT DEFAULT 'default'")
 
             if "worktree_path" not in columns:
-                conn.execute(
-                    "ALTER TABLE workers ADD COLUMN worktree_path TEXT"
-                )
+                conn.execute("ALTER TABLE workers ADD COLUMN worktree_path TEXT")
 
             if "worktree_branch" not in columns:
-                conn.execute(
-                    "ALTER TABLE workers ADD COLUMN worktree_branch TEXT"
-                )
+                conn.execute("ALTER TABLE workers ADD COLUMN worktree_branch TEXT")
 
             if "last_restart_at" not in columns:
-                conn.execute(
-                    "ALTER TABLE workers ADD COLUMN last_restart_at TEXT"
-                )
+                conn.execute("ALTER TABLE workers ADD COLUMN last_restart_at TEXT")
 
             if "exit_code" not in columns:
-                conn.execute(
-                    "ALTER TABLE workers ADD COLUMN exit_code INTEGER"
-                )
+                conn.execute("ALTER TABLE workers ADD COLUMN exit_code INTEGER")
 
             if "error_message" not in columns:
-                conn.execute(
-                    "ALTER TABLE workers ADD COLUMN error_message TEXT"
-                )
+                conn.execute("ALTER TABLE workers ADD COLUMN error_message TEXT")
 
             if "auto_restart_enabled" not in columns:
                 conn.execute(
@@ -692,9 +680,7 @@ class WorkerManager:
             return process_info
 
         except SpawnerError as e:
-            raise WorkerSpawnError(
-                f"Spawner failed for {worker.id}: {e.message}"
-            ) from e
+            raise WorkerSpawnError(f"Spawner failed for {worker.id}: {e.message}") from e
 
     async def stop(
         self,
@@ -940,7 +926,9 @@ class WorkerManager:
                 "Disabling auto-restart."
             )
             worker.auto_restart_enabled = False
-            worker.error_message = f"Exceeded max restart count ({self.health_config.max_restart_count})"
+            worker.error_message = (
+                f"Exceeded max restart count ({self.health_config.max_restart_count})"
+            )
             self.db.update_worker(worker)
             return None
 
@@ -963,9 +951,7 @@ class WorkerManager:
         )
 
         # Schedule the restart with backoff
-        task = asyncio.create_task(
-            self._delayed_restart(worker, backoff_delay)
-        )
+        task = asyncio.create_task(self._delayed_restart(worker, backoff_delay))
         self._pending_restarts[worker.id] = task
 
         return None  # Return None immediately, restart will happen later
@@ -1009,9 +995,7 @@ class WorkerManager:
 
             try:
                 restarted = await self._restart_worker(current_worker)
-                logger.info(
-                    f"Worker {worker.id} restarted successfully as PID {restarted.pid}"
-                )
+                logger.info(f"Worker {worker.id} restarted successfully as PID {restarted.pid}")
             except WorkerSpawnError as e:
                 logger.error(f"Failed to restart worker {worker.id}: {e}")
                 # Update error message
@@ -1054,9 +1038,7 @@ class WorkerManager:
                 env_vars=env_vars,
             )
         except SpawnerError as e:
-            raise WorkerSpawnError(
-                f"Restart failed for {worker.id}: {e.message}"
-            ) from e
+            raise WorkerSpawnError(f"Restart failed for {worker.id}: {e.message}") from e
 
         # Update worker state
         worker.pid = process_info.pid
@@ -1115,8 +1097,7 @@ class WorkerManager:
         # Calculate totals
         total_restarts = sum(w.crash_count for w in all_workers)
         at_max_restarts = sum(
-            1 for w in all_workers
-            if w.crash_count >= self.health_config.max_restart_count
+            1 for w in all_workers if w.crash_count >= self.health_config.max_restart_count
         )
 
         return HealthStatus(

@@ -76,9 +76,9 @@ class TestClaimConflicts:
                     pass
 
             # At least one should succeed
-            assert (
-                results["agent_a_success"] or results["agent_b_success"]
-            ), "At least one agent should claim successfully"
+            assert results["agent_a_success"] or results["agent_b_success"], (
+                "At least one agent should claim successfully"
+            )
 
             # Verify final state is consistent
             BeadService.invalidate_cache()
@@ -142,10 +142,7 @@ class TestClaimConflicts:
 
         try:
             with ThreadPoolExecutor(max_workers=5) as executor:
-                futures = [
-                    executor.submit(agent_race, f"agent_{i}")
-                    for i in range(5)
-                ]
+                futures = [executor.submit(agent_race, f"agent_{i}") for i in range(5)]
                 start_event.set()  # Release all agents
                 for future in as_completed(futures):
                     pass
@@ -159,9 +156,7 @@ class TestClaimConflicts:
             BeadService.invalidate_cache()
             for task_id in tasks:
                 bead = BeadService.get_bead(task_id)
-                assert bead["status"] in ("open", "in_progress"), (
-                    f"Invalid state: {bead['status']}"
-                )
+                assert bead["status"] in ("open", "in_progress"), f"Invalid state: {bead['status']}"
 
         finally:
             for task in tasks:
@@ -231,10 +226,7 @@ class TestStatusUpdateConflicts:
 
         try:
             with ThreadPoolExecutor(max_workers=4) as executor:
-                futures = [
-                    executor.submit(toggle_status, i)
-                    for i in range(20)
-                ]
+                futures = [executor.submit(toggle_status, i) for i in range(20)]
                 for future in as_completed(futures):
                     pass
 
@@ -478,10 +470,7 @@ class TestCreationConflicts:
 
         try:
             with ThreadPoolExecutor(max_workers=5) as executor:
-                futures = [
-                    executor.submit(create_bead, i)
-                    for i in range(10)
-                ]
+                futures = [executor.submit(create_bead, i) for i in range(10)]
                 for future in as_completed(futures):
                     pass
 
@@ -585,9 +574,7 @@ class TestCloseConflicts:
                     pass
 
             # At least one should succeed
-            assert results["agent_a"] or results["agent_b"], (
-                "At least one close should succeed"
-            )
+            assert results["agent_a"] or results["agent_b"], "At least one close should succeed"
 
             # Bead should be closed
             BeadService.invalidate_cache()
@@ -637,9 +624,7 @@ class TestCloseConflicts:
             # depending on timing
             BeadService.invalidate_cache()
             bead = BeadService.get_bead(target)
-            assert bead["status"] in ("closed", "in_progress"), (
-                f"Invalid state: {bead['status']}"
-            )
+            assert bead["status"] in ("closed", "in_progress"), f"Invalid state: {bead['status']}"
 
         except Exception:
             delete_test_bead(target)

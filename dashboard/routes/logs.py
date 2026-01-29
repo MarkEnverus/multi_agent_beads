@@ -33,9 +33,7 @@ class LogEntry(BaseModel):
 
 
 # Log line pattern: [TIMESTAMP] [PID] EVENT_TYPE: details
-LOG_PATTERN = re.compile(
-    r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(\d+)\] (.+)"
-)
+LOG_PATTERN = re.compile(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(\d+)\] (.+)")
 
 # Bead ID pattern for extraction
 BEAD_ID_PATTERN = re.compile(r"(multi_agent_beads-\w+)")
@@ -48,9 +46,20 @@ LOG_LEVEL_EVENTS: dict[str, set[str]] = {
     "error": {"ERROR", "TESTS_FAILED", "CI_FAILED"},
     "warn": {"BLOCKED", "NO_WORK", "TESTS_FAILED"},
     "info": {
-        "SESSION_START", "SESSION_END", "CLAIM", "READ", "WORK_START",
-        "TESTS", "TESTS_PASSED", "CLOSE", "BEAD_CREATE", "PR_CREATE",
-        "PR_CREATED", "PR_MERGED", "CI", "CI_PASSED",
+        "SESSION_START",
+        "SESSION_END",
+        "CLAIM",
+        "READ",
+        "WORK_START",
+        "TESTS",
+        "TESTS_PASSED",
+        "CLOSE",
+        "BEAD_CREATE",
+        "PR_CREATE",
+        "PR_CREATED",
+        "PR_MERGED",
+        "CI",
+        "CI_PASSED",
     },
 }
 
@@ -406,7 +415,10 @@ async def get_recent_logs(
     """
     logger.debug(
         "Fetching recent logs: limit=%d, role=%s, bead_id=%s, level=%s",
-        limit, role, bead_id, level,
+        limit,
+        role,
+        bead_id,
+        level,
     )
     return _read_recent_logs(limit=limit, role=role, bead_id=bead_id, level=level)
 
@@ -479,7 +491,11 @@ async def export_logs(
     """
     logger.info(
         "Exporting logs: format=%s, limit=%d, role=%s, bead_id=%s, level=%s",
-        format, limit, role, bead_id, level,
+        format,
+        limit,
+        role,
+        bead_id,
+        level,
     )
 
     entries = _read_recent_logs(limit=limit, role=role, bead_id=bead_id, level=level)

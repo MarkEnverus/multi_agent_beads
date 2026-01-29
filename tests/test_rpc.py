@@ -352,9 +352,7 @@ class TestRPCIntegration:
         loop = asyncio.get_event_loop()
 
         with pytest.raises(RPCError) as exc_info:
-            await loop.run_in_executor(
-                None, lambda: client.call("nonexistent.method")
-            )
+            await loop.run_in_executor(None, lambda: client.call("nonexistent.method"))
 
         assert exc_info.value.code == RPCErrorCode.METHOD_NOT_FOUND
 

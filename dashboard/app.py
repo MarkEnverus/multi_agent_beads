@@ -55,8 +55,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         TOWN_NAME,
     )
     logger.info(
-        "Routers registered: /api/agents, /api/beads, /api/logs, "
-        "/api/towns, /api/workers, /ws"
+        "Routers registered: /api/agents, /api/beads, /api/logs, /api/towns, /api/workers, /ws"
     )
     yield
     # Shutdown
@@ -335,8 +334,7 @@ def _generate_mermaid_graph(beads: list[dict[str, Any]]) -> tuple[str, int, int]
         # Check if blocked
         blocked_by = bead.get("blocked_by", [])
         has_open_blockers = any(
-            bead_map.get(b, {}).get("status") not in ("closed",)
-            for b in blocked_by
+            bead_map.get(b, {}).get("status") not in ("closed",) for b in blocked_by
         )
         if status == "open" and has_open_blockers:
             color = "#ef4444"  # Red for blocked

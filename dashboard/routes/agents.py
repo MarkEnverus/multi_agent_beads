@@ -35,9 +35,7 @@ class AgentStatus(BaseModel):
 
 
 # Log line pattern: [TIMESTAMP] [PID] EVENT_TYPE: details
-LOG_PATTERN = re.compile(
-    r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(\d+)\] (.+)"
-)
+LOG_PATTERN = re.compile(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(\d+)\] (.+)")
 
 # Valid agent roles
 VALID_ROLES = {"developer", "qa", "reviewer", "tech_lead", "manager", "unknown"}
@@ -70,11 +68,13 @@ def _parse_log_file() -> list[dict[str, Any]]:
                 if match:
                     timestamp_str, pid_str, content = match.groups()
                     try:
-                        entries.append({
-                            "timestamp": timestamp_str,
-                            "pid": int(pid_str),
-                            "content": content,
-                        })
+                        entries.append(
+                            {
+                                "timestamp": timestamp_str,
+                                "pid": int(pid_str),
+                                "content": content,
+                            }
+                        )
                     except ValueError as e:
                         logger.warning("Invalid PID on line %d: %s", line_num, e)
                         continue

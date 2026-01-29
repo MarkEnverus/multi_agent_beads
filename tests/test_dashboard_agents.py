@@ -38,9 +38,11 @@ class TestAgentsEndpoints:
         log_file.write_text(log_content)
 
         # Disable staleness check and mock PID check for test
-        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)), \
-             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999), \
-             patch("dashboard.routes.agents._is_pid_running", return_value=True):
+        with (
+            patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
+            patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999),
+            patch("dashboard.routes.agents._is_pid_running", return_value=True),
+        ):
             response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
@@ -62,9 +64,11 @@ class TestAgentsEndpoints:
         log_file.write_text(log_content)
 
         # Disable staleness check and mock PID check for test
-        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)), \
-             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999), \
-             patch("dashboard.routes.agents._is_pid_running", return_value=True):
+        with (
+            patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
+            patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999),
+            patch("dashboard.routes.agents._is_pid_running", return_value=True),
+        ):
             response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
@@ -84,9 +88,11 @@ class TestAgentsEndpoints:
         log_file.write_text(log_content)
 
         # Disable staleness check and mock PID check for test
-        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)), \
-             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999), \
-             patch("dashboard.routes.agents._is_pid_running", return_value=True):
+        with (
+            patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
+            patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999),
+            patch("dashboard.routes.agents._is_pid_running", return_value=True),
+        ):
             # Filter by qa role
             response = client.get("/api/agents/qa")
             assert response.status_code == 200
@@ -107,7 +113,6 @@ class TestAgentsEndpoints:
         assert response.status_code == 400
         assert "Invalid role" in response.json()["detail"]
 
-
     def test_list_agents_filters_stale_agents(self, tmp_path: Path) -> None:
         """Test that stale agents (no recent activity) are filtered out."""
         # Use very old timestamps that will definitely be stale
@@ -118,8 +123,10 @@ class TestAgentsEndpoints:
         log_file.write_text(log_content)
 
         # With default staleness threshold (30 min), these old agents should be filtered
-        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)), \
-             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 30):
+        with (
+            patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
+            patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 30),
+        ):
             response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
@@ -162,8 +169,16 @@ invalid line without proper format
         """Test agent extraction through full session lifecycle."""
         entries = [
             {"timestamp": "2026-01-24 14:00:00", "pid": 1001, "content": "SESSION_START"},
-            {"timestamp": "2026-01-24 14:00:05", "pid": 1001, "content": "CLAIM: mab-abc - Task one"},
-            {"timestamp": "2026-01-24 14:01:00", "pid": 1001, "content": "WORK_START: implementing"},
+            {
+                "timestamp": "2026-01-24 14:00:05",
+                "pid": 1001,
+                "content": "CLAIM: mab-abc - Task one",
+            },
+            {
+                "timestamp": "2026-01-24 14:01:00",
+                "pid": 1001,
+                "content": "WORK_START: implementing",
+            },
             {"timestamp": "2026-01-24 14:02:00", "pid": 1001, "content": "CLOSE: mab-abc"},
             {"timestamp": "2026-01-24 14:02:05", "pid": 1001, "content": "SESSION_END: mab-abc"},
         ]
@@ -220,6 +235,7 @@ class TestPidVerification:
     def test_is_pid_running_current_process(self) -> None:
         """Test that current process PID is detected as running."""
         import os
+
         current_pid = os.getpid()
         assert _is_pid_running(current_pid) is True
 
@@ -247,9 +263,11 @@ class TestPidVerification:
         log_file.write_text(log_content)
 
         # Disable staleness check and mock PID check for PID 1
-        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)), \
-             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999), \
-             patch("dashboard.routes.agents._is_pid_running") as mock_pid_check:
+        with (
+            patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
+            patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999),
+            patch("dashboard.routes.agents._is_pid_running") as mock_pid_check,
+        ):
             # PID 1 is running, fake_pid is not
             mock_pid_check.side_effect = lambda pid: pid == 1
 

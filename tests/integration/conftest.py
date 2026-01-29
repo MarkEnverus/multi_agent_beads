@@ -72,10 +72,14 @@ def create_test_bead(
     """
     args = [
         "create",
-        "--title", title,
-        "--description", description or "Integration test bead - safe to delete",
-        "--priority", priority,
-        "-t", issue_type,
+        "--title",
+        title,
+        "--description",
+        description or "Integration test bead - safe to delete",
+        "--priority",
+        priority,
+        "-t",
+        issue_type,
         "--silent",
     ]
     if labels:

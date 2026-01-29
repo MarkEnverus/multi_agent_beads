@@ -137,9 +137,7 @@ class TestListWorkersEndpoint:
             assert data["workers"][0]["status"] == "running"
 
             # Verify correct params were passed (ANY for timeout parameter)
-            mock_client.call.assert_called_once_with(
-                "worker.list", {"status": "running"}, ANY
-            )
+            mock_client.call.assert_called_once_with("worker.list", {"status": "running"}, ANY)
 
 
 class TestSpawnWorkerEndpoint:

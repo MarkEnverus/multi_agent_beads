@@ -282,25 +282,19 @@ class TestFilterControls:
 class TestAdminAPIEndpoints:
     """Tests for admin-related API endpoints via browser requests."""
 
-    def test_daemon_status_endpoint(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_daemon_status_endpoint(self, page_with_server: Page, server_url: str) -> None:
         """Verify the daemon status endpoint returns valid response."""
         response = page_with_server.request.get(f"{server_url}/api/workers/daemon/status")
         # May return 200 (running) or 503 (stopped)
         assert response.status in [200, 503]
 
-    def test_workers_list_endpoint(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_workers_list_endpoint(self, page_with_server: Page, server_url: str) -> None:
         """Verify the workers list endpoint returns valid response."""
         response = page_with_server.request.get(f"{server_url}/api/workers")
         # May return 200 (with workers) or 503 (daemon not running)
         assert response.status in [200, 503]
 
-    def test_health_endpoint(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_health_endpoint(self, page_with_server: Page, server_url: str) -> None:
         """Verify the health endpoint returns valid response."""
         response = page_with_server.request.get(f"{server_url}/api/workers/health")
         # Should return 200 even if daemon isn't running

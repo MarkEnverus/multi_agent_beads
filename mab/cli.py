@@ -573,9 +573,7 @@ def spawn(ctx: click.Context, role: str, count: int, project: str | None) -> Non
                 "worker.spawn",
                 {"role": role, "project_path": project_path},
             )
-            click.echo(
-                f"Spawned {role} worker: {result['worker_id']} (PID {result['pid']})"
-            )
+            click.echo(f"Spawned {role} worker: {result['worker_id']} (PID {result['pid']})")
 
     except RPCDaemonNotRunningError:
         click.echo("Error: Daemon is not running. Start it with 'mab start -d'", err=True)

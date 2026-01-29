@@ -88,9 +88,12 @@ class MCPTestRunner:
         self.steps.append(step)
 
         # Also print to stdout for real-time feedback
-        status_emoji = {"PASS": "\u2705", "FAIL": "\u274c", "SKIP": "\u23ed\ufe0f", "ERROR": "\u26a0\ufe0f"}.get(
-            status, "\u2753"
-        )
+        status_emoji = {
+            "PASS": "\u2705",
+            "FAIL": "\u274c",
+            "SKIP": "\u23ed\ufe0f",
+            "ERROR": "\u26a0\ufe0f",
+        }.get(status, "\u2753")
         print(f"{status_emoji} {step_name}: {status}")
         if details:
             print(f"   {details}")
@@ -273,9 +276,12 @@ def show_report(run_id: str) -> None:
     print("-" * 40)
 
     for step in report.get("step_details", []):
-        status_emoji = {"PASS": "\u2705", "FAIL": "\u274c", "SKIP": "\u23ed\ufe0f", "ERROR": "\u26a0\ufe0f"}.get(
-            step["status"], "\u2753"
-        )
+        status_emoji = {
+            "PASS": "\u2705",
+            "FAIL": "\u274c",
+            "SKIP": "\u23ed\ufe0f",
+            "ERROR": "\u26a0\ufe0f",
+        }.get(step["status"], "\u2753")
         print(f"  {status_emoji} {step['name']}: {step['status']}")
         if step.get("details"):
             print(f"     {step['details']}")

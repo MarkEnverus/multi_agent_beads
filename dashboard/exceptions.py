@@ -115,6 +115,7 @@ class BeadParseError(BeadError):
         raw_output: str | None = None,
         bead_id: str | None = None,
     ) -> None:
+        detail: str | None
         if raw_output and len(raw_output) > 200:
             detail = f"raw_output: {raw_output[:200]}..."
         else:

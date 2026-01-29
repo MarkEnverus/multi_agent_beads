@@ -386,9 +386,7 @@ class TownManager:
         """
         # Validate name
         if not name or not name.replace("_", "").isalnum():
-            raise TownError(
-                f"Invalid town name '{name}': must be alphanumeric with underscores"
-            )
+            raise TownError(f"Invalid town name '{name}': must be alphanumeric with underscores")
 
         # Check if town exists
         existing = self.db.get_town(name)
@@ -473,9 +471,7 @@ class TownManager:
         town = self.get(name)
 
         if town.status == TownStatus.RUNNING and not force:
-            raise TownError(
-                f"Town '{name}' is running. Stop it first or use --force."
-            )
+            raise TownError(f"Town '{name}' is running. Stop it first or use --force.")
 
         # TODO: Stop town dashboard if running
 
@@ -517,9 +513,7 @@ class TownManager:
             # Check port conflict
             existing = self.db.get_town_by_port(port)
             if existing is not None and existing.name != name:
-                raise PortConflictError(
-                    f"Port {port} already in use by town '{existing.name}'"
-                )
+                raise PortConflictError(f"Port {port} already in use by town '{existing.name}'")
             town.port = port
 
         if max_workers is not None:

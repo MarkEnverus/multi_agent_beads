@@ -332,7 +332,10 @@ class TestMabConfigCommand:
         with self.runner.isolated_filesystem():
             result = self.runner.invoke(cli, ["config", "show"])
             if result.exit_code != 0:
-                assert "not initialized" in result.output.lower() or "not found" in result.output.lower()
+                assert (
+                    "not initialized" in result.output.lower()
+                    or "not found" in result.output.lower()
+                )
 
 
 class TestMabLogsCommand:

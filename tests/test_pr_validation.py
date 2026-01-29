@@ -315,26 +315,18 @@ class TestBdCloseCli:
     def test_dry_run_does_not_close(self) -> None:
         """Test dry-run validates but doesn't close."""
         with patch("mab.bd_close.validate_close") as mock_validate:
-            mock_validate.return_value = ValidationResult(
-                allowed=True, reason="Test allowed"
-            )
-            result = self.runner.invoke(
-                bd_close_main, ["test-bead-123", "--dry-run", "--force"]
-            )
+            mock_validate.return_value = ValidationResult(allowed=True, reason="Test allowed")
+            result = self.runner.invoke(bd_close_main, ["test-bead-123", "--dry-run", "--force"])
             assert result.exit_code == 0
             assert "dry run" in result.output.lower()
 
     def test_force_bypasses_validation(self) -> None:
         """Test force flag allows close without PR."""
         with patch("mab.bd_close.validate_close") as mock_validate:
-            mock_validate.return_value = ValidationResult(
-                allowed=True, reason="Forced close"
-            )
+            mock_validate.return_value = ValidationResult(allowed=True, reason="Forced close")
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
-                result = self.runner.invoke(
-                    bd_close_main, ["test-bead-123", "--force"]
-                )
+                result = self.runner.invoke(bd_close_main, ["test-bead-123", "--force"])
                 assert result.exit_code == 0
 
     def test_fails_when_validation_fails(self) -> None:
@@ -352,9 +344,7 @@ class TestBdCloseCli:
     def test_passes_reason_to_bd_close(self) -> None:
         """Test reason argument is passed to bd close."""
         with patch("mab.bd_close.validate_close") as mock_validate:
-            mock_validate.return_value = ValidationResult(
-                allowed=True, reason="Allowed"
-            )
+            mock_validate.return_value = ValidationResult(allowed=True, reason="Allowed")
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
                 result = self.runner.invoke(

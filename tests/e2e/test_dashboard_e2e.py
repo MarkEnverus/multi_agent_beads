@@ -209,9 +209,7 @@ class TestModalBehavior:
 class TestErrorHandling:
     """Tests for error handling scenarios."""
 
-    def test_invalid_bead_shows_error(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_invalid_bead_shows_error(self, page_with_server: Page, server_url: str) -> None:
         """Verify requesting an invalid bead shows an error modal."""
         # Navigate to dashboard first
         page_with_server.goto(server_url)

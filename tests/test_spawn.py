@@ -128,18 +128,14 @@ class TestPromptPathExists:
         result = get_prompt_path("reviewer", tmp_path)
         assert result == expected
 
-    def test_validate_prompt_exists_succeeds_when_file_exists(
-        self, tmp_path: Path
-    ) -> None:
+    def test_validate_prompt_exists_succeeds_when_file_exists(self, tmp_path: Path) -> None:
         """Test validate_prompt_exists passes when file exists."""
         prompt_file = tmp_path / "test_prompt.md"
         prompt_file.write_text("# Test Prompt")
         # Should not raise
         validate_prompt_exists(prompt_file, "developer")
 
-    def test_validate_prompt_exists_raises_when_file_missing(
-        self, tmp_path: Path
-    ) -> None:
+    def test_validate_prompt_exists_raises_when_file_missing(self, tmp_path: Path) -> None:
         """Test validate_prompt_exists raises when file is missing."""
         missing_file = tmp_path / "nonexistent.md"
         with pytest.raises(AgentSpawnError) as exc_info:

@@ -171,9 +171,15 @@ class TestWorkerDatabase:
         db = WorkerDatabase(tmp_path / "workers.db")
 
         # Insert workers with different statuses
-        db.insert_worker(Worker(id="w1", role="dev", project_path="/tmp", status=WorkerStatus.RUNNING))
-        db.insert_worker(Worker(id="w2", role="dev", project_path="/tmp", status=WorkerStatus.RUNNING))
-        db.insert_worker(Worker(id="w3", role="dev", project_path="/tmp", status=WorkerStatus.STOPPED))
+        db.insert_worker(
+            Worker(id="w1", role="dev", project_path="/tmp", status=WorkerStatus.RUNNING)
+        )
+        db.insert_worker(
+            Worker(id="w2", role="dev", project_path="/tmp", status=WorkerStatus.RUNNING)
+        )
+        db.insert_worker(
+            Worker(id="w3", role="dev", project_path="/tmp", status=WorkerStatus.STOPPED)
+        )
 
         running = db.list_workers(status=WorkerStatus.RUNNING)
         assert len(running) == 2
@@ -221,9 +227,15 @@ class TestWorkerDatabase:
 
         assert db.count_workers() == 0
 
-        db.insert_worker(Worker(id="w1", role="dev", project_path="/tmp", status=WorkerStatus.RUNNING))
-        db.insert_worker(Worker(id="w2", role="dev", project_path="/tmp", status=WorkerStatus.RUNNING))
-        db.insert_worker(Worker(id="w3", role="dev", project_path="/tmp", status=WorkerStatus.STOPPED))
+        db.insert_worker(
+            Worker(id="w1", role="dev", project_path="/tmp", status=WorkerStatus.RUNNING)
+        )
+        db.insert_worker(
+            Worker(id="w2", role="dev", project_path="/tmp", status=WorkerStatus.RUNNING)
+        )
+        db.insert_worker(
+            Worker(id="w3", role="dev", project_path="/tmp", status=WorkerStatus.STOPPED)
+        )
 
         assert db.count_workers() == 3
         assert db.count_workers(status=WorkerStatus.RUNNING) == 2

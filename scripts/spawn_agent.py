@@ -112,6 +112,7 @@ def validate_prompt_exists(prompt_path: Path, role: str) -> None:
 def generate_worker_id(role: str, instance: int) -> str:
     """Generate a worker ID from role and instance."""
     import uuid
+
     short_uuid = str(uuid.uuid4())[:8]
     return f"worker-{role}-{instance}-{short_uuid}"
 
@@ -249,8 +250,7 @@ export WORKER_ID="{worker_id}"
 """
 
     terminal_command = (
-        f'cd "{repo_path}" && {env_exports.strip()} && '
-        f'claude --print "{escaped_prompt}"'
+        f'cd "{repo_path}" && {env_exports.strip()} && claude --print "{escaped_prompt}"'
     )
 
     applescript = f'''
@@ -339,7 +339,8 @@ Spawner types:
         help="Spawner type for headless mode (default: subprocess)",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Enable verbose logging",
     )
