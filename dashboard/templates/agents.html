@@ -143,7 +143,7 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                     </svg>
                     <p class="mt-4 text-gray-400">No active agents detected</p>
-                    <p class="mt-1 text-sm text-gray-500">Agents appear here when they log SESSION_START</p>
+                    <p class="mt-1 text-sm text-gray-500">Spawn workers from the Admin page to see agents here</p>
                 </div>
             </div>
         </div>
@@ -235,18 +235,39 @@
         setInterval(refreshAgents, 5000);
     });
 
-    // Fetch and display agents
+    // Fetch and display agents (using workers API for consistency with admin page)
     async function refreshAgents() {
         const roleFilter = document.getElementById('filter-role').value;
-        let url = '/api/agents';
+        let url = '/api/workers';
+        const params = new URLSearchParams();
         if (roleFilter) {
-            url += '/' + roleFilter;
+            params.append('role', roleFilter);
+        }
+        if (params.toString()) {
+            url += '?' + params.toString();
         }
 
         try {
             const response = await fetch(url);
             if (response.ok) {
-                agents = await response.json();
+                const data = await response.json();
+                // Transform worker data to agent format for UI compatibility
+                agents = (data.workers || []).map(worker => ({
+                    role: worker.role || 'unknown',
+                    instance: 1,
+                    current_bead: null,  // Workers API doesn't track current bead
+                    current_bead_title: null,
+                    status: worker.status === 'running' ? 'working' : 'idle',
+                    last_activity: worker.started_at || new Date().toISOString(),
+                    pid: worker.pid || 0,
+                    worker_id: worker.id  // Keep worker ID for reference
+                }));
+                renderAgents(agents);
+                updateStats(agents);
+                document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+            } else if (response.status === 503) {
+                // Daemon not running - show empty state
+                agents = [];
                 renderAgents(agents);
                 updateStats(agents);
                 document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
