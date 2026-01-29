@@ -289,6 +289,7 @@ class BeadService:
         priority: int | None = None,
         limit: int = 0,
         use_cache: bool = True,
+        include_all: bool = False,
     ) -> list[dict[str, Any]]:
         """List beads with optional filters.
 
@@ -298,6 +299,8 @@ class BeadService:
             priority: Filter by priority (0-4).
             limit: Maximum number of beads (0 = unlimited).
             use_cache: Whether to use cached results (default True).
+            include_all: Include closed beads (adds --all flag). Required to
+                get a complete count of all beads in the system.
 
         Returns:
             List of bead dictionaries.
@@ -306,7 +309,7 @@ class BeadService:
             BeadCommandError: If the bd command fails.
             BeadParseError: If output parsing fails.
         """
-        cache_key = _cache.make_key("list", status, label, priority, limit)
+        cache_key = _cache.make_key("list", status, label, priority, limit, include_all)
 
         if use_cache:
             cached = _cache.get(cache_key)
@@ -316,6 +319,8 @@ class BeadService:
 
         args = ["list", "--json", "--limit", str(limit)]
 
+        if include_all:
+            args.append("--all")
         if status:
             args.extend(["--status", status])
         if label:
@@ -572,8 +577,8 @@ class BeadService:
         Returns:
             Dictionary with ready, in_progress, and done beads.
         """
-        # Fetch all beads in a single call
-        all_beads = cls.list_beads(use_cache=False)
+        # Fetch all beads in a single call (include_all=True to include closed)
+        all_beads = cls.list_beads(use_cache=False, include_all=True)
 
         # Also fetch blocked info to determine what's ready
         blocked_beads = cls.list_blocked(use_cache=False)
