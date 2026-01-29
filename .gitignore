@@ -59,3 +59,15 @@ dmypy.json
 # OS
 .DS_Store
 Thumbs.db
+
+# MAB specific
+.mab/
+.worktrees/
+workers.db
+*.pid
+
+# Beads local state (keep .beads/ but ignore local files)
+.beads/*.local
+
+# Screenshots from E2E tests
+tests/e2e/screenshots/
