@@ -18,6 +18,11 @@ from mab.daemon import (
     DaemonState,
     status_to_json,
 )
+from mab.dashboard_manager import (
+    DashboardAlreadyRunningError,
+    DashboardManager,
+    DashboardStartError,
+)
 from mab.rpc import DaemonNotRunningError as RPCDaemonNotRunningError
 from mab.rpc import get_default_client
 from mab.towns import (
@@ -824,6 +829,97 @@ def logs(ctx: click.Context, follow: bool, lines: int, worker: str | None) -> No
                 click.echo(line)
         else:
             click.echo("No daemon logs found.")
+
+
+@cli.command()
+@click.option(
+    "--port",
+    "-p",
+    type=int,
+    default=None,
+    help="Dashboard port (auto-assigned if not specified)",
+)
+@click.option(
+    "--stop",
+    is_flag=True,
+    help="Stop the dashboard for current project",
+)
+@click.option(
+    "--status",
+    "show_status",
+    is_flag=True,
+    help="Show status of running dashboards",
+)
+@click.pass_context
+def dashboard(
+    ctx: click.Context,
+    port: int | None,
+    stop: bool,
+    show_status: bool,
+) -> None:
+    """Start or manage the dashboard for the current project.
+
+    Starts a web dashboard for monitoring beads, workers, and agents.
+    Each project gets its own dashboard instance on a unique port.
+
+    \b
+    Examples:
+      mab dashboard              # Start dashboard for current project
+      mab dashboard --port 8001  # Start on specific port
+      mab dashboard --stop       # Stop dashboard for current project
+      mab dashboard --status     # Show all running dashboards
+    """
+    manager = DashboardManager()
+    project_path = ctx.obj["town_path"]
+
+    if show_status:
+        # Show status of all running dashboards
+        dashboards = manager.list_dashboards()
+        if not dashboards:
+            click.echo("No dashboards running.")
+            return
+
+        click.echo(f"{'PROJECT':<30} {'PORT':<8} {'PID':<10} {'URL'}")
+        click.echo("-" * 70)
+        for db in dashboards:
+            project_name = Path(db.project_path).name
+            if len(project_name) > 28:
+                project_name = project_name[:25] + "..."
+            url = f"http://127.0.0.1:{db.port}"
+            click.echo(f"{project_name:<30} {db.port:<8} {db.pid or '-':<10} {url}")
+        return
+
+    if stop:
+        # Stop dashboard for current project
+        if manager.stop(project_path):
+            click.secho(f"✓ Stopped dashboard for {project_path.name}", fg="green")
+        else:
+            click.echo("Dashboard is not running for this project.")
+        return
+
+    # Start dashboard for current project
+    try:
+        info = manager.start(project_path, port=port)
+        click.secho(f"✓ Dashboard started on port {info.port}", fg="green")
+        click.echo(f"  URL: http://127.0.0.1:{info.port}")
+        click.echo(f"  PID: {info.pid}")
+        click.echo(f"  Log: {info.log_file}")
+        click.echo("\nStop with: mab dashboard --stop")
+
+    except DashboardAlreadyRunningError as e:
+        # Get existing dashboard info
+        existing = manager.get_dashboard(project_path)
+        if existing:
+            click.secho(f"Dashboard already running on port {existing.port}", fg="yellow")
+            click.echo(f"  URL: http://127.0.0.1:{existing.port}")
+            click.echo("\nTo restart, stop first: mab dashboard --stop")
+        else:
+            click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+    except DashboardStartError as e:
+        click.secho(f"Error: {e}", fg="red", err=True)
+        raise SystemExit(1)
 
 
 @cli.group()
