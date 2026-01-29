@@ -5,6 +5,7 @@ All file I/O operations are wrapped with asyncio.to_thread() to avoid blocking t
 
 import asyncio
 import logging
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -199,6 +200,37 @@ def _is_agent_stale(timestamp_str: str, stale_minutes: int) -> bool:
         return True  # Treat unparseable timestamps as stale
 
 
+def _is_pid_running(pid: int) -> bool:
+    """Check if a process with the given PID is currently running.
+
+    Uses os.kill with signal 0 which doesn't actually send a signal,
+    but checks if the process exists and we have permission to signal it.
+
+    Args:
+        pid: Process ID to check.
+
+    Returns:
+        True if the process is running, False otherwise.
+    """
+    # PIDs must be positive integers
+    if pid <= 0:
+        return False
+
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        # Process does not exist
+        return False
+    except PermissionError:
+        # Process exists but we don't have permission to signal it
+        # This means it's running (owned by another user)
+        return True
+    except OSError:
+        # Other OS error - assume not running
+        return False
+
+
 def _get_active_agents() -> list[dict[str, Any]]:
     """Get list of currently active (non-ended, non-stale) agents.
 
@@ -211,7 +243,7 @@ def _get_active_agents() -> list[dict[str, Any]]:
     entries = _parse_log_file()
     agents = _extract_agents_from_logs(entries)
 
-    # Filter to only active agents (not ended and not stale)
+    # Filter to only active agents (not ended, not stale, and PID still running)
     active = []
     for agent in agents.values():
         if agent["status"] == "ended":
@@ -223,6 +255,14 @@ def _get_active_agents() -> list[dict[str, Any]]:
                 "Skipping stale agent PID %d (last activity: %s)",
                 agent["pid"],
                 agent["last_activity"],
+            )
+            continue
+
+        # Verify process is actually running - skip phantom agents
+        if not _is_pid_running(agent["pid"]):
+            logger.debug(
+                "Skipping phantom agent PID %d (process not running)",
+                agent["pid"],
             )
             continue
 

@@ -11,6 +11,7 @@ from dashboard.routes.agents import (
     _extract_agents_from_logs,
     _format_iso_timestamp,
     _infer_role_from_bead_title,
+    _is_pid_running,
     _parse_log_file,
 )
 
@@ -36,9 +37,10 @@ class TestAgentsEndpoints:
         log_file = tmp_path / "test.log"
         log_file.write_text(log_content)
 
-        # Disable staleness check for test with old timestamps
+        # Disable staleness check and mock PID check for test
         with patch("dashboard.routes.agents.LOG_FILE", str(log_file)), \
-             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999):
+             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999), \
+             patch("dashboard.routes.agents._is_pid_running", return_value=True):
             response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
@@ -59,9 +61,10 @@ class TestAgentsEndpoints:
         log_file = tmp_path / "test.log"
         log_file.write_text(log_content)
 
-        # Disable staleness check for test with old timestamps
+        # Disable staleness check and mock PID check for test
         with patch("dashboard.routes.agents.LOG_FILE", str(log_file)), \
-             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999):
+             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999), \
+             patch("dashboard.routes.agents._is_pid_running", return_value=True):
             response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
@@ -80,9 +83,10 @@ class TestAgentsEndpoints:
         log_file = tmp_path / "test.log"
         log_file.write_text(log_content)
 
-        # Disable staleness check for test with old timestamps
+        # Disable staleness check and mock PID check for test
         with patch("dashboard.routes.agents.LOG_FILE", str(log_file)), \
-             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999):
+             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999), \
+             patch("dashboard.routes.agents._is_pid_running", return_value=True):
             # Filter by qa role
             response = client.get("/api/agents/qa")
             assert response.status_code == 200
@@ -208,3 +212,51 @@ class TestTimestampFormatting:
         """Test that invalid timestamp is returned as-is."""
         result = _format_iso_timestamp("invalid")
         assert result == "invalid"
+
+
+class TestPidVerification:
+    """Tests for PID running verification."""
+
+    def test_is_pid_running_current_process(self) -> None:
+        """Test that current process PID is detected as running."""
+        import os
+        current_pid = os.getpid()
+        assert _is_pid_running(current_pid) is True
+
+    def test_is_pid_running_nonexistent_pid(self) -> None:
+        """Test that obviously invalid PID is detected as not running."""
+        # PID 99999999 is extremely unlikely to exist
+        assert _is_pid_running(99999999) is False
+
+    def test_is_pid_running_invalid_pids(self) -> None:
+        """Test that invalid PIDs (zero or negative) are detected as not running."""
+        assert _is_pid_running(0) is False
+        assert _is_pid_running(-1) is False
+        assert _is_pid_running(-999) is False
+
+    def test_list_agents_filters_phantom_agents(self, tmp_path: Path) -> None:
+        """Test that agents with non-running PIDs are filtered out."""
+        # Use a PID that definitely doesn't exist
+        fake_pid = 99999999
+        log_content = f"""[2026-01-29 14:00:00] [1] SESSION_START
+[2026-01-29 14:00:05] [1] CLAIM: mab-init - Init process (always running)
+[2026-01-29 14:00:00] [{fake_pid}] SESSION_START
+[2026-01-29 14:00:05] [{fake_pid}] CLAIM: mab-phantom - Phantom agent task
+"""
+        log_file = tmp_path / "test.log"
+        log_file.write_text(log_content)
+
+        # Disable staleness check and mock PID check for PID 1
+        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)), \
+             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999), \
+             patch("dashboard.routes.agents._is_pid_running") as mock_pid_check:
+            # PID 1 is running, fake_pid is not
+            mock_pid_check.side_effect = lambda pid: pid == 1
+
+            response = client.get("/api/agents")
+            assert response.status_code == 200
+            data = response.json()
+            # Only PID 1 should be returned (phantom agent filtered out)
+            assert len(data) == 1
+            assert data[0]["pid"] == 1
+            assert data[0]["current_bead"] == "mab-init"
