@@ -447,4 +447,10 @@ async def bead_detail_partial(request: Request, bead_id: str) -> HTMLResponse:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("dashboard.app:app", host=HOST, port=PORT, reload=True)
+    uvicorn.run(
+        "dashboard.app:app",
+        host=HOST,
+        port=PORT,
+        reload=True,
+        reload_excludes=[".worktrees", ".mab", ".beads", "__pycache__"],
+    )
