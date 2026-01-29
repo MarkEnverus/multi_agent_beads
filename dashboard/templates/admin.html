@@ -1409,6 +1409,10 @@
             return;
         }
 
+        // Create AbortController for timeout handling
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
         try {
             const response = await fetch('/api/beads', {
                 method: 'POST',
@@ -1419,8 +1423,11 @@
                     issue_type: issueType,
                     priority: priority,
                     labels: labels
-                })
+                }),
+                signal: controller.signal
             });
+
+            clearTimeout(timeoutId);
 
             if (response.ok) {
                 const data = await response.json();
@@ -1431,11 +1438,16 @@
                 // which auto-refreshes every 10 seconds
             } else {
                 const error = await response.json();
-                showToast(error.detail || 'Failed to create bead', 'error');
+                showToast(error.detail || error.message || 'Failed to create bead', 'error');
             }
         } catch (error) {
+            clearTimeout(timeoutId);
             console.error('Failed to create bead:', error);
-            showToast('Failed to create bead: Network error', 'error');
+            if (error.name === 'AbortError') {
+                showToast('Request timed out. The bead may have been created - please check the dashboard.', 'warning');
+            } else {
+                showToast('Failed to create bead: Network error', 'error');
+            }
         } finally {
             resetSubmitButton();
         }
