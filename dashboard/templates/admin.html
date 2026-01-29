@@ -299,13 +299,13 @@
                     </svg>
                 </button>
             </div>
-            <form id="create-bead-form" onsubmit="submitCreateBead(event)" class="px-6 py-4 space-y-4">
+            <form id="create-bead-form" onsubmit="submitCreateBead(event)" class="px-6 py-4 space-y-4" autocomplete="off">
                 {# Title field (required) #}
                 <div>
                     <label for="bead-title" class="block text-sm font-medium text-gray-400 mb-1">
                         Title <span class="text-red-400">*</span>
                     </label>
-                    <input type="text" id="bead-title" name="title" required
+                    <input type="text" id="bead-title" name="title" required autocomplete="off"
                            class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
                            placeholder="Brief description of the task">
                 </div>
@@ -315,7 +315,7 @@
                     <label for="bead-description" class="block text-sm font-medium text-gray-400 mb-1">
                         Description
                     </label>
-                    <textarea id="bead-description" name="description" rows="4"
+                    <textarea id="bead-description" name="description" rows="4" autocomplete="off"
                               class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
                               placeholder="Detailed description (supports Markdown)"></textarea>
                 </div>
@@ -1357,7 +1357,12 @@
     function openCreateBeadModal() {
         // Reset form
         document.getElementById('create-bead-form').reset();
-        // Set default priority to P2
+        // Explicitly clear title and description fields to prevent autocomplete interference
+        document.getElementById('bead-title').value = '';
+        document.getElementById('bead-description').value = '';
+        document.getElementById('bead-labels').value = '';
+        // Set default values
+        document.getElementById('bead-type').value = 'task';
         document.getElementById('bead-priority').value = '2';
         // Show modal
         document.getElementById('create-bead-modal').classList.remove('hidden');
