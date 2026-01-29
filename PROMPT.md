@@ -341,3 +341,79 @@ python scripts/spawn_agent.py <role> --instance <n>
 # Monitor activity
 python scripts/monitor.py
 ```
+
+---
+
+## Chrome MCP Testing (Dashboard)
+
+Use Chrome DevTools MCP to test the dashboard without manual clicking.
+
+### Prerequisites
+
+1. Chrome MCP server running (configured in Claude Code settings)
+2. Dashboard running: `mab dashboard` or `uv run python -m dashboard.app`
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `navigate_page` | Navigate to URL |
+| `take_snapshot` | Capture current page state |
+| `click` | Click an element by selector/text |
+| `fill` | Fill input field |
+| `select` | Select dropdown option |
+| `hover` | Hover over element |
+| `scroll` | Scroll page/element |
+
+### Common Test Workflows
+
+#### 1. Basic Navigation Test
+```bash
+# Navigate to dashboard
+navigate_page("http://127.0.0.1:8000")
+take_snapshot()
+
+# Check navigation links
+click("Agents")
+take_snapshot()
+click("Beads")
+take_snapshot()
+```
+
+#### 2. Admin Panel Test
+```bash
+navigate_page("http://127.0.0.1:8000/admin")
+take_snapshot()
+
+# Check daemon status
+# Check worker list
+# Test spawn worker button
+```
+
+#### 3. Worker Spawn Test
+```bash
+navigate_page("http://127.0.0.1:8000/admin")
+select("role", "developer")
+click("Spawn Worker")
+take_snapshot()
+
+# Verify worker appears in list
+```
+
+### Test Coverage Areas
+
+- [ ] Navigation links work (/, /agents, /beads, /logs, /admin)
+- [ ] Kanban board loads with beads
+- [ ] Agent monitoring shows active agents
+- [ ] Worker spawn form submits successfully
+- [ ] Log viewer streams logs
+- [ ] WebSocket connections establish
+- [ ] Forms validate and submit
+- [ ] Error states display correctly
+
+### Reporting Bugs
+
+When Chrome MCP finds issues:
+```bash
+bd create --title="Bug: <description>" --type=bug --priority=<0-4>
+```
