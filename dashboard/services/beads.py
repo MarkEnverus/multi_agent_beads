@@ -16,7 +16,7 @@ import subprocess
 import time
 from typing import Any, cast
 
-from dashboard.config import CACHE_TTL_SECONDS
+from dashboard.config import CACHE_STALE_TTL_SECONDS, CACHE_TTL_SECONDS
 from dashboard.exceptions import (
     BeadCommandError,
     BeadNotFoundError,
@@ -29,41 +29,99 @@ logger = logging.getLogger(__name__)
 # Valid bead ID pattern: prefix-shortid (e.g., multi_agent_beads-abc123)
 BEAD_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_]+-[a-zA-Z0-9]+$")
 
-# Command timeout in seconds - shorter for dashboard responsiveness
-# The bd CLI should respond quickly; if it takes > 10s something is wrong
-DEFAULT_TIMEOUT = 10
+# Command timeout in seconds - allow enough time for slow bd CLI operations
+# The bd CLI can be slow with large JSONL files (10+ seconds for 1000+ beads)
+DEFAULT_TIMEOUT = 30
 
 
 class _BeadCache:
-    """Simple time-based cache for bead list operations.
+    """Time-based cache with stale-while-revalidate support for bead list operations.
 
     Thread-safe for FastAPI's async context since we use simple dict operations.
+
+    Implements two-tier caching:
+    - Fresh TTL: Data within this age is served directly (default 30s)
+    - Stale TTL: Data within this age is served while triggering background refresh (default 120s)
+    - Beyond stale TTL: Cache miss, must block on fresh data
     """
 
-    def __init__(self, ttl: float = CACHE_TTL_SECONDS) -> None:
+    def __init__(
+        self,
+        ttl: float = CACHE_TTL_SECONDS,
+        stale_ttl: float = CACHE_STALE_TTL_SECONDS,
+    ) -> None:
         self._cache: dict[str, tuple[float, Any]] = {}
         self._ttl = ttl
+        self._stale_ttl = stale_ttl
+        # Track which keys are currently being refreshed to prevent stampede
+        self._refreshing: set[str] = set()
 
     def get(self, key: str) -> Any | None:
-        """Get cached value if not expired."""
+        """Get cached value if not expired (beyond stale TTL)."""
         if key not in self._cache:
             return None
         timestamp, value = self._cache[key]
-        if time.monotonic() - timestamp > self._ttl:
+        age = time.monotonic() - timestamp
+        # Only delete if beyond stale TTL
+        if age > self._stale_ttl:
             del self._cache[key]
             return None
         return value
 
+    def get_with_stale_info(self, key: str) -> tuple[Any | None, bool, bool]:
+        """Get cached value with staleness information.
+
+        Returns:
+            Tuple of (value, is_fresh, needs_refresh):
+            - value: The cached value, or None if not found or too stale
+            - is_fresh: True if data is within fresh TTL
+            - needs_refresh: True if data should be refreshed in background
+        """
+        if key not in self._cache:
+            return None, False, False
+
+        timestamp, value = self._cache[key]
+        age = time.monotonic() - timestamp
+
+        # Beyond stale TTL - treat as cache miss
+        if age > self._stale_ttl:
+            del self._cache[key]
+            return None, False, False
+
+        is_fresh = age <= self._ttl
+        # Need refresh if stale and not already being refreshed
+        needs_refresh = not is_fresh and key not in self._refreshing
+
+        return value, is_fresh, needs_refresh
+
+    def mark_refreshing(self, key: str) -> bool:
+        """Mark a key as being refreshed.
+
+        Returns True if successfully marked (wasn't already refreshing).
+        This prevents multiple concurrent refreshes for the same key.
+        """
+        if key in self._refreshing:
+            return False
+        self._refreshing.add(key)
+        return True
+
+    def mark_refresh_complete(self, key: str) -> None:
+        """Mark a key's refresh as complete."""
+        self._refreshing.discard(key)
+
     def set(self, key: str, value: Any) -> None:
         """Cache a value with current timestamp."""
         self._cache[key] = (time.monotonic(), value)
+        self._refreshing.discard(key)
 
     def invalidate(self, key: str | None = None) -> None:
         """Invalidate a specific key or all keys."""
         if key is None:
             self._cache.clear()
+            self._refreshing.clear()
         elif key in self._cache:
             del self._cache[key]
+            self._refreshing.discard(key)
 
     def make_key(self, *args: Any) -> str:
         """Create a cache key from arguments."""
@@ -453,6 +511,10 @@ class BeadService:
         This batch method fetches all beads once and partitions them locally,
         reducing subprocess overhead from 4 calls to 1.
 
+        Uses stale-while-revalidate caching: returns stale data immediately
+        if available, rather than blocking for potentially slow bd CLI calls.
+        Data within stale TTL (default 120s) is returned without blocking.
+
         Args:
             done_limit: Maximum number of closed beads to return.
             use_cache: Whether to use cached results (default True).
@@ -463,6 +525,8 @@ class BeadService:
                 - in_progress_beads: Currently being worked on, sorted by priority
                 - done_beads: Closed beads (limited), sorted by updated_at desc
                 - total_count: Total number of beads
+                - _cached: True if data was served from cache (for debugging)
+                - _stale: True if cached data was stale (for debugging)
 
         Raises:
             BeadCommandError: If the bd command fails.
@@ -471,11 +535,43 @@ class BeadService:
         cache_key = _cache.make_key("kanban", done_limit)
 
         if use_cache:
-            cached = _cache.get(cache_key)
+            cached, is_fresh, needs_refresh = _cache.get_with_stale_info(cache_key)
             if cached is not None:
-                logger.debug("Cache hit for get_kanban_data")
-                return cast(dict[str, Any], cached)
+                if is_fresh:
+                    logger.debug("Cache hit (fresh) for get_kanban_data")
+                    result = cast(dict[str, Any], cached)
+                    result["_cached"] = True
+                    result["_stale"] = False
+                    return result
+                else:
+                    # Stale but usable - return immediately, log that we're stale
+                    logger.debug(
+                        "Cache hit (stale) for get_kanban_data - "
+                        "serving stale data to avoid blocking"
+                    )
+                    result = cast(dict[str, Any], cached)
+                    result["_cached"] = True
+                    result["_stale"] = True
+                    return result
 
+        # No cache or beyond stale TTL - must fetch fresh data
+        logger.debug("Cache miss for get_kanban_data - fetching fresh data")
+        result = cls._fetch_kanban_data(done_limit)
+        result["_cached"] = False
+        result["_stale"] = False
+        _cache.set(cache_key, result)
+        return result
+
+    @classmethod
+    def _fetch_kanban_data(cls, done_limit: int) -> dict[str, Any]:
+        """Internal method to fetch and partition kanban data.
+
+        Args:
+            done_limit: Maximum number of closed beads to return.
+
+        Returns:
+            Dictionary with ready, in_progress, and done beads.
+        """
         # Fetch all beads in a single call
         all_beads = cls.list_beads(use_cache=False)
 
@@ -511,15 +607,12 @@ class BeadService:
         )
         done_beads = done_beads[:done_limit]
 
-        result = {
+        return {
             "ready_beads": ready_beads,
             "in_progress_beads": in_progress_beads,
             "done_beads": done_beads,
             "total_count": len(all_beads),
         }
-
-        _cache.set(cache_key, result)
-        return result
 
     @classmethod
     def invalidate_cache(cls) -> None:

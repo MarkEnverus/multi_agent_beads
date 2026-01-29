@@ -48,7 +48,14 @@ LOG_LEVEL = getattr(logging, LOG_LEVEL_STR, logging.INFO)
 
 # Performance configuration
 # Cache TTL in seconds for bd list results (reduces subprocess overhead)
-CACHE_TTL_SECONDS = float(os.environ.get("DASHBOARD_CACHE_TTL", "5.0"))
+# Default is 30 seconds - can be adjusted via DASHBOARD_CACHE_TTL env var
+# Higher TTL reduces bd CLI calls but shows slightly stale data
+CACHE_TTL_SECONDS = float(os.environ.get("DASHBOARD_CACHE_TTL", "30.0"))
+
+# Stale TTL - how long we'll serve stale data while refreshing in background
+# This provides stale-while-revalidate behavior for better perceived performance
+# Data older than this will block on refresh (no stale data served)
+CACHE_STALE_TTL_SECONDS = float(os.environ.get("DASHBOARD_CACHE_STALE_TTL", "120.0"))
 
 # Agent staleness threshold in minutes
 # Agents with no activity for longer than this are considered stale/inactive
