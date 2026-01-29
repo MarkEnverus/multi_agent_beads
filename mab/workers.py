@@ -282,6 +282,26 @@ class WorkerDatabase:
                     "ALTER TABLE workers ADD COLUMN worktree_branch TEXT"
                 )
 
+            if "last_restart_at" not in columns:
+                conn.execute(
+                    "ALTER TABLE workers ADD COLUMN last_restart_at TEXT"
+                )
+
+            if "exit_code" not in columns:
+                conn.execute(
+                    "ALTER TABLE workers ADD COLUMN exit_code INTEGER"
+                )
+
+            if "error_message" not in columns:
+                conn.execute(
+                    "ALTER TABLE workers ADD COLUMN error_message TEXT"
+                )
+
+            if "auto_restart_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE workers ADD COLUMN auto_restart_enabled INTEGER DEFAULT 1"
+                )
+
             # Create town index (must be after migration in case column was just added)
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_workers_town ON workers(town_name)
