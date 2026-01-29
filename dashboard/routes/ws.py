@@ -83,6 +83,7 @@ class ConnectionManager:
         self._connections: WeakSet[WebSocket] = WeakSet()
         self._active: set[WebSocket] = set()
         self._lock = asyncio.Lock()
+        self._shutting_down = False
 
     async def connect(self, websocket: WebSocket) -> None:
         """Accept and register a new WebSocket connection."""
@@ -126,6 +127,45 @@ class ConnectionManager:
     def connection_count(self) -> int:
         """Return the number of active connections."""
         return len(self._active)
+
+    async def shutdown(self) -> None:
+        """Close all active WebSocket connections gracefully.
+
+        Called during application shutdown to ensure all connections
+        are properly closed before the server stops.
+        """
+        self._shutting_down = True
+        async with self._lock:
+            if not self._active:
+                logger.info("No WebSocket connections to close")
+                return
+
+            logger.info("Closing %d WebSocket connection(s)...", len(self._active))
+            close_tasks = []
+            for connection in list(self._active):
+                close_tasks.append(self._close_connection(connection))
+
+            # Wait for all connections to close with timeout
+            if close_tasks:
+                results = await asyncio.gather(*close_tasks, return_exceptions=True)
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        logger.debug("Error closing WebSocket: %s", result)
+
+            self._active.clear()
+            logger.info("All WebSocket connections closed")
+
+    async def _close_connection(self, websocket: WebSocket) -> None:
+        """Close a single WebSocket connection gracefully."""
+        try:
+            await asyncio.wait_for(
+                websocket.close(code=1001, reason="Server shutting down"),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            logger.debug("WebSocket close timed out, forcing close")
+        except Exception as e:
+            logger.debug("Error closing WebSocket: %s", e)
 
 
 # Global connection manager instance
