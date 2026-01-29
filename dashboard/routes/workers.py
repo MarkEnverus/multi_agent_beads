@@ -656,6 +656,9 @@ async def spawn_worker(request: WorkerSpawnRequest) -> dict[str, Any]:
             request.role,
             request.project_path,
         )
+        # Transform worker_id to id for WorkerResponse model compatibility
+        if "worker_id" in result and "id" not in result:
+            result["id"] = result.pop("worker_id")
         return result
     except Exception as e:
         _handle_rpc_error(e, f"spawn_worker({request.role})")
@@ -741,6 +744,9 @@ async def restart_worker(
             60.0,
         )
         logger.info("Restarted worker: %s -> %s", worker_id, result.get("worker_id"))
+        # Transform worker_id to id for WorkerResponse model compatibility
+        if "worker_id" in result and "id" not in result:
+            result["id"] = result.pop("worker_id")
         return result
     except HTTPException:
         raise
