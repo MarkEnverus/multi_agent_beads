@@ -157,10 +157,17 @@ async def admin_page(request: Request) -> HTMLResponse:
     )
 
 
-@app.get("/agents")
-async def agents_redirect() -> RedirectResponse:
-    """Redirect /agents to main dashboard where agents sidebar is shown."""
-    return RedirectResponse(url="/", status_code=302)
+@app.get("/agents", response_class=HTMLResponse)
+async def agents_page(request: Request) -> HTMLResponse:
+    """Render the dedicated agents monitoring page.
+
+    Provides detailed agent list, status indicators, per-agent logs,
+    and role-based filtering. Shows agent sessions detected from claude.log.
+    """
+    return templates.TemplateResponse(
+        "agents.html",
+        {"request": request},
+    )
 
 
 @app.get("/beads")
