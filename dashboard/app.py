@@ -170,10 +170,18 @@ async def agents_page(request: Request) -> HTMLResponse:
     )
 
 
-@app.get("/beads")
-async def beads_redirect() -> RedirectResponse:
-    """Redirect /beads to main dashboard where kanban board with beads is shown."""
-    return RedirectResponse(url="/", status_code=302)
+@app.get("/beads", response_class=HTMLResponse)
+async def beads_page(request: Request) -> HTMLResponse:
+    """Render the dedicated beads management page.
+
+    Provides searchable bead list with filters by status, priority, type,
+    and labels. Includes pagination, bead detail modal, and dependency
+    visualization graph.
+    """
+    return templates.TemplateResponse(
+        "beads.html",
+        {"request": request},
+    )
 
 
 @app.get("/logs")

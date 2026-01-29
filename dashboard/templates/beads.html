@@ -1,0 +1,784 @@
+{% extends "base.html" %}
+
+{% block title %}Beads - Multi-Agent Dashboard{% endblock %}
+
+{% block content %}
+{# Page Header #}
+<div class="mb-6">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-white">Bead Management</h1>
+            <p class="text-gray-400 mt-1">Search, filter, and manage all beads in the system</p>
+        </div>
+        <div class="flex items-center space-x-4">
+            <span id="ws-status" class="flex items-center space-x-2">
+                <span class="relative flex h-3 w-3">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                </span>
+                <span class="text-sm text-gray-400">Auto-refreshing</span>
+            </span>
+            <button
+                id="refresh-btn"
+                class="px-3 py-1.5 text-sm bg-primary-600 hover:bg-primary-700 text-white rounded-md transition-colors"
+                onclick="refreshBeads()"
+            >
+                Refresh Now
+            </button>
+        </div>
+    </div>
+</div>
+
+{# Stats Summary Cards #}
+<div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">Total</span>
+            <span class="h-8 w-8 rounded-full bg-primary-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-total" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">Ready</span>
+            <span class="h-8 w-8 rounded-full bg-blue-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-ready" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">In Progress</span>
+            <span class="h-8 w-8 rounded-full bg-yellow-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-in-progress" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">Blocked</span>
+            <span class="h-8 w-8 rounded-full bg-red-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-blocked" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">Closed</span>
+            <span class="h-8 w-8 rounded-full bg-green-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-closed" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+            <span class="text-gray-400 text-sm">With Deps</span>
+            <span class="h-8 w-8 rounded-full bg-purple-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                </svg>
+            </span>
+        </div>
+        <p id="stat-with-deps" class="text-2xl font-bold text-white mt-2">0</p>
+    </div>
+</div>
+
+{# Search and Filters #}
+<div class="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-6">
+    <div class="flex flex-wrap items-end gap-4">
+        {# Search Input #}
+        <div class="flex-1 min-w-64">
+            <label for="search-input" class="block text-sm font-medium text-gray-400 mb-1">Search</label>
+            <div class="relative">
+                <svg class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input
+                    type="text"
+                    id="search-input"
+                    placeholder="Search by title, ID, or description..."
+                    class="w-full bg-gray-700 border border-gray-600 text-white rounded-md pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    onkeyup="debounceSearch()"
+                >
+            </div>
+        </div>
+
+        {# Status Filter #}
+        <div>
+            <label for="filter-status" class="block text-sm font-medium text-gray-400 mb-1">Status</label>
+            <select id="filter-status" onchange="applyFilters()"
+                    class="bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm">
+                <option value="">All Statuses</option>
+                <option value="open">Open</option>
+                <option value="in_progress">In Progress</option>
+                <option value="closed">Closed</option>
+            </select>
+        </div>
+
+        {# Priority Filter #}
+        <div>
+            <label for="filter-priority" class="block text-sm font-medium text-gray-400 mb-1">Priority</label>
+            <select id="filter-priority" onchange="applyFilters()"
+                    class="bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm">
+                <option value="">All Priorities</option>
+                <option value="0">P0 - Critical</option>
+                <option value="1">P1 - High</option>
+                <option value="2">P2 - Medium</option>
+                <option value="3">P3 - Low</option>
+                <option value="4">P4 - Backlog</option>
+            </select>
+        </div>
+
+        {# Type Filter #}
+        <div>
+            <label for="filter-type" class="block text-sm font-medium text-gray-400 mb-1">Type</label>
+            <select id="filter-type" onchange="applyFilters()"
+                    class="bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm">
+                <option value="">All Types</option>
+                <option value="task">Task</option>
+                <option value="bug">Bug</option>
+                <option value="feature">Feature</option>
+                <option value="epic">Epic</option>
+            </select>
+        </div>
+
+        {# Label Filter #}
+        <div>
+            <label for="filter-label" class="block text-sm font-medium text-gray-400 mb-1">Label</label>
+            <select id="filter-label" onchange="applyFilters()"
+                    class="bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm">
+                <option value="">All Labels</option>
+            </select>
+        </div>
+
+        {# Sort By #}
+        <div>
+            <label for="sort-by" class="block text-sm font-medium text-gray-400 mb-1">Sort By</label>
+            <select id="sort-by" onchange="applyFilters()"
+                    class="bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm">
+                <option value="priority">Priority</option>
+                <option value="created_at">Created Date</option>
+                <option value="updated_at">Updated Date</option>
+                <option value="title">Title</option>
+            </select>
+        </div>
+
+        {# Clear Filters #}
+        <button onclick="clearFilters()" class="px-3 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors">
+            Clear Filters
+        </button>
+    </div>
+</div>
+
+{# Main Content: Bead List and Dependency Graph #}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    {# Bead List #}
+    <div class="lg:col-span-2">
+        <div class="bg-gray-800 rounded-lg border border-gray-700">
+            <div class="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <h3 class="text-lg font-semibold text-white">Beads</h3>
+                    <span id="bead-count" class="text-sm text-gray-400">0 beads</span>
+                </div>
+                <div class="flex items-center space-x-2 text-sm text-gray-400">
+                    <span>Last updated:</span>
+                    <span id="last-updated">-</span>
+                </div>
+            </div>
+
+            {# Loading state #}
+            <div id="beads-loading" class="flex items-center justify-center py-12">
+                <svg class="animate-spin h-8 w-8 text-primary-500" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+            </div>
+
+            {# Bead list container #}
+            <div id="beads-list" class="hidden divide-y divide-gray-700"></div>
+
+            {# Empty state #}
+            <div id="beads-empty" class="hidden text-center py-12">
+                <svg class="mx-auto h-12 w-12 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+                <p class="mt-4 text-gray-400">No beads match your filters</p>
+                <p class="mt-1 text-sm text-gray-500">Try adjusting your search or filter criteria</p>
+            </div>
+
+            {# Pagination #}
+            <div id="pagination" class="hidden px-6 py-4 border-t border-gray-700 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <span class="text-sm text-gray-400">
+                        Showing <span id="page-start">1</span>-<span id="page-end">20</span> of <span id="page-total">0</span>
+                    </span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button id="prev-page" onclick="prevPage()" disabled
+                            class="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed">
+                        Previous
+                    </button>
+                    <span id="page-numbers" class="flex items-center space-x-1"></span>
+                    <button id="next-page" onclick="nextPage()" disabled
+                            class="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed">
+                        Next
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# Dependency Graph Panel #}
+    <div class="lg:col-span-1">
+        <div class="bg-gray-800 rounded-lg border border-gray-700 sticky top-4">
+            <div class="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-white">Dependency Graph</h3>
+                <div class="flex items-center space-x-2">
+                    <span id="graph-stats" class="text-xs text-gray-500">0 nodes, 0 edges</span>
+                    <button onclick="refreshGraph()" class="text-xs text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-gray-700">
+                        Refresh
+                    </button>
+                </div>
+            </div>
+            <div id="dep-graph-container" class="h-96 overflow-hidden">
+                {# Graph loading state #}
+                <div id="graph-loading" class="flex items-center justify-center h-full">
+                    <svg class="animate-spin h-6 w-6 text-gray-500" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </div>
+                {# Graph content #}
+                <div id="graph-content" class="hidden h-full">
+                    <pre id="mermaid-graph" class="mermaid"></pre>
+                </div>
+                {# Graph empty state #}
+                <div id="graph-empty" class="hidden text-center py-8">
+                    <svg class="mx-auto h-10 w-10 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                    </svg>
+                    <p class="mt-2 text-sm text-gray-500">No dependencies</p>
+                </div>
+            </div>
+            <div class="px-4 py-2 border-t border-gray-700">
+                <p class="text-xs text-gray-500">Click a node to view bead details</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Toast Notifications Container #}
+<div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
+
+{# Bead Detail Modal #}
+<div id="bead-detail-modal"></div>
+
+{% endblock %}
+
+{% block scripts %}
+{# Mermaid for dependency graph #}
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+    // Initialize mermaid
+    mermaid.initialize({
+        startOnLoad: false,
+        theme: 'dark',
+        securityLevel: 'loose',
+        flowchart: {
+            useMaxWidth: true,
+            htmlLabels: true
+        }
+    });
+
+    // State
+    let allBeads = [];
+    let filteredBeads = [];
+    let blockedIds = new Set();
+    let currentPage = 1;
+    const pageSize = 20;
+    let searchTimeout = null;
+
+    // Priority and type configurations
+    const priorityColors = {
+        0: { bg: 'bg-red-600', text: 'text-white', label: 'P0 Critical' },
+        1: { bg: 'bg-orange-500', text: 'text-white', label: 'P1 High' },
+        2: { bg: 'bg-yellow-500', text: 'text-gray-900', label: 'P2 Medium' },
+        3: { bg: 'bg-green-500', text: 'text-white', label: 'P3 Low' },
+        4: { bg: 'bg-gray-500', text: 'text-white', label: 'P4 Backlog' }
+    };
+
+    const statusColors = {
+        'open': { bg: 'bg-blue-900', text: 'text-blue-200' },
+        'in_progress': { bg: 'bg-yellow-900', text: 'text-yellow-200' },
+        'closed': { bg: 'bg-green-900', text: 'text-green-200' }
+    };
+
+    const typeIcons = {
+        'task': '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />',
+        'bug': '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />',
+        'feature': '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />',
+        'epic': '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />'
+    };
+
+    const labelColors = {
+        'dev': 'bg-blue-900 text-blue-200',
+        'qa': 'bg-purple-900 text-purple-200',
+        'architecture': 'bg-indigo-900 text-indigo-200',
+        'dashboard': 'bg-cyan-900 text-cyan-200',
+        'docs': 'bg-emerald-900 text-emerald-200',
+        'epic': 'bg-pink-900 text-pink-200',
+        'review': 'bg-amber-900 text-amber-200',
+        'scripts': 'bg-teal-900 text-teal-200',
+        'bug': 'bg-red-900 text-red-200'
+    };
+
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        refreshBeads();
+        refreshGraph();
+        // Auto-refresh every 30 seconds
+        setInterval(refreshBeads, 30000);
+    });
+
+    // Fetch all beads
+    async function refreshBeads() {
+        try {
+            const [beadsRes, blockedRes] = await Promise.all([
+                fetch('/api/beads'),
+                fetch('/api/beads?status=blocked').catch(() => ({ ok: false }))
+            ]);
+
+            if (beadsRes.ok) {
+                allBeads = await beadsRes.json();
+
+                // Try to get blocked beads for status identification
+                try {
+                    const blockedData = await (await fetch('/partials/depgraph')).text();
+                    // Parse blocked IDs from response if available
+                } catch (e) {
+                    // Blocked info not critical
+                }
+
+                updateLabelsFilter();
+                applyFilters();
+                updateStats();
+                document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+            }
+        } catch (error) {
+            console.error('Failed to fetch beads:', error);
+            showToast('Failed to fetch beads', 'error');
+        }
+    }
+
+    // Update statistics
+    function updateStats() {
+        const total = allBeads.length;
+        const ready = allBeads.filter(b => b.status === 'open' && !blockedIds.has(b.id)).length;
+        const inProgress = allBeads.filter(b => b.status === 'in_progress').length;
+        const blocked = blockedIds.size;
+        const closed = allBeads.filter(b => b.status === 'closed').length;
+        const withDeps = allBeads.filter(b =>
+            (b.dependencies && b.dependencies.length > 0) ||
+            (b.dependents && b.dependents.length > 0)
+        ).length;
+
+        document.getElementById('stat-total').textContent = total;
+        document.getElementById('stat-ready').textContent = ready;
+        document.getElementById('stat-in-progress').textContent = inProgress;
+        document.getElementById('stat-blocked').textContent = blocked;
+        document.getElementById('stat-closed').textContent = closed;
+        document.getElementById('stat-with-deps').textContent = withDeps;
+    }
+
+    // Update labels dropdown from bead data
+    function updateLabelsFilter() {
+        const labels = new Set();
+        allBeads.forEach(bead => {
+            (bead.labels || []).forEach(label => labels.add(label));
+        });
+
+        const select = document.getElementById('filter-label');
+        const currentValue = select.value;
+        select.innerHTML = '<option value="">All Labels</option>';
+
+        Array.from(labels).sort().forEach(label => {
+            const option = document.createElement('option');
+            option.value = label;
+            option.textContent = label;
+            select.appendChild(option);
+        });
+
+        // Restore selection if still valid
+        if (labels.has(currentValue)) {
+            select.value = currentValue;
+        }
+    }
+
+    // Debounced search
+    function debounceSearch() {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(applyFilters, 300);
+    }
+
+    // Apply all filters
+    function applyFilters() {
+        const search = document.getElementById('search-input').value.toLowerCase().trim();
+        const status = document.getElementById('filter-status').value;
+        const priority = document.getElementById('filter-priority').value;
+        const type = document.getElementById('filter-type').value;
+        const label = document.getElementById('filter-label').value;
+        const sortBy = document.getElementById('sort-by').value;
+
+        filteredBeads = allBeads.filter(bead => {
+            // Search filter
+            if (search) {
+                const matchesSearch =
+                    (bead.title || '').toLowerCase().includes(search) ||
+                    (bead.id || '').toLowerCase().includes(search) ||
+                    (bead.description || '').toLowerCase().includes(search);
+                if (!matchesSearch) return false;
+            }
+
+            // Status filter
+            if (status && bead.status !== status) return false;
+
+            // Priority filter
+            if (priority !== '' && bead.priority !== parseInt(priority)) return false;
+
+            // Type filter
+            if (type && bead.issue_type !== type) return false;
+
+            // Label filter
+            if (label && !(bead.labels || []).includes(label)) return false;
+
+            return true;
+        });
+
+        // Sort
+        filteredBeads.sort((a, b) => {
+            switch (sortBy) {
+                case 'priority':
+                    return (a.priority || 4) - (b.priority || 4);
+                case 'created_at':
+                    return (b.created_at || '').localeCompare(a.created_at || '');
+                case 'updated_at':
+                    return (b.updated_at || '').localeCompare(a.updated_at || '');
+                case 'title':
+                    return (a.title || '').localeCompare(b.title || '');
+                default:
+                    return 0;
+            }
+        });
+
+        currentPage = 1;
+        renderBeads();
+    }
+
+    // Clear all filters
+    function clearFilters() {
+        document.getElementById('search-input').value = '';
+        document.getElementById('filter-status').value = '';
+        document.getElementById('filter-priority').value = '';
+        document.getElementById('filter-type').value = '';
+        document.getElementById('filter-label').value = '';
+        document.getElementById('sort-by').value = 'priority';
+        applyFilters();
+    }
+
+    // Render bead list
+    function renderBeads() {
+        const loading = document.getElementById('beads-loading');
+        const list = document.getElementById('beads-list');
+        const empty = document.getElementById('beads-empty');
+        const pagination = document.getElementById('pagination');
+        const count = document.getElementById('bead-count');
+
+        loading.classList.add('hidden');
+
+        if (filteredBeads.length === 0) {
+            list.classList.add('hidden');
+            pagination.classList.add('hidden');
+            empty.classList.remove('hidden');
+            count.textContent = '0 beads';
+            return;
+        }
+
+        empty.classList.add('hidden');
+        list.classList.remove('hidden');
+
+        // Calculate pagination
+        const totalPages = Math.ceil(filteredBeads.length / pageSize);
+        const startIdx = (currentPage - 1) * pageSize;
+        const endIdx = Math.min(startIdx + pageSize, filteredBeads.length);
+        const pageBeads = filteredBeads.slice(startIdx, endIdx);
+
+        count.textContent = filteredBeads.length + ' bead' + (filteredBeads.length !== 1 ? 's' : '');
+
+        // Render beads
+        list.innerHTML = pageBeads.map(bead => renderBeadRow(bead)).join('');
+
+        // Update pagination
+        if (totalPages > 1) {
+            pagination.classList.remove('hidden');
+            document.getElementById('page-start').textContent = startIdx + 1;
+            document.getElementById('page-end').textContent = endIdx;
+            document.getElementById('page-total').textContent = filteredBeads.length;
+
+            document.getElementById('prev-page').disabled = currentPage <= 1;
+            document.getElementById('next-page').disabled = currentPage >= totalPages;
+
+            renderPageNumbers(totalPages);
+        } else {
+            pagination.classList.add('hidden');
+        }
+    }
+
+    // Render a single bead row
+    function renderBeadRow(bead) {
+        const pConfig = priorityColors[bead.priority] || priorityColors[4];
+        const sConfig = statusColors[bead.status] || statusColors['open'];
+        const typeIcon = typeIcons[bead.issue_type] || typeIcons['task'];
+        const isBlocked = blockedIds.has(bead.id);
+        const shortId = bead.id.split('-').pop();
+
+        return `
+            <div class="px-6 py-4 hover:bg-gray-750 transition-colors cursor-pointer ${isBlocked ? 'border-l-4 border-red-500' : ''}"
+                 onclick="openBeadModal('${bead.id}')">
+                <div class="flex items-start gap-4">
+                    {# Type icon #}
+                    <div class="flex-shrink-0 mt-1">
+                        <svg class="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            ${typeIcon}
+                        </svg>
+                    </div>
+
+                    {# Main content #}
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="text-xs font-mono text-gray-500">${shortId}</span>
+                            <span class="px-1.5 py-0.5 text-xs font-semibold rounded ${pConfig.bg} ${pConfig.text}">
+                                P${bead.priority}
+                            </span>
+                            <span class="px-1.5 py-0.5 text-xs font-semibold rounded ${sConfig.bg} ${sConfig.text}">
+                                ${(bead.status || '').replace('_', ' ')}
+                            </span>
+                            ${isBlocked ? '<span class="px-1.5 py-0.5 text-xs font-semibold rounded bg-red-900 text-red-200">Blocked</span>' : ''}
+                        </div>
+                        <h4 class="text-sm font-medium text-white truncate">${escapeHtml(bead.title)}</h4>
+                        ${bead.description ? `<p class="text-xs text-gray-500 mt-1 line-clamp-1">${escapeHtml(bead.description.substring(0, 150))}</p>` : ''}
+
+                        {# Labels #}
+                        ${bead.labels && bead.labels.length > 0 ? `
+                            <div class="flex flex-wrap gap-1 mt-2">
+                                ${bead.labels.map(label => `
+                                    <span class="px-1.5 py-0.5 text-xs rounded ${labelColors[label] || 'bg-gray-700 text-gray-300'}">
+                                        ${label}
+                                    </span>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+
+                    {# Meta info #}
+                    <div class="flex-shrink-0 text-right">
+                        <div class="text-xs text-gray-500">
+                            ${bead.owner ? `<div class="mb-1">${escapeHtml(bead.owner.split('@')[0])}</div>` : ''}
+                            <div>${formatDate(bead.updated_at || bead.created_at)}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Page navigation
+    function prevPage() {
+        if (currentPage > 1) {
+            currentPage--;
+            renderBeads();
+        }
+    }
+
+    function nextPage() {
+        const totalPages = Math.ceil(filteredBeads.length / pageSize);
+        if (currentPage < totalPages) {
+            currentPage++;
+            renderBeads();
+        }
+    }
+
+    function goToPage(page) {
+        currentPage = page;
+        renderBeads();
+    }
+
+    function renderPageNumbers(totalPages) {
+        const container = document.getElementById('page-numbers');
+        container.innerHTML = '';
+
+        // Show max 5 page numbers
+        let start = Math.max(1, currentPage - 2);
+        let end = Math.min(totalPages, start + 4);
+        if (end - start < 4) {
+            start = Math.max(1, end - 4);
+        }
+
+        for (let i = start; i <= end; i++) {
+            const btn = document.createElement('button');
+            btn.className = `px-2 py-1 text-sm rounded ${i === currentPage ? 'bg-primary-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`;
+            btn.textContent = i;
+            btn.onclick = () => goToPage(i);
+            container.appendChild(btn);
+        }
+    }
+
+    // Open bead detail modal
+    function openBeadModal(beadId) {
+        fetch(`/partials/beads/${beadId}`)
+            .then(res => res.text())
+            .then(html => {
+                document.getElementById('bead-detail-modal').innerHTML = html;
+                // Re-process any htmx attributes in the modal
+                if (typeof htmx !== 'undefined') {
+                    htmx.process(document.getElementById('bead-detail-modal'));
+                }
+            })
+            .catch(err => {
+                console.error('Failed to load bead details:', err);
+                showToast('Failed to load bead details', 'error');
+            });
+    }
+
+    // Handle click on graph node
+    window.handleNodeClick = function(beadId) {
+        // Find full bead ID from short ID
+        const fullId = allBeads.find(b => b.id.endsWith(beadId))?.id || beadId;
+        openBeadModal(fullId);
+    };
+
+    // Refresh dependency graph
+    async function refreshGraph() {
+        const loading = document.getElementById('graph-loading');
+        const content = document.getElementById('graph-content');
+        const empty = document.getElementById('graph-empty');
+        const stats = document.getElementById('graph-stats');
+
+        loading.classList.remove('hidden');
+        content.classList.add('hidden');
+        empty.classList.add('hidden');
+
+        try {
+            const response = await fetch('/partials/depgraph');
+            if (response.ok) {
+                const html = await response.text();
+
+                // Parse mermaid code from the partial
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const mermaidEl = doc.querySelector('.mermaid');
+
+                if (mermaidEl && mermaidEl.textContent.trim() && mermaidEl.textContent.includes('graph TD')) {
+                    const mermaidCode = mermaidEl.textContent.trim();
+
+                    // Count nodes and edges
+                    const nodeMatches = mermaidCode.match(/\[[^\]]+\]/g) || [];
+                    const edgeMatches = mermaidCode.match(/-->/g) || [];
+                    stats.textContent = `${nodeMatches.length} nodes, ${edgeMatches.length} edges`;
+
+                    // Render graph
+                    const graphEl = document.getElementById('mermaid-graph');
+                    graphEl.textContent = mermaidCode;
+                    graphEl.removeAttribute('data-processed');
+
+                    loading.classList.add('hidden');
+                    content.classList.remove('hidden');
+
+                    await mermaid.run({ nodes: [graphEl] });
+                } else {
+                    loading.classList.add('hidden');
+                    empty.classList.remove('hidden');
+                    stats.textContent = '0 nodes, 0 edges';
+                }
+            }
+        } catch (error) {
+            console.error('Failed to refresh graph:', error);
+            loading.classList.add('hidden');
+            empty.classList.remove('hidden');
+        }
+    }
+
+    // Helper functions
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function formatDate(iso) {
+        if (!iso) return '-';
+        try {
+            const date = new Date(iso);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+            if (diffDays === 0) {
+                return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            } else if (diffDays === 1) {
+                return 'Yesterday';
+            } else if (diffDays < 7) {
+                return `${diffDays}d ago`;
+            } else {
+                return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+            }
+        } catch {
+            return iso.substring(0, 10);
+        }
+    }
+
+    function showToast(message, type = 'info') {
+        const container = document.getElementById('toast-container');
+        const id = 'toast-' + Date.now();
+
+        const bgColor = {
+            'success': 'bg-green-600',
+            'error': 'bg-red-600',
+            'warning': 'bg-yellow-600',
+            'info': 'bg-primary-600'
+        }[type] || 'bg-gray-600';
+
+        const toast = document.createElement('div');
+        toast.id = id;
+        toast.className = `${bgColor} text-white px-4 py-2 rounded-lg shadow-lg transform transition-all duration-300 translate-x-full`;
+        toast.textContent = message;
+
+        container.appendChild(toast);
+
+        // Animate in
+        setTimeout(() => toast.classList.remove('translate-x-full'), 10);
+
+        // Remove after 3 seconds
+        setTimeout(() => {
+            toast.classList.add('translate-x-full');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+</script>
+{% endblock %}
