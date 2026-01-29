@@ -305,7 +305,9 @@
                     <label for="bead-title" class="block text-sm font-medium text-gray-400 mb-1">
                         Title <span class="text-red-400">*</span>
                     </label>
-                    <input type="text" id="bead-title" name="title" required autocomplete="off"
+                    <input type="text" id="bead-title" name="bead_title_field" required
+                           autocomplete="one-time-code" autocorrect="off" autocapitalize="off" spellcheck="false"
+                           data-lpignore="true" data-form-type="other"
                            class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
                            placeholder="Brief description of the task">
                 </div>
@@ -315,7 +317,9 @@
                     <label for="bead-description" class="block text-sm font-medium text-gray-400 mb-1">
                         Description
                     </label>
-                    <textarea id="bead-description" name="description" rows="4" autocomplete="off"
+                    <textarea id="bead-description" name="bead_description_field" rows="4"
+                              autocomplete="one-time-code" autocorrect="off" autocapitalize="off" spellcheck="false"
+                              data-lpignore="true" data-form-type="other"
                               class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
                               placeholder="Detailed description (supports Markdown)"></textarea>
                 </div>
