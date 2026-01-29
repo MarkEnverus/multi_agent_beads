@@ -242,7 +242,7 @@ async def start_daemon(request: DaemonStartRequest | None = None) -> dict[str, A
 
     try:
         # Run daemon start in thread pool since it involves I/O
-        # Note: start() with foreground=False will fork and return in parent
+        # Note: start() with foreground=False will fork - parent exits with SystemExit(0)
         await asyncio.to_thread(daemon.start, foreground)
 
         # Give the daemon a moment to fully initialize
@@ -264,6 +264,29 @@ async def start_daemon(request: DaemonStartRequest | None = None) -> dict[str, A
             "message": str(e),
             "already_running": True,
         }
+    except SystemExit as e:
+        # When daemon.start() forks with foreground=False, the parent process
+        # calls sys.exit(0) which raises SystemExit. This is expected behavior
+        # indicating the daemon forked successfully.
+        if e.code == 0:
+            # Give the daemon a moment to initialize
+            await asyncio.sleep(0.5)
+
+            # Get updated status
+            status = daemon.get_status()
+            logger.info("Daemon forked successfully (PID %s)", status.pid)
+
+            return {
+                "success": True,
+                "message": "Daemon started successfully",
+                "status": status.to_dict(),
+            }
+        else:
+            logger.exception("Daemon exited with code %s", e.code)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Daemon exited with code {e.code}",
+            )
     except Exception as e:
         logger.exception("Failed to start daemon: %s", e)
         raise HTTPException(
@@ -333,7 +356,7 @@ async def restart_daemon() -> dict[str, Any]:
         # Give time for cleanup
         await asyncio.sleep(0.5)
 
-        # Start daemon
+        # Start daemon - will fork, causing SystemExit(0) in parent
         await asyncio.to_thread(daemon.start, False)
 
         # Give the daemon a moment to initialize
@@ -348,6 +371,28 @@ async def restart_daemon() -> dict[str, Any]:
             "was_running": was_running,
             "status": status.to_dict(),
         }
+    except SystemExit as e:
+        # When daemon.start() forks, the parent process calls sys.exit(0)
+        # which raises SystemExit. This is expected behavior.
+        if e.code == 0:
+            # Give the daemon a moment to initialize
+            await asyncio.sleep(0.5)
+
+            status = daemon.get_status()
+            logger.info("Daemon restarted via fork (PID %s)", status.pid)
+
+            return {
+                "success": True,
+                "message": "Daemon restarted successfully",
+                "was_running": daemon.is_running(),  # Refresh state
+                "status": status.to_dict(),
+            }
+        else:
+            logger.exception("Daemon exited with code %s during restart", e.code)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Daemon exited with code {e.code}",
+            )
     except Exception as e:
         logger.exception("Failed to restart daemon: %s", e)
         raise HTTPException(
