@@ -33,7 +33,7 @@ import requests
 
 # Skip all tests if not in interactive E2E mode
 pytestmark = pytest.mark.skipif(
-    os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"),
+    bool(os.environ.get("CI")) or bool(os.environ.get("GITHUB_ACTIONS")),
     reason="Chrome MCP E2E tests require local Chrome instance",
 )
 
@@ -213,8 +213,7 @@ class ChromeE2ETestRunner:
             if passed:
                 # Check for expected HTML structure
                 has_columns = all(
-                    col in resp.text.lower()
-                    for col in ["ready", "in progress", "done"]
+                    col in resp.text.lower() for col in ["ready", "in progress", "done"]
                 )
                 message = "Kanban partial loaded" + (" with columns" if has_columns else "")
             else:
@@ -498,10 +497,7 @@ class TestBeadsPage:
         resp = requests.get(f"{test_runner.base_url}/beads", timeout=10)
         assert resp.status_code == 200
         # Check for filter elements
-        assert any(
-            word in resp.text.lower()
-            for word in ["status", "priority", "type", "label"]
-        )
+        assert any(word in resp.text.lower() for word in ["status", "priority", "type", "label"])
 
     def test_beads_page_has_dependency_graph(self, test_runner: ChromeE2ETestRunner) -> None:
         """Verify beads page includes dependency graph section."""
@@ -517,18 +513,14 @@ class TestLogsPage:
         """Verify logs page includes filter controls."""
         resp = requests.get(f"{test_runner.base_url}/logs", timeout=10)
         assert resp.status_code == 200
-        assert any(
-            word in resp.text.lower()
-            for word in ["level", "search", "time", "role"]
-        )
+        assert any(word in resp.text.lower() for word in ["level", "search", "time", "role"])
 
     def test_logs_page_has_stats(self, test_runner: ChromeE2ETestRunner) -> None:
         """Verify logs page shows statistics."""
         resp = requests.get(f"{test_runner.base_url}/logs", timeout=10)
         assert resp.status_code == 200
         assert any(
-            word in resp.text.lower()
-            for word in ["total", "errors", "warnings", "sessions"]
+            word in resp.text.lower() for word in ["total", "errors", "warnings", "sessions"]
         )
 
 
