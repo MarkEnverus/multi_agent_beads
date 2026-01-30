@@ -36,6 +36,16 @@ BEAD_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_]+-[a-zA-Z0-9]+$")
 # The bd CLI can be slow with large JSONL files (10+ seconds for 1000+ beads)
 DEFAULT_TIMEOUT = 30
 
+# Error patterns that indicate database sync issues - recoverable via bd sync --import-only
+# These patterns match common bd CLI error messages when JSONL is newer than the SQLite database
+DB_SYNC_ERROR_PATTERNS = [
+    "database out of sync",
+    "jsonl newer than db",
+    "auto-import failed",
+    "stale database",
+    "sync required",
+]
+
 
 class _BeadCache:
     """Time-based cache with stale-while-revalidate support for bead list operations.
@@ -169,11 +179,55 @@ class BeadService:
             )
 
     @staticmethod
+    def _is_sync_error(error_text: str) -> bool:
+        """Check if an error message indicates a database sync issue.
+
+        Args:
+            error_text: The error output (stderr or stdout) from a bd command.
+
+        Returns:
+            True if the error indicates a sync issue that can be recovered.
+        """
+        if not error_text:
+            return False
+        error_lower = error_text.lower()
+        return any(pattern in error_lower for pattern in DB_SYNC_ERROR_PATTERNS)
+
+    @staticmethod
+    def _try_sync_recovery() -> bool:
+        """Attempt to recover from a database sync issue by importing from JSONL.
+
+        Returns:
+            True if sync recovery succeeded, False otherwise.
+        """
+        logger.info("Attempting database sync recovery via 'bd sync --import-only'")
+        try:
+            result = subprocess.run(
+                ["bd", "sync", "--import-only"],
+                capture_output=True,
+                text=True,
+                timeout=DEFAULT_TIMEOUT,
+            )
+            if result.returncode == 0:
+                logger.info("Database sync recovery succeeded")
+                return True
+            logger.warning(
+                "Database sync recovery failed: %s",
+                result.stderr.strip() or result.stdout.strip(),
+            )
+            return False
+        except Exception as e:
+            logger.warning("Database sync recovery failed with exception: %s", e)
+            return False
+
+    @classmethod
     def run_command(
+        cls,
         args: list[str],
         *,
         timeout: int = DEFAULT_TIMEOUT,
         bead_id: str | None = None,
+        _retry_after_sync: bool = True,
     ) -> str:
         """Execute a bd command and return its output.
 
@@ -181,12 +235,18 @@ class BeadService:
             args: Arguments to pass to the bd command.
             timeout: Command timeout in seconds.
             bead_id: Associated bead ID for error context.
+            _retry_after_sync: Internal flag to prevent infinite retry loops.
 
         Returns:
             The stdout output from the command.
 
         Raises:
             BeadCommandError: If the command fails for any reason.
+
+        Note:
+            If the command fails with a database sync error (e.g., "Database out of sync"),
+            this method will automatically attempt recovery by running 'bd sync --import-only'
+            and retrying the command once.
         """
         cmd_str = f"bd {' '.join(args)}"
         logger.debug("Executing command: %s", cmd_str)
@@ -207,6 +267,24 @@ class BeadService:
                     result.returncode,
                     stderr,
                 )
+
+                # Check if this is a recoverable sync error
+                if _retry_after_sync and cls._is_sync_error(stderr):
+                    logger.info(
+                        "Detected database sync error, attempting auto-recovery for: %s",
+                        cmd_str,
+                    )
+                    if cls._try_sync_recovery():
+                        # Retry the command once after successful sync
+                        logger.info("Retrying command after sync recovery: %s", cmd_str)
+                        return cls.run_command(
+                            args,
+                            timeout=timeout,
+                            bead_id=bead_id,
+                            _retry_after_sync=False,  # Prevent infinite retries
+                        )
+                    # Sync recovery failed, fall through to raise original error
+
                 raise BeadCommandError(
                     message=f"bd command failed: {stderr or 'Unknown error'}",
                     command=args,
