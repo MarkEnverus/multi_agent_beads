@@ -349,12 +349,21 @@
     };
 
     // Initialize on page load
-    document.addEventListener('DOMContentLoaded', function() {
+    // Use a function that handles both cases: DOM already loaded or not yet loaded
+    function initPage() {
         refreshBeads();
         refreshGraph();
         // Auto-refresh every 30 seconds
         setInterval(refreshBeads, 30000);
-    });
+    }
+
+    // Check if DOM is already ready (common when scripts are at end of body)
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPage);
+    } else {
+        // DOM already loaded, call immediately
+        initPage();
+    }
 
     // Fetch all beads
     async function refreshBeads() {
