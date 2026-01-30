@@ -57,11 +57,18 @@ async def list_beads(
     """
     logger.debug(
         "Listing beads: status=%s, label=%s, priority=%s, include_all=%s",
-        status, label, priority, include_all
+        status,
+        label,
+        priority,
+        include_all,
     )
     # Run blocking subprocess call in thread pool to avoid blocking event loop
     return await asyncio.to_thread(
-        BeadService.list_beads, status=status, label=label, priority=priority, include_all=include_all
+        BeadService.list_beads,
+        status=status,
+        label=label,
+        priority=priority,
+        include_all=include_all,
     )
 
 
