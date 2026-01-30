@@ -966,8 +966,8 @@ async def stream_worker_logs(
         raise
 
 
-class LogEntry(BaseModel):
-    """Response model for a log entry."""
+class WorkerLogEntry(BaseModel):
+    """Response model for a worker log entry."""
 
     timestamp: str = Field(..., description="Log entry timestamp")
     pid: int = Field(..., description="Process ID")
@@ -975,7 +975,7 @@ class LogEntry(BaseModel):
     message: str | None = Field(None, description="Event message/details")
 
 
-@router.get("/{worker_id}/logs/recent", response_model=list[LogEntry])
+@router.get("/{worker_id}/logs/recent", response_model=list[WorkerLogEntry])
 async def get_worker_recent_logs(
     worker_id: str,
     limit: int = Query(100, ge=1, le=500, description="Maximum entries to return"),
