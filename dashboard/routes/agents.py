@@ -231,6 +231,55 @@ def _is_pid_running(pid: int) -> bool:
         return False
 
 
+def _is_claude_agent_process(pid: int) -> bool:
+    """Check if the process is actually a Claude agent, not a recycled PID.
+
+    Uses the `ps` command to inspect the process command line. A Claude agent
+    process should have 'claude' in its command line. This prevents false
+    positives when a PID has been recycled by the OS for a completely
+    different process.
+
+    Args:
+        pid: Process ID to check.
+
+    Returns:
+        True if the process appears to be a Claude agent, False otherwise.
+    """
+    import subprocess
+
+    try:
+        # Get the command line of the process
+        # Works on macOS and Linux
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        if result.returncode != 0:
+            # Process doesn't exist or ps failed
+            return False
+
+        command = result.stdout.strip().lower()
+        if not command:
+            return False
+
+        # Check if this looks like a Claude agent process
+        # Claude Code runs as a Node.js process with "claude" in the command
+        # or as a spawned subprocess from the dashboard
+        claude_indicators = ["claude", "anthropic", "mab", "multi_agent"]
+
+        return any(indicator in command for indicator in claude_indicators)
+
+    except subprocess.TimeoutExpired:
+        logger.warning("Timeout checking process %d command line", pid)
+        return False
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("Error checking process %d: %s", pid, e)
+        return False
+
+
 def _get_active_agents() -> list[dict[str, Any]]:
     """Get list of currently active (non-ended, non-stale) agents.
 
@@ -262,6 +311,14 @@ def _get_active_agents() -> list[dict[str, Any]]:
         if not _is_pid_running(agent["pid"]):
             logger.debug(
                 "Skipping phantom agent PID %d (process not running)",
+                agent["pid"],
+            )
+            continue
+
+        # Verify the process is actually a Claude agent, not a recycled PID
+        if not _is_claude_agent_process(agent["pid"]):
+            logger.debug(
+                "Skipping recycled PID %d (not a Claude agent process)",
                 agent["pid"],
             )
             continue
