@@ -434,6 +434,83 @@ class TestBeadServiceRunCommand:
             assert "not installed" in exc_info.value.message.lower()
 
 
+class TestBeadServiceSyncRecovery:
+    """Tests for BeadService database sync auto-recovery."""
+
+    def test_is_sync_error_detects_out_of_sync(self) -> None:
+        """Test _is_sync_error detects 'database out of sync' errors."""
+        assert BeadService._is_sync_error("Error: Database out of sync") is True
+        assert BeadService._is_sync_error("database out of sync with JSONL") is True
+
+    def test_is_sync_error_detects_jsonl_newer(self) -> None:
+        """Test _is_sync_error detects 'jsonl newer than db' errors."""
+        assert BeadService._is_sync_error("JSONL newer than DB, import required") is True
+
+    def test_is_sync_error_detects_stale_database(self) -> None:
+        """Test _is_sync_error detects 'stale database' errors."""
+        assert BeadService._is_sync_error("Error: stale database detected") is True
+
+    def test_is_sync_error_detects_sync_required(self) -> None:
+        """Test _is_sync_error detects 'sync required' errors."""
+        assert BeadService._is_sync_error("Sync required before operation") is True
+
+    def test_is_sync_error_ignores_unrelated_errors(self) -> None:
+        """Test _is_sync_error ignores unrelated error messages."""
+        assert BeadService._is_sync_error("Bead not found") is False
+        assert BeadService._is_sync_error("Permission denied") is False
+        assert BeadService._is_sync_error("Connection timeout") is False
+        assert BeadService._is_sync_error("") is False
+        assert BeadService._is_sync_error(None) is False  # type: ignore[arg-type]
+
+    def test_run_command_auto_recovers_from_sync_error(self) -> None:
+        """Test run_command auto-recovers by running bd sync --import-only."""
+        with patch("dashboard.services.beads.subprocess.run") as mock_subprocess:
+            # First call fails with sync error, sync succeeds, retry succeeds
+            mock_subprocess.side_effect = [
+                MagicMock(returncode=1, stdout="", stderr="Error: Database out of sync"),
+                MagicMock(returncode=0, stdout="", stderr=""),  # sync --import-only
+                MagicMock(returncode=0, stdout="success", stderr=""),  # retry
+            ]
+
+            output = BeadService.run_command(["list", "--json"])
+
+            assert output == "success"
+            # Verify all three calls were made
+            assert mock_subprocess.call_count == 3
+            # Verify sync --import-only was called
+            sync_call = mock_subprocess.call_args_list[1]
+            assert sync_call[0][0] == ["bd", "sync", "--import-only"]
+
+    def test_run_command_no_infinite_retry_loop(self) -> None:
+        """Test run_command doesn't retry infinitely on persistent sync errors."""
+        with patch("dashboard.services.beads.subprocess.run") as mock_subprocess:
+            # All calls fail with sync error
+            mock_subprocess.return_value = MagicMock(
+                returncode=1, stdout="", stderr="Error: Database out of sync"
+            )
+
+            with pytest.raises(BeadCommandError) as exc_info:
+                BeadService.run_command(["list", "--json"])
+
+            # Should only retry once after sync recovery attempt
+            # Original call + sync call + retry = 3 calls max
+            assert mock_subprocess.call_count <= 3
+            assert "Database out of sync" in str(exc_info.value.message)
+
+    def test_run_command_no_recovery_for_non_sync_errors(self) -> None:
+        """Test run_command doesn't attempt recovery for unrelated errors."""
+        with patch("dashboard.services.beads.subprocess.run") as mock_subprocess:
+            mock_subprocess.return_value = MagicMock(
+                returncode=1, stdout="", stderr="Bead not found"
+            )
+
+            with pytest.raises(BeadCommandError):
+                BeadService.run_command(["show", "invalid-id"])
+
+            # Should only make one call (no sync attempt)
+            assert mock_subprocess.call_count == 1
+
+
 class TestBeadServiceParseJson:
     """Tests for BeadService.parse_json_output method."""
 
