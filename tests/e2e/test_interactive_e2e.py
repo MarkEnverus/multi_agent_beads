@@ -40,9 +40,7 @@ class TestDashboardStartup:
         header = dashboard_page.locator("h1:has-text('Kanban Board')")
         expect(header).to_be_visible()
 
-    def test_all_navigation_pages_load(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_all_navigation_pages_load(self, page_with_server: Page, server_url: str) -> None:
         """Verify all navigation links work and pages load correctly."""
         nav_pages = [
             ("/", "Kanban Board"),
@@ -206,9 +204,7 @@ class TestWorkerSpawning:
         autorestart_checkbox.check()
         expect(autorestart_checkbox).to_be_checked()
 
-    def test_spawn_form_submission_api(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_spawn_form_submission_api(self, page_with_server: Page, server_url: str) -> None:
         """Test worker spawn API endpoint."""
         # Test that the spawn API accepts requests
         response = page_with_server.request.post(
@@ -258,14 +254,10 @@ class TestWorkerShutdown:
         expect(stop_btn).to_be_attached()
         expect(restart_btn).to_be_attached()
 
-    def test_stop_worker_api(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_stop_worker_api(self, page_with_server: Page, server_url: str) -> None:
         """Test worker stop API endpoint."""
         # Test stopping a non-existent worker
-        response = page_with_server.request.delete(
-            f"{server_url}/api/workers/test-worker-id"
-        )
+        response = page_with_server.request.delete(f"{server_url}/api/workers/test-worker-id")
         # 404 means worker not found
         # 503 means daemon not running
         # 200 means worker stopped
@@ -340,9 +332,7 @@ class TestBeadCreation:
             option = priority_select.locator(f"option[value='{priority}']")
             expect(option).to_be_attached()
 
-    def test_create_bead_api(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_create_bead_api(self, page_with_server: Page, server_url: str) -> None:
         """Test bead creation API endpoint."""
         response = page_with_server.request.post(
             f"{server_url}/api/beads",
@@ -385,14 +375,10 @@ class TestWorkerLogs:
         expect(pause_btn).to_be_attached()
         expect(pause_btn).to_contain_text("Pause")
 
-    def test_log_streaming_api(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_log_streaming_api(self, page_with_server: Page, server_url: str) -> None:
         """Test log streaming API endpoint."""
         # Test log endpoint for a non-existent worker
-        response = page_with_server.request.get(
-            f"{server_url}/api/workers/test-worker/logs/recent"
-        )
+        response = page_with_server.request.get(f"{server_url}/api/workers/test-worker/logs/recent")
         # 404 means worker not found
         # 503 means daemon not running
         assert response.status in [404, 503]
@@ -401,9 +387,7 @@ class TestWorkerLogs:
 class TestBeadsPage:
     """Tests for the Beads management page."""
 
-    def test_beads_page_loads(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_beads_page_loads(self, page_with_server: Page, server_url: str) -> None:
         """Verify beads page loads with expected elements."""
         page_with_server.goto(f"{server_url}/beads")
         page_with_server.wait_for_load_state("networkidle")
@@ -411,9 +395,7 @@ class TestBeadsPage:
         # Check for main elements
         assert "Bead Management" in page_with_server.content()
 
-    def test_beads_page_stats_cards(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_beads_page_stats_cards(self, page_with_server: Page, server_url: str) -> None:
         """Verify beads page has statistics cards."""
         page_with_server.goto(f"{server_url}/beads")
         page_with_server.wait_for_load_state("networkidle")
@@ -433,9 +415,7 @@ class TestBeadsPage:
             stat = page_with_server.locator(stat_id)
             expect(stat).to_be_attached()
 
-    def test_beads_page_filters(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_beads_page_filters(self, page_with_server: Page, server_url: str) -> None:
         """Verify beads page has filter controls."""
         page_with_server.goto(f"{server_url}/beads")
         page_with_server.wait_for_load_state("networkidle")
@@ -467,9 +447,7 @@ class TestBeadsPage:
             option = status_filter.locator(f"option[value='{status}']")
             expect(option).to_be_attached()
 
-    def test_beads_page_dependency_graph(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_beads_page_dependency_graph(self, page_with_server: Page, server_url: str) -> None:
         """Verify beads page has dependency graph section."""
         page_with_server.goto(f"{server_url}/beads")
         page_with_server.wait_for_load_state("networkidle")
@@ -478,9 +456,7 @@ class TestBeadsPage:
         graph_container = page_with_server.locator("#dep-graph-container")
         expect(graph_container).to_be_visible()
 
-    def test_beads_api_returns_data(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_beads_api_returns_data(self, page_with_server: Page, server_url: str) -> None:
         """Verify beads API returns list data."""
         response = page_with_server.request.get(f"{server_url}/api/beads")
         assert response.status == 200
@@ -539,9 +515,7 @@ class TestWorkflowVerification:
 class TestLogsPage:
     """Tests for the Logs viewer page."""
 
-    def test_logs_page_loads(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_logs_page_loads(self, page_with_server: Page, server_url: str) -> None:
         """Verify logs page loads with expected elements."""
         page_with_server.goto(f"{server_url}/logs")
         # Use domcontentloaded to avoid timeout from SSE connections
@@ -552,9 +526,7 @@ class TestLogsPage:
         page_content = page_with_server.content().lower()
         assert "log" in page_content
 
-    def test_logs_page_has_filters(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_logs_page_has_filters(self, page_with_server: Page, server_url: str) -> None:
         """Verify logs page has filter controls."""
         page_with_server.goto(f"{server_url}/logs")
         # Use domcontentloaded to avoid timeout from SSE connections
@@ -563,17 +535,13 @@ class TestLogsPage:
 
         # Check for filter-related content
         page_content = page_with_server.content().lower()
-        assert any(
-            word in page_content for word in ["filter", "search", "level", "time"]
-        )
+        assert any(word in page_content for word in ["filter", "search", "level", "time"])
 
 
 class TestHelpPage:
     """Tests for the Help documentation page."""
 
-    def test_help_page_loads(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_help_page_loads(self, page_with_server: Page, server_url: str) -> None:
         """Verify help page loads with documentation."""
         page_with_server.goto(f"{server_url}/help")
         page_with_server.wait_for_load_state("networkidle")
@@ -582,9 +550,7 @@ class TestHelpPage:
         page_content = page_with_server.content().lower()
         assert "help" in page_content
 
-    def test_help_page_documents_roles(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_help_page_documents_roles(self, page_with_server: Page, server_url: str) -> None:
         """Verify help page documents worker roles."""
         page_with_server.goto(f"{server_url}/help")
         page_with_server.wait_for_load_state("networkidle")
@@ -593,9 +559,7 @@ class TestHelpPage:
         roles = ["developer", "qa", "reviewer"]
         assert any(role in page_content for role in roles)
 
-    def test_help_page_documents_priorities(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_help_page_documents_priorities(self, page_with_server: Page, server_url: str) -> None:
         """Verify help page documents priority levels."""
         page_with_server.goto(f"{server_url}/help")
         page_with_server.wait_for_load_state("networkidle")
@@ -607,9 +571,7 @@ class TestHelpPage:
 class TestAgentsPage:
     """Tests for the Agents monitoring page."""
 
-    def test_agents_page_loads(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_agents_page_loads(self, page_with_server: Page, server_url: str) -> None:
         """Verify agents page loads with expected elements."""
         page_with_server.goto(f"{server_url}/agents")
         page_with_server.wait_for_load_state("networkidle")
@@ -618,9 +580,7 @@ class TestAgentsPage:
         page_content = page_with_server.content().lower()
         assert "agent" in page_content
 
-    def test_agents_api_returns_data(
-        self, page_with_server: Page, server_url: str
-    ) -> None:
+    def test_agents_api_returns_data(self, page_with_server: Page, server_url: str) -> None:
         """Verify agents API returns list data."""
         response = page_with_server.request.get(f"{server_url}/api/agents")
         assert response.status == 200
@@ -666,9 +626,7 @@ class TestKeyboardShortcuts:
 class TestResponsiveDesign:
     """Tests for responsive design at different viewport sizes."""
 
-    def test_admin_page_mobile(
-        self, dashboard_server, browser, server_url: str
-    ) -> None:
+    def test_admin_page_mobile(self, dashboard_server, browser, server_url: str) -> None:
         """Verify admin page works on mobile viewport."""
         context = browser.new_context(viewport={"width": 375, "height": 667})
         page = context.new_page()
@@ -686,9 +644,7 @@ class TestResponsiveDesign:
         finally:
             context.close()
 
-    def test_beads_page_tablet(
-        self, dashboard_server, browser, server_url: str
-    ) -> None:
+    def test_beads_page_tablet(self, dashboard_server, browser, server_url: str) -> None:
         """Verify beads page works on tablet viewport."""
         context = browser.new_context(viewport={"width": 768, "height": 1024})
         page = context.new_page()
