@@ -52,6 +52,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     Handles graceful startup and shutdown including:
     - Logging startup/shutdown events
+    - Warming the bead cache for instant page loads
     - Closing all WebSocket connections on shutdown
     - Setting up signal handlers for clean termination
     """
@@ -66,6 +67,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info(
         "Routers registered: /api/agents, /api/beads, /api/logs, /api/towns, /api/workers, /ws"
     )
+
+    # Warm the bead cache in background to avoid blocking startup
+    # This ensures the kanban board loads instantly on first visit
+    async def warm_cache() -> None:
+        try:
+            await asyncio.to_thread(BeadService.warm_cache)
+        except Exception as e:
+            logger.warning("Cache warming failed (non-fatal): %s", e)
+
+    asyncio.create_task(warm_cache())
     yield
     # Shutdown - close all WebSocket connections first
     logger.info("Dashboard shutting down (town=%s)", TOWN_NAME)
@@ -222,7 +233,8 @@ async def kanban_partial(
     """Render the Kanban board partial with current bead data.
 
     Uses batch fetching for performance - reduces 4 subprocess calls to 2,
-    with 5-second TTL caching for repeated requests.
+    with stale-while-revalidate caching. Shows stale indicator when serving
+    cached data that's being refreshed in the background.
 
     Args:
         request: FastAPI request object.
@@ -233,6 +245,7 @@ async def kanban_partial(
     done_beads: list[dict[str, Any]] = []
     total_count = 0
     error_message: str | None = None
+    is_stale = False
 
     try:
         # Run blocking subprocess call in thread pool to avoid blocking event loop
@@ -243,6 +256,7 @@ async def kanban_partial(
         in_progress_beads = kanban_data["in_progress_beads"]
         done_beads = kanban_data["done_beads"]
         total_count = kanban_data["total_count"]
+        is_stale = kanban_data.get("_stale", False)
 
     except BeadError as e:
         logger.warning("Failed to fetch beads for kanban: %s", e.message)
@@ -257,6 +271,7 @@ async def kanban_partial(
             "done_beads": done_beads,
             "total_count": total_count,
             "error_message": error_message,
+            "is_stale": is_stale,
         },
     )
 

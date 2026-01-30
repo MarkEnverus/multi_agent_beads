@@ -5,7 +5,9 @@ All bd subprocess calls should go through this service to ensure consistent
 error handling and logging.
 
 Performance optimizations:
-- Cache layer with 5-second TTL for list operations
+- Cache layer with stale-while-revalidate for list operations
+- Cache warming on startup to avoid cold-cache delays
+- Background refresh for stale data without blocking
 - Batch fetching to reduce subprocess calls
 """
 
@@ -14,6 +16,7 @@ import logging
 import re
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
 from dashboard.config import CACHE_STALE_TTL_SECONDS, CACHE_TTL_SECONDS
@@ -130,6 +133,10 @@ class _BeadCache:
 
 # Global cache instance
 _cache = _BeadCache()
+
+# Thread pool for background refresh operations
+# Use a small pool since refresh tasks are I/O bound (subprocess calls)
+_refresh_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="bead-refresh")
 
 
 class BeadService:
@@ -552,11 +559,14 @@ class BeadService:
                     result["_stale"] = False
                     return result
                 else:
-                    # Stale but usable - return immediately, log that we're stale
+                    # Stale but usable - return immediately and trigger background refresh
                     logger.debug(
                         "Cache hit (stale) for get_kanban_data - "
-                        "serving stale data to avoid blocking"
+                        "serving stale data and triggering background refresh"
                     )
+                    if needs_refresh:
+                        # Submit background refresh task
+                        _refresh_executor.submit(cls._background_refresh_kanban, done_limit)
                     result = cast(dict[str, Any], cached)
                     result["_cached"] = True
                     result["_stale"] = True
@@ -630,3 +640,67 @@ class BeadService:
         """
         _cache.invalidate()
         logger.debug("Bead cache invalidated")
+
+    @classmethod
+    def warm_cache(cls, done_limit: int = 20) -> dict[str, Any]:
+        """Pre-populate the cache with kanban data.
+
+        This should be called on application startup to avoid cold-cache
+        delays for users. Runs synchronously.
+
+        Args:
+            done_limit: Maximum number of closed beads to cache.
+
+        Returns:
+            The kanban data that was cached.
+        """
+        logger.info("Warming bead cache...")
+        start = time.monotonic()
+        try:
+            result = cls._fetch_kanban_data(done_limit)
+            cache_key = _cache.make_key("kanban", done_limit)
+            _cache.set(cache_key, result)
+            elapsed = time.monotonic() - start
+            logger.info(
+                "Cache warmed in %.2fs: %d total beads, %d ready, %d in-progress, %d done",
+                elapsed,
+                result["total_count"],
+                len(result["ready_beads"]),
+                len(result["in_progress_beads"]),
+                len(result["done_beads"]),
+            )
+            return result
+        except Exception as e:
+            elapsed = time.monotonic() - start
+            logger.warning("Cache warming failed after %.2fs: %s", elapsed, e)
+            raise
+
+    @classmethod
+    def _background_refresh_kanban(cls, done_limit: int) -> None:
+        """Background refresh task for kanban data.
+
+        This runs in a thread pool to avoid blocking the event loop.
+        Updates the cache with fresh data when complete.
+        """
+        cache_key = _cache.make_key("kanban", done_limit)
+        if not _cache.mark_refreshing(cache_key):
+            # Already being refreshed by another task
+            logger.debug("Skipping refresh for %s - already in progress", cache_key)
+            return
+
+        logger.debug("Starting background refresh for %s", cache_key)
+        start = time.monotonic()
+        try:
+            result = cls._fetch_kanban_data(done_limit)
+            _cache.set(cache_key, result)
+            elapsed = time.monotonic() - start
+            logger.debug(
+                "Background refresh complete in %.2fs: %d beads",
+                elapsed,
+                result["total_count"],
+            )
+        except Exception as e:
+            elapsed = time.monotonic() - start
+            logger.warning("Background refresh failed after %.2fs: %s", elapsed, e)
+        finally:
+            _cache.mark_refresh_complete(cache_key)
