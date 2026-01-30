@@ -1,4 +1,4 @@
-name: CI
+name: cicd
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   lint:
-    runs-on: enverus-ubuntu
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -30,7 +30,7 @@ jobs:
         run: uv run ruff format --check .
 
   typecheck:
-    runs-on: enverus-ubuntu
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -49,7 +49,7 @@ jobs:
         run: uv run mypy dashboard/ mab/ --ignore-missing-imports
 
   test:
-    runs-on: enverus-ubuntu
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
