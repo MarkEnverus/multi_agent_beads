@@ -51,6 +51,9 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "requires_bd: marks tests that require bd CLI infrastructure (skipped in CI)",
+]
 
 [tool.mypy]
 python_version = "3.11"

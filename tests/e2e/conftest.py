@@ -1,5 +1,6 @@
 """Playwright E2E test fixtures for the Multi-Agent Dashboard."""
 
+import os
 import socket
 import subprocess
 import sys
@@ -10,6 +11,18 @@ from typing import cast
 
 import pytest
 from playwright.sync_api import Browser, Page
+
+
+# Auto-skip all E2E tests in CI environments
+# These tests require Playwright browsers and bd CLI infrastructure
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip E2E tests in CI environment."""
+    if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+        skip_ci = pytest.mark.skip(reason="E2E tests require Playwright and bd CLI infrastructure")
+        for item in items:
+            # Skip all tests in this module when running in CI
+            if "e2e" in str(item.fspath):
+                item.add_marker(skip_ci)
 
 
 def find_free_port() -> int:
