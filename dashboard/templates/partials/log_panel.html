@@ -14,13 +14,12 @@
             </svg>
             <h3 class="text-sm font-semibold text-gray-200">Live Logs</h3>
             <span id="log-count" class="px-2 py-0.5 text-xs font-medium bg-gray-700 text-gray-300 rounded-full">0</span>
-            {# Connection status #}
-            <span id="log-connection-status" class="flex items-center space-x-1">
+            {# Connection status - blinking indicator (green=connected, red=disconnected) #}
+            <span id="log-connection-status" class="flex items-center" title="Connected">
                 <span class="relative flex h-2 w-2">
                     <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                     <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
                 </span>
-                <span class="text-xs text-gray-500">Connected</span>
             </span>
         </div>
 
@@ -182,24 +181,23 @@
         };
     }
 
-    // Update connection status indicator
+    // Update connection status indicator (icon color + title tooltip)
     function updateConnectionStatus(connected) {
         const pingSpan = connectionStatus.querySelector('.animate-ping');
         const dotSpan = connectionStatus.querySelector('.relative.inline-flex');
-        const textSpan = connectionStatus.querySelector('span:last-child');
 
         if (connected) {
             pingSpan.classList.remove('bg-red-400');
             pingSpan.classList.add('bg-green-400');
             dotSpan.classList.remove('bg-red-500');
             dotSpan.classList.add('bg-green-500');
-            textSpan.textContent = 'Connected';
+            connectionStatus.title = 'Connected';
         } else {
             pingSpan.classList.remove('bg-green-400');
             pingSpan.classList.add('bg-red-400');
             dotSpan.classList.remove('bg-green-500');
             dotSpan.classList.add('bg-red-500');
-            textSpan.textContent = 'Reconnecting...';
+            connectionStatus.title = 'Reconnecting...';
         }
     }
 
