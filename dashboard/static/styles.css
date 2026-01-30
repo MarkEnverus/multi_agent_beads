@@ -33,11 +33,13 @@
    2. Bead Card Hover Effects
    ============================================ */
 .bead-card {
+    position: relative;
     transition:
         transform var(--transition-normal) ease,
         box-shadow var(--transition-normal) ease,
         background-color var(--transition-fast) ease,
-        border-color var(--transition-fast) ease;
+        border-color var(--transition-fast) ease,
+        opacity var(--transition-fast) ease;
 }
 
 .bead-card:hover {
@@ -52,6 +54,36 @@
 .bead-card:active {
     transform: translateY(0);
     transition-duration: 50ms;
+}
+
+/* Card in loading state (fetching details) */
+.bead-card.htmx-request,
+.bead-card[disabled] {
+    opacity: 0.6;
+    cursor: wait;
+    pointer-events: none;
+    transform: none;
+}
+
+.bead-card.htmx-request::after,
+.bead-card[disabled]::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin: -0.625rem 0 0 -0.625rem;
+    border: 2px solid #3b82f6;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin-loading 0.6s linear infinite;
+}
+
+@keyframes spin-loading {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 /* Card in dragging state (future drag-drop support) */

@@ -3,7 +3,12 @@
      hx-get="/partials/beads/{{ bead.id }}"
      hx-target="#bead-detail-modal"
      hx-swap="innerHTML"
-     hx-trigger="click">
+     hx-trigger="click"
+     hx-disabled-elt="this"
+     hx-indicator="closest .bead-card"
+     data-bead-id="{{ bead.id }}"
+     data-bead-title="{{ bead.title }}"
+     onclick="showBeadLoading(this)">
 
     {# Header: ID and Priority Badge #}
     <div class="flex items-center justify-between mb-2">
