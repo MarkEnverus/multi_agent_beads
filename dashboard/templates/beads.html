@@ -360,7 +360,7 @@
     async function refreshBeads() {
         try {
             const [beadsRes, blockedRes] = await Promise.all([
-                fetch('/api/beads'),
+                fetch('/api/beads?include_all=true'),
                 fetch('/api/beads?status=blocked').catch(() => ({ ok: false }))
             ]);
 

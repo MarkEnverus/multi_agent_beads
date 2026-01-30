@@ -47,6 +47,7 @@ async def list_beads(
     status: str | None = Query(None, description="Filter by status (open, in_progress, closed)"),
     label: str | None = Query(None, description="Filter by label"),
     priority: int | None = Query(None, ge=0, le=4, description="Filter by priority (0-4)"),
+    include_all: bool = Query(False, description="Include closed beads (adds --all flag)"),
 ) -> list[dict[str, Any]]:
     """List all beads with optional filters.
 
@@ -54,10 +55,13 @@ async def list_beads(
         BeadCommandError: If the bd command fails.
         BeadParseError: If output parsing fails.
     """
-    logger.debug("Listing beads: status=%s, label=%s, priority=%s", status, label, priority)
+    logger.debug(
+        "Listing beads: status=%s, label=%s, priority=%s, include_all=%s",
+        status, label, priority, include_all
+    )
     # Run blocking subprocess call in thread pool to avoid blocking event loop
     return await asyncio.to_thread(
-        BeadService.list_beads, status=status, label=label, priority=priority
+        BeadService.list_beads, status=status, label=label, priority=priority, include_all=include_all
     )
 
 
