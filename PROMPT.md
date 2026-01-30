@@ -106,7 +106,17 @@ log "READ: <bead-id>"
 - Understand acceptance criteria
 - Follow the workflow steps in the description
 
-### 4. Do the Work
+### 4. Create Feature Branch (REQUIRED)
+
+```bash
+git checkout -b <bead-id>
+# Example: git checkout -b multi_agent_beads-abc12
+```
+
+- **NEVER work directly on main/master**
+- Branch name should match bead ID for traceability
+
+### 5. Do the Work
 
 ```bash
 log "WORK_START: <brief description>"
@@ -116,7 +126,7 @@ log "WORK_START: <brief description>"
 - Follow acceptance criteria from bead description
 - Stay within your role boundaries
 
-### 5. Verify (REQUIRED before commit)
+### 6. Verify (REQUIRED before commit)
 
 ```bash
 # Run tests
@@ -130,7 +140,7 @@ uv run ruff check .
 uv run mypy dashboard/ --ignore-missing-imports
 ```
 
-### 6. Commit
+### 7. Commit and Push
 
 ```bash
 git add <specific-files>  # NOT git add -A
@@ -144,9 +154,12 @@ Fixes #<bead-id>
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 EOF
 )"
+
+# Push branch to remote
+git push -u origin <bead-id>
 ```
 
-### 7. Create PR (REQUIRED for code changes)
+### 8. Create PR (REQUIRED for code changes)
 
 ```bash
 log "PR_CREATE: <title>"
@@ -164,13 +177,13 @@ EOF
 log "PR_CREATED: #<number>"
 ```
 
-### 8. Wait for CI (REQUIRED)
+### 9. Wait for CI (REQUIRED)
 
 - PR must pass CI before merging
 - If CI fails, fix issues and push again
 - Do NOT merge until CI passes
 
-### 9. Merge PR (REQUIRED)
+### 10. Merge PR (REQUIRED)
 
 ```bash
 gh pr merge <pr-number> --squash --delete-branch
@@ -180,7 +193,7 @@ log "PR_MERGED: #<number>"
 - **MUST merge PR before closing bead**
 - Verify merge succeeded: `gh pr view <pr-number> --json state`
 
-### 10. Close Bead (only after PR MERGED)
+### 11. Close Bead (only after PR MERGED)
 
 ```bash
 bd close <bead-id> --reason="PR #<number> merged, CI passed"
@@ -190,7 +203,7 @@ bd sync
 
 - **NEVER close bead if PR is still open**
 
-### 11. Exit
+### 12. Exit
 
 ```bash
 log "SESSION_END: <bead-id>"
