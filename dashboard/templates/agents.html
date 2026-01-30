@@ -77,14 +77,14 @@
     </div>
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
         <div class="flex items-center justify-between">
-            <span class="text-gray-400 text-sm">QA/Others</span>
-            <span class="h-8 w-8 rounded-full bg-blue-900/50 flex items-center justify-center">
-                <svg class="h-4 w-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            <span class="text-gray-400 text-sm">Crashed</span>
+            <span class="h-8 w-8 rounded-full bg-red-900/50 flex items-center justify-center">
+                <svg class="h-4 w-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
             </span>
         </div>
-        <p id="stat-others" class="text-2xl font-bold text-white mt-2">0</p>
+        <p id="stat-crashed" class="text-2xl font-bold text-white mt-2">0</p>
     </div>
 </div>
 
@@ -109,6 +109,8 @@
             <option value="">All Statuses</option>
             <option value="working">Working</option>
             <option value="idle">Idle</option>
+            <option value="crashed">Crashed</option>
+            <option value="stopped">Stopped</option>
         </select>
     </div>
     <div class="flex-1"></div>
@@ -252,16 +254,33 @@
             if (response.ok) {
                 const data = await response.json();
                 // Transform worker data to agent format for UI compatibility
-                agents = (data.workers || []).map(worker => ({
-                    role: worker.role || 'unknown',
-                    instance: 1,
-                    current_bead: null,  // Workers API doesn't track current bead
-                    current_bead_title: null,
-                    status: worker.status === 'running' ? 'working' : 'idle',
-                    last_activity: worker.started_at || new Date().toISOString(),
-                    pid: worker.pid || 0,
-                    worker_id: worker.id  // Keep worker ID for reference
-                }));
+                agents = (data.workers || []).map(worker => {
+                    // Map worker status to display status - preserve actual status
+                    let displayStatus;
+                    switch (worker.status) {
+                        case 'running':
+                            displayStatus = 'working';
+                            break;
+                        case 'crashed':
+                            displayStatus = 'crashed';
+                            break;
+                        case 'stopped':
+                            displayStatus = 'stopped';
+                            break;
+                        default:
+                            displayStatus = 'idle';
+                    }
+                    return {
+                        role: worker.role || 'unknown',
+                        instance: 1,
+                        current_bead: null,  // Workers API doesn't track current bead
+                        current_bead_title: null,
+                        status: displayStatus,
+                        last_activity: worker.started_at || new Date().toISOString(),
+                        pid: worker.pid || 0,
+                        worker_id: worker.id  // Keep worker ID for reference
+                    };
+                });
                 renderAgents(agents);
                 updateStats(agents);
                 document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
@@ -283,14 +302,14 @@
         const total = agentList.length;
         const working = agentList.filter(a => a.status === 'working').length;
         const idle = agentList.filter(a => a.status === 'idle').length;
+        const crashed = agentList.filter(a => a.status === 'crashed').length;
         const developers = agentList.filter(a => a.role === 'developer').length;
-        const others = total - developers;
 
         document.getElementById('stat-total').textContent = total;
         document.getElementById('stat-working').textContent = working;
         document.getElementById('stat-idle').textContent = idle;
+        document.getElementById('stat-crashed').textContent = crashed;
         document.getElementById('stat-developers').textContent = developers;
-        document.getElementById('stat-others').textContent = others;
     }
 
     // Render agent cards
@@ -323,10 +342,20 @@
         list.innerHTML = filteredAgents.map(agent => renderAgentCard(agent)).join('');
     }
 
+    // Status configuration for visual overrides (crashed/stopped override role colors)
+    const statusConfig = {
+        crashed: { bg: 'bg-red-900', text: 'text-red-300', border: 'border-red-600', dot: 'bg-red-500' },
+        stopped: { bg: 'bg-gray-900', text: 'text-gray-400', border: 'border-gray-600', dot: 'bg-gray-500' }
+    };
+
     // Render a single agent card
     function renderAgentCard(agent) {
-        const config = roleConfig[agent.role] || roleConfig.unknown;
+        // Use status-based styling for crashed/stopped, otherwise use role-based styling
+        const baseConfig = roleConfig[agent.role] || roleConfig.unknown;
+        const config = statusConfig[agent.status] || baseConfig;
         const isWorking = agent.status === 'working';
+        const isCrashed = agent.status === 'crashed';
+        const isStopped = agent.status === 'stopped';
         const isSelected = agent.pid === currentAgentPid;
 
         return `
