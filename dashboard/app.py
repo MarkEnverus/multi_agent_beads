@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import signal
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -35,6 +37,7 @@ from dashboard.routes.beads import router as beads_router
 from dashboard.routes.logs import router as logs_router
 from dashboard.routes.towns import router as towns_router
 from dashboard.routes.workers import router as workers_router
+from dashboard.routes.ws import manager as ws_manager
 from dashboard.routes.ws import router as ws_router
 from dashboard.services import BeadService
 
@@ -45,7 +48,13 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Lifespan context manager for startup and shutdown logging."""
+    """Lifespan context manager for startup and shutdown.
+
+    Handles graceful startup and shutdown including:
+    - Logging startup/shutdown events
+    - Closing all WebSocket connections on shutdown
+    - Setting up signal handlers for clean termination
+    """
     # Startup
     logger.info(
         "Dashboard starting: host=%s, port=%d, log_level=%s, town=%s",
@@ -58,8 +67,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "Routers registered: /api/agents, /api/beads, /api/logs, /api/towns, /api/workers, /ws"
     )
     yield
-    # Shutdown
+    # Shutdown - close all WebSocket connections first
     logger.info("Dashboard shutting down (town=%s)", TOWN_NAME)
+    logger.info("Closing WebSocket connections...")
+    try:
+        await asyncio.wait_for(ws_manager.shutdown(), timeout=5.0)
+    except asyncio.TimeoutError:
+        logger.warning("WebSocket shutdown timed out after 5s")
+    except Exception as e:
+        logger.error("Error during WebSocket shutdown: %s", e)
+    logger.info("Dashboard shutdown complete")
 
 
 # Create FastAPI application
@@ -442,8 +459,22 @@ async def bead_detail_partial(request: Request, bead_id: str) -> HTMLResponse:
         )
 
 
+def _shutdown_handler(signum: int, frame: Any) -> None:
+    """Handle shutdown signals (SIGINT, SIGTERM).
+
+    Ensures clean exit even when uvicorn reloader is running.
+    """
+    sig_name = signal.Signals(signum).name
+    logger.info("Received %s, initiating shutdown...", sig_name)
+    sys.exit(0)
+
+
 if __name__ == "__main__":
     import uvicorn
+
+    # Install signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, _shutdown_handler)
+    signal.signal(signal.SIGTERM, _shutdown_handler)
 
     uvicorn.run(
         "dashboard.app:app",
