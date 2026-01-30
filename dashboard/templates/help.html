@@ -1,0 +1,489 @@
+{% extends "base.html" %}
+
+{% block title %}Help - Multi-Agent Dashboard{% endblock %}
+
+{% block content %}
+{# Page Header #}
+<div class="mb-8">
+    <h1 class="text-2xl font-bold text-white">Help & Documentation</h1>
+    <p class="text-gray-400 mt-1">Learn about worker roles and how to use the multi-agent system</p>
+</div>
+
+{# Quick Start Section #}
+<div class="mb-8 bg-gray-800 rounded-lg border border-gray-700 p-6">
+    <h2 class="text-xl font-semibold text-white mb-4 flex items-center">
+        <svg class="h-5 w-5 text-primary-400 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+        </svg>
+        Quick Start
+    </h2>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-gray-700/50 rounded-lg p-4">
+            <div class="flex items-center space-x-2 text-green-400 font-medium mb-2">
+                <span class="bg-green-900/50 rounded-full h-6 w-6 flex items-center justify-center text-sm">1</span>
+                <span>Create Work</span>
+            </div>
+            <p class="text-gray-400 text-sm">Use the Dashboard to create beads (tasks, bugs, features) for agents to work on.</p>
+        </div>
+        <div class="bg-gray-700/50 rounded-lg p-4">
+            <div class="flex items-center space-x-2 text-yellow-400 font-medium mb-2">
+                <span class="bg-yellow-900/50 rounded-full h-6 w-6 flex items-center justify-center text-sm">2</span>
+                <span>Spawn Workers</span>
+            </div>
+            <p class="text-gray-400 text-sm">Go to Admin and spawn workers based on the type of work needed.</p>
+        </div>
+        <div class="bg-gray-700/50 rounded-lg p-4">
+            <div class="flex items-center space-x-2 text-blue-400 font-medium mb-2">
+                <span class="bg-blue-900/50 rounded-full h-6 w-6 flex items-center justify-center text-sm">3</span>
+                <span>Monitor Progress</span>
+            </div>
+            <p class="text-gray-400 text-sm">Watch agents work in real-time via Agents and Logs pages.</p>
+        </div>
+    </div>
+</div>
+
+{# Worker Roles Section #}
+<div class="mb-8">
+    <h2 class="text-xl font-semibold text-white mb-4 flex items-center">
+        <svg class="h-5 w-5 text-primary-400 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+        </svg>
+        Worker Roles
+    </h2>
+    <p class="text-gray-400 mb-6">Each worker role has specific responsibilities and picks up beads with matching labels.</p>
+
+    <div class="space-y-4">
+        {# Developer Role #}
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="flex items-center justify-between px-6 py-4 bg-blue-900/20 border-b border-gray-700">
+                <div class="flex items-center space-x-3">
+                    <div class="h-10 w-10 rounded-full bg-blue-600 flex items-center justify-center">
+                        <svg class="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-semibold text-white">Developer</h3>
+                        <span class="text-sm text-gray-400">Label: <code class="bg-gray-700 px-1.5 py-0.5 rounded text-blue-400">dev</code></span>
+                    </div>
+                </div>
+                <span class="px-3 py-1 bg-blue-600/20 text-blue-400 rounded-full text-sm font-medium">Most Common</span>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2">What They Do</h4>
+                        <ul class="text-gray-400 text-sm space-y-1">
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-blue-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Write production code and implement features
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-blue-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Fix bugs and resolve issues
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-blue-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Create pull requests for changes
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-blue-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Refactor and improve code quality
+                            </li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2">Example Tasks</h4>
+                        <ul class="text-gray-400 text-sm space-y-1">
+                            <li>Implement new API endpoint</li>
+                            <li>Add form validation logic</li>
+                            <li>Fix null pointer exception</li>
+                            <li>Optimize database queries</li>
+                        </ul>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mt-4 mb-2">When to Spawn</h4>
+                        <p class="text-gray-400 text-sm">When you have coding tasks, bug fixes, or features that need implementation.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {# QA Role #}
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="flex items-center justify-between px-6 py-4 bg-green-900/20 border-b border-gray-700">
+                <div class="flex items-center space-x-3">
+                    <div class="h-10 w-10 rounded-full bg-green-600 flex items-center justify-center">
+                        <svg class="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-semibold text-white">QA (Quality Assurance)</h3>
+                        <span class="text-sm text-gray-400">Label: <code class="bg-gray-700 px-1.5 py-0.5 rounded text-green-400">qa</code></span>
+                    </div>
+                </div>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2">What They Do</h4>
+                        <ul class="text-gray-400 text-sm space-y-1">
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-green-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Run test suites and verify functionality
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-green-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Validate acceptance criteria
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-green-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Create bug beads when issues found
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-green-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Block feature beads on discovered bugs
+                            </li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2">Example Tasks</h4>
+                        <ul class="text-gray-400 text-sm space-y-1">
+                            <li>Verify new login feature works</li>
+                            <li>Run regression test suite</li>
+                            <li>Test edge cases for form inputs</li>
+                            <li>Validate API responses</li>
+                        </ul>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mt-4 mb-2">When to Spawn</h4>
+                        <p class="text-gray-400 text-sm">After features are implemented to verify quality, or when you need thorough testing of existing functionality.</p>
+                    </div>
+                </div>
+                <div class="mt-4 p-3 bg-yellow-900/20 border border-yellow-800/50 rounded-lg">
+                    <p class="text-yellow-400 text-sm flex items-center">
+                        <svg class="h-4 w-4 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <strong>Note:</strong>&nbsp;QA workers do not write production code. They focus exclusively on testing and validation.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        {# Tech Lead Role #}
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="flex items-center justify-between px-6 py-4 bg-purple-900/20 border-b border-gray-700">
+                <div class="flex items-center space-x-3">
+                    <div class="h-10 w-10 rounded-full bg-purple-600 flex items-center justify-center">
+                        <svg class="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-semibold text-white">Tech Lead</h3>
+                        <span class="text-sm text-gray-400">Label: <code class="bg-gray-700 px-1.5 py-0.5 rounded text-purple-400">architecture</code></span>
+                    </div>
+                </div>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2">What They Do</h4>
+                        <ul class="text-gray-400 text-sm space-y-1">
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-purple-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Review designs and architecture decisions
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-purple-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Create implementation task breakdowns
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-purple-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Set dependencies between tasks
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-purple-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Unblock complex technical decisions
+                            </li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2">Example Tasks</h4>
+                        <ul class="text-gray-400 text-sm space-y-1">
+                            <li>Design database schema for new feature</li>
+                            <li>Break epic into implementable tasks</li>
+                            <li>Decide on API structure</li>
+                            <li>Resolve technical blockers</li>
+                        </ul>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mt-4 mb-2">When to Spawn</h4>
+                        <p class="text-gray-400 text-sm">For architecture decisions, breaking down complex features, or when technical guidance is needed.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {# Manager Role #}
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="flex items-center justify-between px-6 py-4 bg-orange-900/20 border-b border-gray-700">
+                <div class="flex items-center space-x-3">
+                    <div class="h-10 w-10 rounded-full bg-orange-600 flex items-center justify-center">
+                        <svg class="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-semibold text-white">Manager</h3>
+                        <span class="text-sm text-gray-400">Label: <span class="text-orange-400">All beads (no filter)</span></span>
+                    </div>
+                </div>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2">What They Do</h4>
+                        <ul class="text-gray-400 text-sm space-y-1">
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-orange-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Create epics and high-level work items
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-orange-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Set priorities (P0-P4)
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-orange-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Assign labels and organize work
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-orange-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Generate status reports
+                            </li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2">Example Tasks</h4>
+                        <ul class="text-gray-400 text-sm space-y-1">
+                            <li>Create Q1 feature epic</li>
+                            <li>Re-prioritize backlog items</li>
+                            <li>Triage new bug reports</li>
+                            <li>Review project health metrics</li>
+                        </ul>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mt-4 mb-2">When to Spawn</h4>
+                        <p class="text-gray-400 text-sm">For project planning, prioritization, or when you need to organize and structure work.</p>
+                    </div>
+                </div>
+                <div class="mt-4 p-3 bg-blue-900/20 border border-blue-800/50 rounded-lg">
+                    <p class="text-blue-400 text-sm flex items-center">
+                        <svg class="h-4 w-4 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <strong>Note:</strong>&nbsp;Managers see all beads regardless of labels and focus on coordination, not implementation.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        {# Reviewer Role #}
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="flex items-center justify-between px-6 py-4 bg-cyan-900/20 border-b border-gray-700">
+                <div class="flex items-center space-x-3">
+                    <div class="h-10 w-10 rounded-full bg-cyan-600 flex items-center justify-center">
+                        <svg class="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-semibold text-white">Code Reviewer</h3>
+                        <span class="text-sm text-gray-400">Label: <code class="bg-gray-700 px-1.5 py-0.5 rounded text-cyan-400">review</code></span>
+                    </div>
+                </div>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2">What They Do</h4>
+                        <ul class="text-gray-400 text-sm space-y-1">
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-cyan-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Review PR diffs for quality
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-cyan-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Check code quality and standards
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-cyan-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Verify tests exist and are adequate
+                            </li>
+                            <li class="flex items-start">
+                                <svg class="h-4 w-4 text-cyan-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                Approve or request changes on PRs
+                            </li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2">Example Tasks</h4>
+                        <ul class="text-gray-400 text-sm space-y-1">
+                            <li>Review PR #123 for security issues</li>
+                            <li>Check test coverage on new feature</li>
+                            <li>Verify coding standards compliance</li>
+                            <li>Review refactoring changes</li>
+                        </ul>
+                        <h4 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mt-4 mb-2">When to Spawn</h4>
+                        <p class="text-gray-400 text-sm">When PRs are ready for review, or when you need a second pair of eyes on code changes.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Priority Levels Section #}
+<div class="mb-8 bg-gray-800 rounded-lg border border-gray-700 p-6">
+    <h2 class="text-xl font-semibold text-white mb-4 flex items-center">
+        <svg class="h-5 w-5 text-primary-400 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
+        </svg>
+        Priority Levels
+    </h2>
+    <p class="text-gray-400 mb-4">Workers pick up beads in priority order (P0 first, then P1, etc.)</p>
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div class="bg-red-900/30 border border-red-800/50 rounded-lg p-4 text-center">
+            <span class="text-2xl font-bold text-red-400">P0</span>
+            <p class="text-sm text-gray-300 mt-1">Critical</p>
+            <p class="text-xs text-gray-500 mt-1">Drop everything</p>
+        </div>
+        <div class="bg-orange-900/30 border border-orange-800/50 rounded-lg p-4 text-center">
+            <span class="text-2xl font-bold text-orange-400">P1</span>
+            <p class="text-sm text-gray-300 mt-1">High</p>
+            <p class="text-xs text-gray-500 mt-1">Do next</p>
+        </div>
+        <div class="bg-yellow-900/30 border border-yellow-800/50 rounded-lg p-4 text-center">
+            <span class="text-2xl font-bold text-yellow-400">P2</span>
+            <p class="text-sm text-gray-300 mt-1">Medium</p>
+            <p class="text-xs text-gray-500 mt-1">Default priority</p>
+        </div>
+        <div class="bg-blue-900/30 border border-blue-800/50 rounded-lg p-4 text-center">
+            <span class="text-2xl font-bold text-blue-400">P3</span>
+            <p class="text-sm text-gray-300 mt-1">Low</p>
+            <p class="text-xs text-gray-500 mt-1">When available</p>
+        </div>
+        <div class="bg-gray-700/50 border border-gray-600 rounded-lg p-4 text-center">
+            <span class="text-2xl font-bold text-gray-400">P4</span>
+            <p class="text-sm text-gray-300 mt-1">Backlog</p>
+            <p class="text-xs text-gray-500 mt-1">Nice to have</p>
+        </div>
+    </div>
+</div>
+
+{# Workflow Tips Section #}
+<div class="mb-8 bg-gray-800 rounded-lg border border-gray-700 p-6">
+    <h2 class="text-xl font-semibold text-white mb-4 flex items-center">
+        <svg class="h-5 w-5 text-primary-400 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+        </svg>
+        Workflow Tips
+    </h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+            <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-3">Best Practices</h3>
+            <ul class="text-gray-400 text-sm space-y-2">
+                <li class="flex items-start">
+                    <svg class="h-4 w-4 text-green-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    Label beads appropriately so the right workers pick them up
+                </li>
+                <li class="flex items-start">
+                    <svg class="h-4 w-4 text-green-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    Use dependencies to ensure work is done in correct order
+                </li>
+                <li class="flex items-start">
+                    <svg class="h-4 w-4 text-green-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    Set realistic priorities - not everything is P0
+                </li>
+                <li class="flex items-start">
+                    <svg class="h-4 w-4 text-green-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    Write clear acceptance criteria in bead descriptions
+                </li>
+            </ul>
+        </div>
+        <div>
+            <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-3">Common Patterns</h3>
+            <ul class="text-gray-400 text-sm space-y-2">
+                <li class="flex items-start">
+                    <span class="text-primary-400 mr-2">1.</span>
+                    <span><strong class="text-gray-200">Tech Lead</strong> breaks epic into tasks</span>
+                </li>
+                <li class="flex items-start">
+                    <span class="text-primary-400 mr-2">2.</span>
+                    <span><strong class="text-gray-200">Developer</strong> implements features</span>
+                </li>
+                <li class="flex items-start">
+                    <span class="text-primary-400 mr-2">3.</span>
+                    <span><strong class="text-gray-200">Reviewer</strong> reviews PRs</span>
+                </li>
+                <li class="flex items-start">
+                    <span class="text-primary-400 mr-2">4.</span>
+                    <span><strong class="text-gray-200">QA</strong> validates functionality</span>
+                </li>
+                <li class="flex items-start">
+                    <span class="text-primary-400 mr-2">5.</span>
+                    <span><strong class="text-gray-200">Manager</strong> tracks progress</span>
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+{# Footer Links #}
+<div class="text-center text-gray-500 text-sm">
+    <p>Need more help? Check the <a href="/docs" target="_blank" class="text-primary-400 hover:text-primary-300">API Documentation</a> or view <a href="/logs" class="text-primary-400 hover:text-primary-300">system logs</a> for troubleshooting.</p>
+</div>
+{% endblock %}
