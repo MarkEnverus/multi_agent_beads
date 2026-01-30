@@ -11,10 +11,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Skip marker for tests that require macOS
+requires_macos = pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="Test requires macOS (osascript/Terminal)",
+)
+
 # Add scripts directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-from spawn_agent import (
+from spawn_agent import (  # noqa: E402
     ROLE_TO_LABEL,
     ROLE_TO_PROMPT,
     VALID_ROLES,
@@ -143,6 +149,7 @@ class TestPromptPathExists:
         assert "not found" in exc_info.value.message.lower()
 
 
+@requires_macos
 class TestEnvironmentVariablesSet:
     """Tests for environment variable configuration in spawned agents."""
 
@@ -200,6 +207,7 @@ class TestEnvironmentVariablesSet:
             assert "manager_2.log" in applescript
 
 
+@requires_macos
 class TestOsascriptCommand:
     """Tests for osascript command building."""
 
