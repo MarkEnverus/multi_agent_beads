@@ -566,9 +566,7 @@ class BeadService:
                     )
                     if needs_refresh:
                         # Submit background refresh task
-                        _refresh_executor.submit(
-                            cls._background_refresh_kanban, done_limit
-                        )
+                        _refresh_executor.submit(cls._background_refresh_kanban, done_limit)
                     result = cast(dict[str, Any], cached)
                     result["_cached"] = True
                     result["_stale"] = True
