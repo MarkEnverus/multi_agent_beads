@@ -225,6 +225,19 @@ async def logs_page(request: Request) -> HTMLResponse:
     )
 
 
+@app.get("/help", response_class=HTMLResponse)
+async def help_page(request: Request) -> HTMLResponse:
+    """Render the help page explaining worker roles and system usage.
+
+    Provides documentation for each worker role including what they do,
+    which beads they pick up, example tasks, and when to spawn each role.
+    """
+    return templates.TemplateResponse(
+        "help.html",
+        {"request": request},
+    )
+
+
 @app.get("/partials/kanban", response_class=HTMLResponse)
 async def kanban_partial(
     request: Request,
