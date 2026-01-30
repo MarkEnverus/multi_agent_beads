@@ -921,9 +921,9 @@
             const response = await fetch('/api/workers/health');
             if (response.ok) {
                 const data = await response.json();
-                document.getElementById('stat-healthy').textContent = data.healthy_count || 0;
-                document.getElementById('stat-unhealthy').textContent = data.unhealthy_count || 0;
-                document.getElementById('stat-crashed').textContent = data.crashed_count || 0;
+                document.getElementById('stat-healthy').textContent = data.healthy_workers || 0;
+                document.getElementById('stat-unhealthy').textContent = data.unhealthy_workers || 0;
+                document.getElementById('stat-crashed').textContent = data.crashed_workers || 0;
                 document.getElementById('stat-restarts').textContent = data.total_restarts || 0;
             }
         } catch (error) {
