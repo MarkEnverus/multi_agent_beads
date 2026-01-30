@@ -75,9 +75,7 @@ class TestDbSyncRecoveryMocked:
     """Test auto-recovery using mocked subprocess calls."""
 
     @patch("dashboard.services.beads.subprocess.run")
-    def test_recovery_triggered_on_sync_error(
-        self, mock_run: MagicMock
-    ) -> None:
+    def test_recovery_triggered_on_sync_error(self, mock_run: MagicMock) -> None:
         """Should attempt recovery when sync error detected."""
         # First call: return sync error
         # Second call (recovery): success
@@ -104,9 +102,7 @@ class TestDbSyncRecoveryMocked:
         assert calls[2][0][0] == ["bd", "list", "--json"]
 
     @patch("dashboard.services.beads.subprocess.run")
-    def test_recovery_not_triggered_on_other_errors(
-        self, mock_run: MagicMock
-    ) -> None:
+    def test_recovery_not_triggered_on_other_errors(self, mock_run: MagicMock) -> None:
         """Should not attempt recovery for non-sync errors."""
         # Return a different error (not found)
         mock_run.return_value = MagicMock(
@@ -166,23 +162,25 @@ class TestDbSyncRecoveryApiIntegration:
     """Test auto-recovery through API endpoints using mocked subprocess."""
 
     @patch("dashboard.services.beads.subprocess.run")
-    def test_api_beads_recovers_from_sync_error(
-        self, mock_run: MagicMock
-    ) -> None:
+    def test_api_beads_recovers_from_sync_error(self, mock_run: MagicMock) -> None:
         """API /api/beads should recover from sync error and return data."""
         # Clear any cached data
         BeadService.invalidate_cache()
 
         # Complete bead data with all required fields
-        complete_bead = json.dumps([{
-            "id": "test-123",
-            "title": "Test Bead",
-            "status": "open",
-            "priority": 2,
-            "issue_type": "task",
-            "created_at": "2024-01-01T00:00:00Z",
-            "updated_at": "2024-01-01T00:00:00Z",
-        }])
+        complete_bead = json.dumps(
+            [
+                {
+                    "id": "test-123",
+                    "title": "Test Bead",
+                    "status": "open",
+                    "priority": 2,
+                    "issue_type": "task",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "updated_at": "2024-01-01T00:00:00Z",
+                }
+            ]
+        )
 
         # Mock responses
         mock_run.side_effect = [
@@ -209,22 +207,24 @@ class TestDbSyncRecoveryApiIntegration:
         assert data[0]["id"] == "test-123"
 
     @patch("dashboard.services.beads.subprocess.run")
-    def test_api_beads_ready_recovers_from_sync_error(
-        self, mock_run: MagicMock
-    ) -> None:
+    def test_api_beads_ready_recovers_from_sync_error(self, mock_run: MagicMock) -> None:
         """API /api/beads/ready should recover from sync error."""
         BeadService.invalidate_cache()
 
         # Complete bead data with all required fields
-        complete_bead = json.dumps([{
-            "id": "ready-1",
-            "title": "Ready task",
-            "status": "open",
-            "priority": 2,
-            "issue_type": "task",
-            "created_at": "2024-01-01T00:00:00Z",
-            "updated_at": "2024-01-01T00:00:00Z",
-        }])
+        complete_bead = json.dumps(
+            [
+                {
+                    "id": "ready-1",
+                    "title": "Ready task",
+                    "status": "open",
+                    "priority": 2,
+                    "issue_type": "task",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "updated_at": "2024-01-01T00:00:00Z",
+                }
+            ]
+        )
 
         mock_run.side_effect = [
             # First call: sync error
@@ -266,9 +266,7 @@ class TestDbSyncRecoveryRealFiles:
         pytest.skip(".beads directory not found")
 
     @pytest.fixture
-    def backup_jsonl(
-        self, beads_dir: Path
-    ) -> Generator[tuple[Path, bytes], None, None]:
+    def backup_jsonl(self, beads_dir: Path) -> Generator[tuple[Path, bytes], None, None]:
         """Backup the JSONL file before test and restore after."""
         jsonl_path = beads_dir / "issues.jsonl"
         if not jsonl_path.exists():
