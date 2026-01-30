@@ -37,11 +37,12 @@ class TestAgentsEndpoints:
         log_file = tmp_path / "test.log"
         log_file.write_text(log_content)
 
-        # Disable staleness check and mock PID check for test
+        # Disable staleness check and mock PID/process checks for test
         with (
             patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999),
             patch("dashboard.routes.agents._is_pid_running", return_value=True),
+            patch("dashboard.routes.agents._is_claude_agent_process", return_value=True),
         ):
             response = client.get("/api/agents")
             assert response.status_code == 200
@@ -63,11 +64,12 @@ class TestAgentsEndpoints:
         log_file = tmp_path / "test.log"
         log_file.write_text(log_content)
 
-        # Disable staleness check and mock PID check for test
+        # Disable staleness check and mock PID/process checks for test
         with (
             patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999),
             patch("dashboard.routes.agents._is_pid_running", return_value=True),
+            patch("dashboard.routes.agents._is_claude_agent_process", return_value=True),
         ):
             response = client.get("/api/agents")
             assert response.status_code == 200
@@ -87,11 +89,12 @@ class TestAgentsEndpoints:
         log_file = tmp_path / "test.log"
         log_file.write_text(log_content)
 
-        # Disable staleness check and mock PID check for test
+        # Disable staleness check and mock PID/process checks for test
         with (
             patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999),
             patch("dashboard.routes.agents._is_pid_running", return_value=True),
+            patch("dashboard.routes.agents._is_claude_agent_process", return_value=True),
         ):
             # Filter by qa role
             response = client.get("/api/agents/qa")
@@ -262,11 +265,12 @@ class TestPidVerification:
         log_file = tmp_path / "test.log"
         log_file.write_text(log_content)
 
-        # Disable staleness check and mock PID check for PID 1
+        # Disable staleness check and mock PID/process checks for PID 1
         with (
             patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
             patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999),
             patch("dashboard.routes.agents._is_pid_running") as mock_pid_check,
+            patch("dashboard.routes.agents._is_claude_agent_process", return_value=True),
         ):
             # PID 1 is running, fake_pid is not
             mock_pid_check.side_effect = lambda pid: pid == 1
