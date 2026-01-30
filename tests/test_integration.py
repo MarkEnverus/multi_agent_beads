@@ -34,14 +34,20 @@ def _run_bd(args: list[str], check: bool = True) -> subprocess.CompletedProcess[
 
 def _create_test_bead(title: str, priority: str = "4") -> str:
     """Create a test bead and return its ID."""
-    result = _run_bd([
-        "create",
-        "--title", title,
-        "--description", "Integration test bead - safe to delete",
-        "--priority", priority,
-        "--labels", "test",
-        "--silent",
-    ])
+    result = _run_bd(
+        [
+            "create",
+            "--title",
+            title,
+            "--description",
+            "Integration test bead - safe to delete",
+            "--priority",
+            priority,
+            "--labels",
+            "test",
+            "--silent",
+        ]
+    )
     bead_id = result.stdout.strip()
     if not bead_id:
         raise RuntimeError("Failed to create test bead - no ID returned")
@@ -218,10 +224,16 @@ class TestCleanupBehavior:
     def test_repeated_runs_do_not_accumulate(self) -> None:
         """Test that running tests multiple times doesn't leave orphans."""
         # Count existing test beads before
-        result = _run_bd([
-            "list", "--json", "--limit", "0",
-            "--title-contains", TEST_PREFIX,
-        ])
+        result = _run_bd(
+            [
+                "list",
+                "--json",
+                "--limit",
+                "0",
+                "--title-contains",
+                TEST_PREFIX,
+            ]
+        )
         # This just verifies the query works - actual accumulation check
         # would require running tests multiple times
         assert result.returncode == 0

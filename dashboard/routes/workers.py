@@ -84,12 +84,8 @@ class HealthConfigResponse(BaseModel):
     health_check_interval_seconds: float = Field(
         ..., description="Health check interval in seconds"
     )
-    heartbeat_timeout_seconds: float = Field(
-        ..., description="Heartbeat timeout in seconds"
-    )
-    max_restart_count: int = Field(
-        ..., description="Max allowed restarts before giving up"
-    )
+    heartbeat_timeout_seconds: float = Field(..., description="Heartbeat timeout in seconds")
+    max_restart_count: int = Field(..., description="Max allowed restarts before giving up")
     restart_backoff_base_seconds: float = Field(
         ..., description="Base restart backoff delay in seconds"
     )
@@ -106,9 +102,7 @@ class HealthStatusResponse(BaseModel):
     unhealthy_workers: int = Field(..., description="Number of unhealthy workers")
     crashed_workers: int = Field(..., description="Number of crashed workers")
     total_restarts: int = Field(..., description="Total restart count across all workers")
-    workers_at_max_restarts: int = Field(
-        ..., description="Workers that have hit max restart limit"
-    )
+    workers_at_max_restarts: int = Field(..., description="Workers that have hit max restart limit")
     config: HealthConfigResponse = Field(..., description="Health configuration")
 
 
@@ -152,7 +146,7 @@ async def get_daemon_status() -> dict[str, Any]:
     try:
         client = _get_rpc_client()
         # Run blocking RPC call in thread pool to avoid blocking event loop
-        result = await asyncio.to_thread(
+        result: dict[str, Any] = await asyncio.to_thread(
             client.call, "daemon.status", None, DASHBOARD_RPC_TIMEOUT
         )
         logger.debug("Daemon status: %s", result)
@@ -172,7 +166,7 @@ async def get_health_status() -> dict[str, Any]:
     try:
         client = _get_rpc_client()
         # Run blocking RPC call in thread pool to avoid blocking event loop
-        result = await asyncio.to_thread(
+        result: dict[str, Any] = await asyncio.to_thread(
             client.call, "health.status", None, DASHBOARD_RPC_TIMEOUT
         )
         logger.debug("Health status: %s", result)
@@ -592,9 +586,7 @@ async def list_workers(
             params["role"] = role
 
         # Run blocking RPC call in thread pool to avoid blocking event loop
-        result = await asyncio.to_thread(
-            client.call, "worker.list", params, DASHBOARD_RPC_TIMEOUT
-        )
+        result = await asyncio.to_thread(client.call, "worker.list", params, DASHBOARD_RPC_TIMEOUT)
         workers = result.get("workers", [])
         logger.debug("Listed %d workers", len(workers))
         return {"workers": workers, "total": len(workers)}
@@ -613,10 +605,10 @@ async def get_worker(worker_id: str) -> dict[str, Any]:
     try:
         client = _get_rpc_client()
         # Run blocking RPC call in thread pool to avoid blocking event loop
-        result = await asyncio.to_thread(
+        result: dict[str, Any] = await asyncio.to_thread(
             client.call, "worker.get", {"worker_id": worker_id}, DASHBOARD_RPC_TIMEOUT
         )
-        worker = result.get("worker")
+        worker: dict[str, Any] | None = result.get("worker")
         if not worker:
             raise HTTPException(status_code=404, detail=f"Worker not found: {worker_id}")
         logger.debug("Got worker: %s", worker_id)
@@ -640,7 +632,7 @@ async def spawn_worker(request: WorkerSpawnRequest) -> dict[str, Any]:
         client = _get_rpc_client()
         # Run blocking RPC call in thread pool to avoid blocking event loop
         # Use longer timeout for spawn operations
-        result = await asyncio.to_thread(
+        result: dict[str, Any] = await asyncio.to_thread(
             client.call,
             "worker.spawn",
             {
@@ -681,7 +673,7 @@ async def stop_worker(
     try:
         client = _get_rpc_client()
         # Run blocking RPC call in thread pool to avoid blocking event loop
-        result = await asyncio.to_thread(
+        result: dict[str, Any] = await asyncio.to_thread(
             client.call,
             "worker.stop",
             {
@@ -691,7 +683,7 @@ async def stop_worker(
             },
             timeout + 5.0,  # Allow time for operation plus buffer
         )
-        worker = result.get("worker", {})
+        worker: dict[str, Any] = result.get("worker", {})
         logger.info("Stopped worker: %s", worker_id)
         return worker
     except Exception as e:
@@ -717,10 +709,10 @@ async def restart_worker(
 
         # First get the worker details
         # Run blocking RPC call in thread pool to avoid blocking event loop
-        get_result = await asyncio.to_thread(
+        get_result: dict[str, Any] = await asyncio.to_thread(
             client.call, "worker.get", {"worker_id": worker_id}, DASHBOARD_RPC_TIMEOUT
         )
-        worker = get_result.get("worker")
+        worker: dict[str, Any] | None = get_result.get("worker")
         if not worker:
             raise HTTPException(status_code=404, detail=f"Worker not found: {worker_id}")
 
@@ -733,7 +725,7 @@ async def restart_worker(
         )
 
         # Spawn a new worker with same config
-        result = await asyncio.to_thread(
+        result: dict[str, Any] = await asyncio.to_thread(
             client.call,
             "worker.spawn",
             {

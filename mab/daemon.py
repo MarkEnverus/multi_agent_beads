@@ -429,7 +429,9 @@ class Daemon:
         self._event_loop = asyncio.get_running_loop()
 
         # Initialize worker manager with health config
-        heartbeat_dir = self.town_heartbeat_dir if self.town_heartbeat_dir else self.mab_dir / "heartbeat"
+        heartbeat_dir = (
+            self.town_heartbeat_dir if self.town_heartbeat_dir else self.mab_dir / "heartbeat"
+        )
         self._worker_manager = WorkerManager(
             mab_dir=self.mab_dir,
             heartbeat_dir=heartbeat_dir,
@@ -490,7 +492,10 @@ class Daemon:
 
                 if self._worker_manager is not None:
                     # Use health_check_and_restart for crash detection + auto-restart
-                    crashed, restart_scheduled = await self._worker_manager.health_check_and_restart()
+                    (
+                        crashed,
+                        restart_scheduled,
+                    ) = await self._worker_manager.health_check_and_restart()
 
                     for worker in crashed:
                         self.logger.warning(

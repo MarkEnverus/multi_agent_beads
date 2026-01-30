@@ -52,8 +52,10 @@ class TestKanbanPartial:
 
     def test_kanban_partial_returns_html(self) -> None:
         """Test that kanban partial returns HTML."""
-        with patch.object(BeadService, "list_ready") as mock_ready, \
-             patch.object(BeadService, "list_beads") as mock_list:
+        with (
+            patch.object(BeadService, "list_ready") as mock_ready,
+            patch.object(BeadService, "list_beads") as mock_list,
+        ):
             mock_ready.return_value = []
             mock_list.return_value = []
             response = client.get("/partials/kanban")
@@ -89,8 +91,10 @@ class TestDepgraphPartial:
 
     def test_depgraph_partial_returns_html(self) -> None:
         """Test that dependency graph partial returns HTML."""
-        with patch.object(BeadService, "list_blocked") as mock_blocked, \
-             patch.object(BeadService, "list_beads") as mock_list:
+        with (
+            patch.object(BeadService, "list_blocked") as mock_blocked,
+            patch.object(BeadService, "list_beads") as mock_list,
+        ):
             mock_blocked.return_value = []
             mock_list.return_value = []
             response = client.get("/partials/depgraph")
@@ -99,8 +103,10 @@ class TestDepgraphPartial:
 
     def test_depgraph_handles_no_dependencies(self) -> None:
         """Test depgraph handles case with no dependencies."""
-        with patch.object(BeadService, "list_blocked") as mock_blocked, \
-             patch.object(BeadService, "list_beads") as mock_list:
+        with (
+            patch.object(BeadService, "list_blocked") as mock_blocked,
+            patch.object(BeadService, "list_beads") as mock_list,
+        ):
             mock_blocked.return_value = []
             mock_list.return_value = []
             response = client.get("/partials/depgraph")

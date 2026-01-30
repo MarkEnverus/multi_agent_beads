@@ -465,9 +465,12 @@ class BeadService:
 
         args = [
             "create",
-            "--title", title.strip(),
-            "-p", str(priority),
-            "-t", issue_type,
+            "--title",
+            title.strip(),
+            "-p",
+            str(priority),
+            "-t",
+            issue_type,
             "--silent",
         ]
 

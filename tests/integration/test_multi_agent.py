@@ -243,7 +243,7 @@ class TestDependencyChains:
         try:
             # Set up dependency chain
             add_dependency(impl_task, design_task)  # impl blocked by design
-            add_dependency(test_task, impl_task)    # test blocked by impl
+            add_dependency(test_task, impl_task)  # test blocked by impl
 
             BeadService.invalidate_cache()
 
@@ -606,8 +606,7 @@ class TestConcurrentAgentSimulation:
             # Run all agents concurrently
             with ThreadPoolExecutor(max_workers=5) as executor:
                 futures = {
-                    executor.submit(agent_check_work, role): role
-                    for role in ROLE_LABELS.keys()
+                    executor.submit(agent_check_work, role): role for role in ROLE_LABELS.keys()
                 }
                 for future in as_completed(futures):
                     pass
@@ -669,10 +668,7 @@ class TestConcurrentAgentSimulation:
         try:
             # 5 agents race for 2 tasks
             with ThreadPoolExecutor(max_workers=5) as executor:
-                futures = [
-                    executor.submit(agent_claim_work, i)
-                    for i in range(5)
-                ]
+                futures = [executor.submit(agent_claim_work, i) for i in range(5)]
                 for future in as_completed(futures):
                     pass
 

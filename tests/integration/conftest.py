@@ -6,6 +6,7 @@ This module provides shared fixtures for integration tests including:
 - Utility functions for bd CLI interaction
 """
 
+import os
 import subprocess
 import uuid
 from collections.abc import Generator
@@ -16,6 +17,19 @@ from fastapi.testclient import TestClient
 
 from dashboard.app import app
 from dashboard.services import BeadService
+
+
+# Auto-skip all integration tests in CI environments
+# These tests require actual bd CLI infrastructure which isn't available in CI
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip integration tests in CI environment."""
+    if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+        skip_ci = pytest.mark.skip(reason="Integration tests require bd CLI infrastructure")
+        for item in items:
+            # Skip all tests in this module when running in CI
+            if "integration" in str(item.fspath):
+                item.add_marker(skip_ci)
+
 
 # Test prefix for beads created during tests - easy to identify and cleanup
 TEST_PREFIX = "test_api_fullstack"
@@ -72,10 +86,14 @@ def create_test_bead(
     """
     args = [
         "create",
-        "--title", title,
-        "--description", description or "Integration test bead - safe to delete",
-        "--priority", priority,
-        "-t", issue_type,
+        "--title",
+        title,
+        "--description",
+        description or "Integration test bead - safe to delete",
+        "--priority",
+        priority,
+        "-t",
+        issue_type,
         "--silent",
     ]
     if labels:

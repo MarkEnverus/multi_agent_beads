@@ -194,10 +194,7 @@ class TestReadRecentLogs:
 
     def test_read_recent_logs_respects_limit(self, tmp_path: Path) -> None:
         """Test that limit is respected."""
-        log_content = "\n".join([
-            f"[2026-01-24 14:00:{i:02d}] [1001] EVENT{i}"
-            for i in range(50)
-        ])
+        log_content = "\n".join([f"[2026-01-24 14:00:{i:02d}] [1001] EVENT{i}" for i in range(50)])
         log_file = tmp_path / "test.log"
         log_file.write_text(log_content)
 

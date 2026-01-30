@@ -63,11 +63,13 @@ class WebSocketMessage:
 
     def to_json(self) -> str:
         """Serialize to JSON string."""
-        return json.dumps({
-            "type": self.type.value,
-            "data": self.data,
-            "timestamp": self.timestamp,
-        })
+        return json.dumps(
+            {
+                "type": self.type.value,
+                "data": self.data,
+                "timestamp": self.timestamp,
+            }
+        )
 
 
 class ConnectionManager:
@@ -259,9 +261,7 @@ async def _handle_client_message(
 
 async def broadcast_worker_spawned(worker_data: dict[str, Any]) -> None:
     """Broadcast worker spawned event to all clients."""
-    await manager.broadcast(
-        WebSocketMessage(type=MessageType.WORKER_SPAWNED, data=worker_data)
-    )
+    await manager.broadcast(WebSocketMessage(type=MessageType.WORKER_SPAWNED, data=worker_data))
 
 
 async def broadcast_worker_stopped(worker_id: str, reason: str = "") -> None:
@@ -286,13 +286,9 @@ async def broadcast_worker_crashed(worker_id: str, crash_count: int) -> None:
 
 async def broadcast_bead_updated(bead_data: dict[str, Any]) -> None:
     """Broadcast bead update event to all clients."""
-    await manager.broadcast(
-        WebSocketMessage(type=MessageType.BEAD_UPDATED, data=bead_data)
-    )
+    await manager.broadcast(WebSocketMessage(type=MessageType.BEAD_UPDATED, data=bead_data))
 
 
 async def broadcast_daemon_status(status_data: dict[str, Any]) -> None:
     """Broadcast daemon status update to all clients."""
-    await manager.broadcast(
-        WebSocketMessage(type=MessageType.DAEMON_STATUS, data=status_data)
-    )
+    await manager.broadcast(WebSocketMessage(type=MessageType.DAEMON_STATUS, data=status_data))

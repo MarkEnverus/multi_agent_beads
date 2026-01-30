@@ -85,7 +85,9 @@ class TestMCPReportContent:
         with open(reports[0]) as f:
             report = json.load(f)
 
-        assert report["status"] == "PASSED", f"Smoke test failed: {report.get('summary', 'No summary')}"
+        assert report["status"] == "PASSED", (
+            f"Smoke test failed: {report.get('summary', 'No summary')}"
+        )
 
     @pytest.mark.skipif(
         not any(REPORTS_DIR.glob("admin_test_*.json")) if REPORTS_DIR.exists() else True,

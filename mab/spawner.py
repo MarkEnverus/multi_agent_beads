@@ -583,9 +583,7 @@ class SubprocessSpawner(Spawner):
 
         if self.use_worktrees and is_git_repo(project):
             try:
-                worktree_path, worktree_branch = create_worktree(
-                    project, worker_id, bead_id
-                )
+                worktree_path, worktree_branch = create_worktree(project, worker_id, bead_id)
                 self._worktrees[worker_id] = (worktree_path, worktree_branch)
                 working_dir = worktree_path
                 logger.info(f"Worker {worker_id} will use worktree at {worktree_path}")
@@ -613,7 +611,11 @@ class SubprocessSpawner(Spawner):
         # Build command based on mode
         if self.test_mode:
             # Test mode: use placeholder script that maintains heartbeat
-            heartbeat_file = env_vars.get("WORKER_HEARTBEAT_FILE", "/tmp/heartbeat") if env_vars else "/tmp/heartbeat"
+            heartbeat_file = (
+                env_vars.get("WORKER_HEARTBEAT_FILE", "/tmp/heartbeat")
+                if env_vars
+                else "/tmp/heartbeat"
+            )
             cmd = [
                 "python3",
                 "-c",
@@ -671,7 +673,7 @@ while True:
                 f"Working Directory: {working_dir}\n"
                 f"Started: {datetime.now().isoformat()}\n"
                 f"{'=' * 40}\n\n"
-            ).encode('utf-8')
+            ).encode("utf-8")
             os.write(log_fd, startup_msg)
 
             # Create pseudo-terminal
@@ -692,9 +694,7 @@ while True:
             os.close(slave_fd)
 
             # Start async task to copy PTY output to log file
-            asyncio.create_task(
-                self._copy_pty_to_log(master_fd, log_fd, worker_id)
-            )
+            asyncio.create_task(self._copy_pty_to_log(master_fd, log_fd, worker_id))
 
             # Give process a moment to start
             await asyncio.sleep(0.2)
@@ -708,6 +708,7 @@ while True:
                 # Try to read any remaining output from PTY (non-blocking)
                 try:
                     import select
+
                     while True:
                         readable, _, _ = select.select([master_fd], [], [], 0.1)
                         if not readable:
@@ -730,7 +731,7 @@ while True:
                     f"Exit Code: {exit_code}\n"
                     f"Crashed At: {datetime.now().isoformat()}\n"
                     f"{'=' * 40}\n"
-                ).encode('utf-8')
+                ).encode("utf-8")
                 os.write(log_fd, crash_msg)
 
                 os.close(master_fd)
@@ -822,7 +823,7 @@ while True:
                     f"Time: {datetime.now().isoformat()}\n"
                     f"Bytes logged: {bytes_written}\n"
                     f"{'=' * 40}\n"
-                ).encode('utf-8')
+                ).encode("utf-8")
                 os.write(log_fd, cancel_msg)
             except OSError:
                 pass
@@ -836,7 +837,7 @@ while True:
                     f"Error: {e}\n"
                     f"Time: {datetime.now().isoformat()}\n"
                     f"{'=' * 40}\n"
-                ).encode('utf-8')
+                ).encode("utf-8")
                 os.write(log_fd, error_msg)
             except OSError:
                 pass
@@ -850,7 +851,7 @@ while True:
                         f"Time: {datetime.now().isoformat()}\n"
                         f"Total bytes logged: {bytes_written}\n"
                         f"{'=' * 40}\n"
-                    ).encode('utf-8')
+                    ).encode("utf-8")
                     os.write(log_fd, end_msg)
                 except OSError:
                     pass
@@ -919,7 +920,9 @@ while True:
             project_path = Path(process_info.project_path)
             git_root = get_git_root(project_path)
             if git_root and worker_id not in self._worktrees:
-                logger.info(f"Cleaning up worktree from process_info at {process_info.worktree_path}")
+                logger.info(
+                    f"Cleaning up worktree from process_info at {process_info.worktree_path}"
+                )
                 remove_worktree(git_root, process_info.worktree_path)
 
         # Get exit code
@@ -1065,10 +1068,15 @@ export WORKER_PROJECT="{project}"
                     self.tmux_path,
                     "new-session",
                     "-d",  # Detached
-                    "-s", session_name,
-                    "-x", "200",  # Width
-                    "-y", "50",   # Height
-                    "bash", "-c", tmux_cmd,
+                    "-s",
+                    session_name,
+                    "-x",
+                    "200",  # Width
+                    "-y",
+                    "50",  # Height
+                    "bash",
+                    "-c",
+                    tmux_cmd,
                 ],
                 capture_output=True,
                 text=True,
@@ -1087,8 +1095,10 @@ export WORKER_PROJECT="{project}"
                 [
                     self.tmux_path,
                     "list-panes",
-                    "-t", session_name,
-                    "-F", "#{pane_pid}",
+                    "-t",
+                    session_name,
+                    "-F",
+                    "#{pane_pid}",
                 ],
                 capture_output=True,
                 text=True,

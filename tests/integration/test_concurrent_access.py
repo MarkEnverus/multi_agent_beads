@@ -120,13 +120,15 @@ class TestConcurrentReads:
         with ThreadPoolExecutor(max_workers=20) as executor:
             futures = []
             for _ in range(4):
-                futures.extend([
-                    executor.submit(fetch_beads),
-                    executor.submit(fetch_ready),
-                    executor.submit(fetch_agents),
-                    executor.submit(fetch_health),
-                    executor.submit(fetch_kanban),
-                ])
+                futures.extend(
+                    [
+                        executor.submit(fetch_beads),
+                        executor.submit(fetch_ready),
+                        executor.submit(fetch_agents),
+                        executor.submit(fetch_health),
+                        executor.submit(fetch_kanban),
+                    ]
+                )
 
             for future in as_completed(futures):
                 endpoint, status = future.result()

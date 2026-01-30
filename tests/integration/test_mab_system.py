@@ -61,9 +61,7 @@ class TestDaemonRPCIntegration:
         await server.stop()
 
     @pytest.mark.asyncio
-    async def test_client_communicates_with_server(
-        self, daemon_server_pair
-    ) -> None:
+    async def test_client_communicates_with_server(self, daemon_server_pair) -> None:
         """Test RPC client can communicate with server."""
         daemon, server, mab_dir = daemon_server_pair
         client = RPCClient(mab_dir=mab_dir)
@@ -83,18 +81,14 @@ class TestDaemonRPCIntegration:
         client = RPCClient(mab_dir=mab_dir)
 
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None, lambda: client.call("daemon.status", {})
-        )
+        result = await loop.run_in_executor(None, lambda: client.call("daemon.status", {}))
 
         assert result["state"] == "running"
         assert result["pid"] == os.getpid()
         client.close()
 
     @pytest.mark.asyncio
-    async def test_multiple_concurrent_rpc_calls(
-        self, daemon_server_pair
-    ) -> None:
+    async def test_multiple_concurrent_rpc_calls(self, daemon_server_pair) -> None:
         """Test multiple concurrent RPC calls work correctly."""
         daemon, server, mab_dir = daemon_server_pair
         client = RPCClient(mab_dir=mab_dir)
@@ -102,9 +96,7 @@ class TestDaemonRPCIntegration:
         loop = asyncio.get_event_loop()
 
         async def make_call(i: int):
-            return await loop.run_in_executor(
-                None, lambda: client.call("test.echo", {"count": i})
-            )
+            return await loop.run_in_executor(None, lambda: client.call("test.echo", {"count": i}))
 
         tasks = [make_call(i) for i in range(10)]
         results = await asyncio.gather(*tasks)
@@ -127,9 +119,7 @@ class TestWorkerManagerIntegration:
         assert (mab_dir / "workers.db").exists()
 
     @pytest.mark.asyncio
-    async def test_spawn_and_stop_worker_lifecycle(
-        self, short_tmp_path: Path
-    ) -> None:
+    async def test_spawn_and_stop_worker_lifecycle(self, short_tmp_path: Path) -> None:
         """Test complete worker spawn and stop lifecycle."""
         mab_dir = short_tmp_path / ".mab"
         manager = WorkerManager(mab_dir=mab_dir, test_mode=True)
@@ -155,9 +145,7 @@ class TestWorkerManagerIntegration:
         assert manager.count_running() == 0
 
     @pytest.mark.asyncio
-    async def test_spawn_multiple_workers_different_roles(
-        self, short_tmp_path: Path
-    ) -> None:
+    async def test_spawn_multiple_workers_different_roles(self, short_tmp_path: Path) -> None:
         """Test spawning workers with different roles."""
         mab_dir = short_tmp_path / ".mab"
         manager = WorkerManager(mab_dir=mab_dir, test_mode=True)
@@ -189,9 +177,7 @@ class TestWorkerManagerIntegration:
             await manager.stop_all()
 
     @pytest.mark.asyncio
-    async def test_worker_crash_detection_and_status_update(
-        self, short_tmp_path: Path
-    ) -> None:
+    async def test_worker_crash_detection_and_status_update(self, short_tmp_path: Path) -> None:
         """Test that crashed workers are detected and status updated."""
         mab_dir = short_tmp_path / ".mab"
         manager = WorkerManager(mab_dir=mab_dir, test_mode=True)
@@ -332,9 +318,7 @@ class TestHealthMonitoringIntegration:
         assert config.calculate_backoff(10) == 60.0
 
     @pytest.mark.asyncio
-    async def test_health_check_marks_crashed_workers(
-        self, short_tmp_path: Path
-    ) -> None:
+    async def test_health_check_marks_crashed_workers(self, short_tmp_path: Path) -> None:
         """Test health check updates crashed worker status."""
         mab_dir = short_tmp_path / ".mab"
         manager = WorkerManager(mab_dir=mab_dir, test_mode=True)
@@ -458,9 +442,7 @@ class TestRPCHandlerRegistration:
             )
             assert result_a == {"handler": "a", "result": 10}
 
-            result_b = await loop.run_in_executor(
-                None, lambda: client.call("math.add10", {"x": 5})
-            )
+            result_b = await loop.run_in_executor(None, lambda: client.call("math.add10", {"x": 5}))
             assert result_b == {"handler": "b", "result": 15}
 
             client.close()
@@ -472,9 +454,7 @@ class TestSystemWideIntegration:
     """End-to-end integration tests for the full system."""
 
     @pytest.mark.asyncio
-    async def test_full_worker_lifecycle_via_manager(
-        self, short_tmp_path: Path
-    ) -> None:
+    async def test_full_worker_lifecycle_via_manager(self, short_tmp_path: Path) -> None:
         """Test complete worker lifecycle from spawn to cleanup."""
         mab_dir = short_tmp_path / ".mab"
         manager = WorkerManager(mab_dir=mab_dir, test_mode=True)
@@ -521,9 +501,7 @@ class TestSystemWideIntegration:
         assert updated.max_workers == 10
 
     @pytest.mark.asyncio
-    async def test_rpc_server_handles_rapid_requests(
-        self, short_tmp_path: Path
-    ) -> None:
+    async def test_rpc_server_handles_rapid_requests(self, short_tmp_path: Path) -> None:
         """Test RPC server handles many rapid requests."""
         mab_dir = short_tmp_path / ".mab"
         server = RPCServer(mab_dir=mab_dir)
@@ -544,9 +522,7 @@ class TestSystemWideIntegration:
 
             # Make 50 rapid requests
             for _ in range(50):
-                await loop.run_in_executor(
-                    None, lambda: client.call("test.count", {})
-                )
+                await loop.run_in_executor(None, lambda: client.call("test.count", {}))
 
             assert call_count == 50
             client.close()
