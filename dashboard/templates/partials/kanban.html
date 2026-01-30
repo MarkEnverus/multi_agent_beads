@@ -1,4 +1,16 @@
 {# Kanban board partial - shows 3 columns with bead cards #}
+{% if is_stale %}
+<div class="mb-4 px-3 py-2 bg-yellow-900/30 border border-yellow-700 rounded-lg flex items-center justify-between">
+    <div class="flex items-center space-x-2">
+        <svg class="h-4 w-4 text-yellow-400 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        <span class="text-sm text-yellow-200">Refreshing data in background...</span>
+    </div>
+    <span class="text-xs text-yellow-400">Showing cached data</span>
+</div>
+{% endif %}
 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
     {# Ready Column #}
     <div class="flex flex-col">

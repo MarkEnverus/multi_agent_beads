@@ -42,34 +42,58 @@ class BeadResponse(BaseModel):
     labels: list[str] = Field(default_factory=list)
 
 
+class BeadListResponse(BaseModel):
+    """Response model for paginated bead list."""
+
+    beads: list[BeadResponse]
+    total: int
+    limit: int
+    offset: int
+
+
 @router.get("", response_model=list[BeadResponse])
 async def list_beads(
     status: str | None = Query(None, description="Filter by status (open, in_progress, closed)"),
     label: str | None = Query(None, description="Filter by label"),
     priority: int | None = Query(None, ge=0, le=4, description="Filter by priority (0-4)"),
     include_all: bool = Query(False, description="Include closed beads (adds --all flag)"),
+    limit: int = Query(0, ge=0, description="Maximum number of beads to return (0 = unlimited)"),
+    offset: int = Query(0, ge=0, description="Number of beads to skip (for pagination)"),
 ) -> list[dict[str, Any]]:
     """List all beads with optional filters.
+
+    Supports pagination via limit and offset parameters. For large datasets,
+    use pagination to avoid loading thousands of beads at once.
 
     Raises:
         BeadCommandError: If the bd command fails.
         BeadParseError: If output parsing fails.
     """
     logger.debug(
-        "Listing beads: status=%s, label=%s, priority=%s, include_all=%s",
+        "Listing beads: status=%s, label=%s, priority=%s, include_all=%s, limit=%d, offset=%d",
         status,
         label,
         priority,
         include_all,
+        limit,
+        offset,
     )
     # Run blocking subprocess call in thread pool to avoid blocking event loop
-    return await asyncio.to_thread(
+    beads = await asyncio.to_thread(
         BeadService.list_beads,
         status=status,
         label=label,
         priority=priority,
         include_all=include_all,
     )
+
+    # Apply pagination in memory (bd CLI doesn't support offset)
+    if offset > 0:
+        beads = beads[offset:]
+    if limit > 0:
+        beads = beads[:limit]
+
+    return beads
 
 
 @router.get("/ready", response_model=list[BeadResponse])
