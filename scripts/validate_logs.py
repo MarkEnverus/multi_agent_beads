@@ -29,9 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 # Log line pattern: [YYYY-MM-DD HH:MM:SS] [PID] MESSAGE
-LOG_PATTERN = re.compile(
-    r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[([^\]]+)\] (.+)$"
-)
+LOG_PATTERN = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[([^\]]+)\] (.+)$")
 
 
 @dataclass
@@ -230,9 +228,9 @@ def print_report(issues: list[ValidationIssue]) -> None:
     errors = [i for i in issues if i.severity == "ERROR"]
     warnings = [i for i in issues if i.severity == "WARNING"]
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("LOG VALIDATION REPORT")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
     if errors:
         print(f"\u274c ERRORS ({len(errors)}):")
@@ -252,9 +250,9 @@ def print_report(issues: list[ValidationIssue]) -> None:
             if issue.evidence:
                 print(f"  Evidence: {issue.evidence[:100]}")
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"Summary: {len(errors)} errors, {len(warnings)} warnings")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
