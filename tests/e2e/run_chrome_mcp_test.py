@@ -289,9 +289,7 @@ class HTTPTestRunner:
                 errors.append(f"{page}: {e}")
         passed = len(errors) == 0
         message = "All pages load" if passed else f"Errors: {errors}"
-        return HTTPTestResult(
-            "pages_load", passed, message, (time.time() - start) * 1000
-        )
+        return HTTPTestResult("pages_load", passed, message, (time.time() - start) * 1000)
 
     def test_api_beads(self) -> HTTPTestResult:
         """Test beads API returns valid data."""
@@ -304,9 +302,7 @@ class HTTPTestRunner:
         except Exception as e:
             passed = False
             message = str(e)
-        return HTTPTestResult(
-            "api_beads", passed, message, (time.time() - start) * 1000
-        )
+        return HTTPTestResult("api_beads", passed, message, (time.time() - start) * 1000)
 
     def test_api_agents(self) -> HTTPTestResult:
         """Test agents API returns valid data."""
@@ -319,9 +315,7 @@ class HTTPTestRunner:
         except Exception as e:
             passed = False
             message = str(e)
-        return HTTPTestResult(
-            "api_agents", passed, message, (time.time() - start) * 1000
-        )
+        return HTTPTestResult("api_agents", passed, message, (time.time() - start) * 1000)
 
     def test_partials(self) -> HTTPTestResult:
         """Test HTMX partial endpoints."""
@@ -337,17 +331,13 @@ class HTTPTestRunner:
                 errors.append(f"{partial}: {e}")
         passed = len(errors) == 0
         message = "All partials load" if passed else f"Errors: {errors}"
-        return HTTPTestResult(
-            "partials", passed, message, (time.time() - start) * 1000
-        )
+        return HTTPTestResult("partials", passed, message, (time.time() - start) * 1000)
 
     def test_daemon_status(self) -> HTTPTestResult:
         """Test daemon status endpoint."""
         start = time.time()
         try:
-            resp = requests.get(
-                f"{self.base_url}/api/workers/daemon/status", timeout=10
-            )
+            resp = requests.get(f"{self.base_url}/api/workers/daemon/status", timeout=10)
             # 200 (running) or 503 (not running) are both valid
             passed = resp.status_code in [200, 503]
             if resp.status_code == 200:
@@ -357,9 +347,7 @@ class HTTPTestRunner:
         except Exception as e:
             passed = False
             message = str(e)
-        return HTTPTestResult(
-            "daemon_status", passed, message, (time.time() - start) * 1000
-        )
+        return HTTPTestResult("daemon_status", passed, message, (time.time() - start) * 1000)
 
     def run_all(self) -> list[HTTPTestResult]:
         """Run all HTTP tests."""
@@ -523,9 +511,7 @@ class DashboardServer:
 
 def main() -> int:
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Interactive Chrome MCP dashboard test runner"
-    )
+    parser = argparse.ArgumentParser(description="Interactive Chrome MCP dashboard test runner")
     parser.add_argument(
         "--port",
         type=int,
