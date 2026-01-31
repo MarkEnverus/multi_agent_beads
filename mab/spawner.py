@@ -179,15 +179,26 @@ def create_worktree(
         worktree_beads = worktree_path / ".beads"
 
         if main_beads.exists():
-            # Remove the stale .beads directory in the worktree
-            if worktree_beads.exists() and not worktree_beads.is_symlink():
-                shutil.rmtree(worktree_beads)
-            elif worktree_beads.is_symlink():
-                worktree_beads.unlink()
+            try:
+                # Remove the stale .beads directory in the worktree
+                if worktree_beads.exists() and not worktree_beads.is_symlink():
+                    logger.debug(f"Removing stale .beads directory in worktree: {worktree_beads}")
+                    shutil.rmtree(worktree_beads)
+                elif worktree_beads.is_symlink():
+                    logger.debug(f"Removing existing .beads symlink: {worktree_beads}")
+                    worktree_beads.unlink()
 
-            # Create symlink to main project's .beads
-            worktree_beads.symlink_to(main_beads, target_is_directory=True)
-            logger.info(f"Symlinked .beads from {main_beads} to {worktree_beads}")
+                # Create symlink to main project's .beads
+                worktree_beads.symlink_to(main_beads, target_is_directory=True)
+                logger.info(f"Symlinked .beads from {main_beads} to {worktree_beads}")
+            except OSError as e:
+                # Log but don't fail - workers can still use bd alias as fallback
+                logger.warning(
+                    f"Failed to create .beads symlink in worktree {worktree_path}: {e}. "
+                    "Workers will use bd alias fallback."
+                )
+        else:
+            logger.debug(f"No .beads directory found at {main_beads}, skipping symlink")
 
         return worktree_path, branch_name
 
@@ -247,6 +258,71 @@ def remove_worktree(git_root: Path, worktree_path: Path) -> bool:
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
         logger.error(f"Error removing worktree: {e}")
         return False
+
+
+def fix_worktree_beads_symlinks(project_path: Path) -> tuple[int, int]:
+    """Fix .beads directories in worktrees by replacing them with symlinks to main project.
+
+    This repairs worktrees that were created before the symlink code was added,
+    or where symlink creation failed.
+
+    Args:
+        project_path: Path to the main project (git repo root).
+
+    Returns:
+        Tuple of (fixed_count, error_count).
+    """
+    git_root = get_git_root(project_path)
+    if git_root is None:
+        logger.warning(f"Not a git repository: {project_path}")
+        return 0, 0
+
+    main_beads = git_root / ".beads"
+    if not main_beads.exists():
+        logger.info("No .beads directory in main project, nothing to fix")
+        return 0, 0
+
+    worktrees_dir = git_root / WORKTREES_DIR
+    if not worktrees_dir.exists():
+        logger.info("No worktrees directory found")
+        return 0, 0
+
+    fixed = 0
+    errors = 0
+
+    for worktree_path in worktrees_dir.iterdir():
+        if not worktree_path.is_dir():
+            continue
+
+        worktree_beads = worktree_path / ".beads"
+
+        # Skip if already a symlink pointing to the right place
+        if worktree_beads.is_symlink():
+            target = worktree_beads.resolve()
+            if target == main_beads.resolve():
+                logger.debug(f"Worktree {worktree_path.name} already has correct symlink")
+                continue
+            else:
+                logger.info(f"Worktree {worktree_path.name} has symlink to wrong target, fixing")
+
+        try:
+            # Remove existing .beads (directory or bad symlink)
+            if worktree_beads.exists() or worktree_beads.is_symlink():
+                if worktree_beads.is_symlink():
+                    worktree_beads.unlink()
+                else:
+                    shutil.rmtree(worktree_beads)
+
+            # Create symlink to main project's .beads
+            worktree_beads.symlink_to(main_beads, target_is_directory=True)
+            logger.info(f"Fixed .beads symlink in worktree: {worktree_path.name}")
+            fixed += 1
+
+        except OSError as e:
+            logger.error(f"Failed to fix .beads in worktree {worktree_path.name}: {e}")
+            errors += 1
+
+    return fixed, errors
 
 
 def cleanup_stale_worktrees(project_path: Path, active_worker_ids: set[str] | None = None) -> int:
