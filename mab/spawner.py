@@ -179,10 +179,12 @@ def create_worktree(
         worktree_beads = worktree_path / ".beads"
 
         if main_beads.exists():
+            symlink_created = False
             try:
                 # Remove the stale .beads directory in the worktree
+                # Git worktree add copies tracked files, including .beads contents
                 if worktree_beads.exists() and not worktree_beads.is_symlink():
-                    logger.debug(f"Removing stale .beads directory in worktree: {worktree_beads}")
+                    logger.info(f"Removing stale .beads directory in worktree: {worktree_beads}")
                     shutil.rmtree(worktree_beads)
                 elif worktree_beads.is_symlink():
                     logger.debug(f"Removing existing .beads symlink: {worktree_beads}")
@@ -190,12 +192,30 @@ def create_worktree(
 
                 # Create symlink to main project's .beads
                 worktree_beads.symlink_to(main_beads, target_is_directory=True)
-                logger.info(f"Symlinked .beads from {main_beads} to {worktree_beads}")
+
+                # Verify the symlink was created correctly
+                if worktree_beads.is_symlink():
+                    resolved = worktree_beads.resolve()
+                    if resolved == main_beads.resolve():
+                        logger.info(f"Symlinked .beads from {main_beads} to {worktree_beads}")
+                        symlink_created = True
+                    else:
+                        logger.error(
+                            f"Symlink created but points to wrong target: {resolved} "
+                            f"(expected {main_beads.resolve()})"
+                        )
+                else:
+                    logger.error(f"Failed to create symlink at {worktree_beads}")
+
             except OSError as e:
-                # Log but don't fail - workers can still use bd alias as fallback
+                logger.error(
+                    f"Failed to create .beads symlink in worktree {worktree_path}: {e}"
+                )
+
+            if not symlink_created:
                 logger.warning(
-                    f"Failed to create .beads symlink in worktree {worktree_path}: {e}. "
-                    "Workers will use bd alias fallback."
+                    f"Worktree {worktree_path} has no .beads symlink! "
+                    "Workers MUST use BD_ROOT env var or --db flag to access live beads."
                 )
         else:
             logger.debug(f"No .beads directory found at {main_beads}, skipping symlink")
@@ -552,38 +572,39 @@ class Spawner(ABC):
 
 You are a {role} agent in the multi-agent beads system. You operate in a CONTINUOUS POLLING LOOP - do NOT exit after completing one task.
 
-## CRITICAL: Setup Commands (RUN FIRST)
+## CRITICAL: Setup Commands (RUN IMMEDIATELY)
 
-**IMPORTANT**: You MUST run these setup commands FIRST before doing anything else.
+**STOP! Run these commands NOW before reading further:**
 
-### 1. Define log function with absolute path
 ```bash
+# 1. Define log function (uses WORKER_LOG_FILE env var)
 log() {{ echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$$] $1" >> "$WORKER_LOG_FILE"; }}
+
+# 2. Define bd alias to use main project database (uses BD_ROOT env var)
+# Workers run in isolated git worktrees - you MUST use the main project's beads database
+alias bd='bd --db "$BD_ROOT/.beads/beads.db"'
+
+# 3. Verify setup worked
+log "SESSION_START"
+bd ready {label_filter}
 ```
 
-### 2. Define bd alias to use main project database
-Workers run in isolated git worktrees that have stale `.beads` data. You MUST use the main project's beads database for all bd commands.
-
-```bash
-alias bd='bd --db "$WORKER_PROJECT/.beads/beads.db"'
-```
-
-This ensures all `bd` commands query the live beads database, not the worktree's stale copy.
+If `bd ready` shows "No .beads found" or errors, check that BD_ROOT is set: `echo $BD_ROOT`
 
 ## Session Protocol (CONTINUOUS POLLING)
 
-1. **FIRST**: Run the two setup commands above (log function AND bd alias)
-2. Log session start: `log "SESSION_START"`
-3. Initialize idle counter: `idle_count=0`
+After running setup commands above:
+
+1. Initialize idle counter: `idle_count=0`
 
 ### MAIN WORK LOOP (repeat until max idle reached)
 
-4. Check for work:
+2. Check for work:
    ```bash
    bd ready {label_filter}
    ```
 
-5. **If work is available:**
+3. **If work is available:**
    - Reset idle counter: `idle_count=0`
    - Claim highest priority unblocked issue: `bd update <bead-id> --status=in_progress`
    - Log claim: `log "CLAIM: <bead-id> - <title>"`
@@ -591,14 +612,14 @@ This ensures all `bd` commands query the live beads database, not the worktree's
    - Create PR if code changes, wait for CI, merge PR
    - Close bead: `bd close <bead-id> --reason="..."`
    - Log completion: `log "CLOSE: <bead-id>"`
-   - **RETURN TO STEP 4** (check for more work)
+   - **RETURN TO STEP 2** (check for more work)
 
-6. **If NO work available:**
+4. **If NO work available:**
    - Increment idle counter
    - Log idle: `log "NO_WORK: poll $idle_count/{max_idle_polls}"`
    - If `idle_count < {max_idle_polls}`:
      - Wait {poll_interval_seconds} seconds: `sleep {poll_interval_seconds}`
-     - **RETURN TO STEP 4**
+     - **RETURN TO STEP 2**
    - If `idle_count >= {max_idle_polls}`:
      - Log exit: `log "SESSION_END: max idle polls reached"`
      - Exit cleanly
@@ -745,6 +766,9 @@ class SubprocessSpawner(Spawner):
         # Set absolute path to main project's claude.log for centralized logging
         # This ensures workers in worktrees still log to the dashboard-monitored file
         env["WORKER_LOG_FILE"] = str(project / "claude.log")
+        # BD_ROOT points to main project - workers use this to find the live beads database
+        # This is the fallback when .beads symlink doesn't exist or is broken
+        env["BD_ROOT"] = str(project)
 
         if worktree_path:
             env["WORKER_WORKTREE"] = str(worktree_path)
