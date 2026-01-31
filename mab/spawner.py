@@ -172,6 +172,23 @@ def create_worktree(
                 )
 
         logger.info(f"Created worktree at {worktree_path} on branch {branch_name}")
+
+        # Symlink .beads directory from main project to worktree
+        # This ensures workers use the live beads database, not a stale copy
+        main_beads = git_root / ".beads"
+        worktree_beads = worktree_path / ".beads"
+
+        if main_beads.exists():
+            # Remove the stale .beads directory in the worktree
+            if worktree_beads.exists() and not worktree_beads.is_symlink():
+                shutil.rmtree(worktree_beads)
+            elif worktree_beads.is_symlink():
+                worktree_beads.unlink()
+
+            # Create symlink to main project's .beads
+            worktree_beads.symlink_to(main_beads, target_is_directory=True)
+            logger.info(f"Symlinked .beads from {main_beads} to {worktree_beads}")
+
         return worktree_path, branch_name
 
     except subprocess.TimeoutExpired:
