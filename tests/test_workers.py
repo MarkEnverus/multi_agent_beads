@@ -742,11 +742,7 @@ class TestCleanExitDetection:
         logs_dir.mkdir(parents=True, exist_ok=True)
 
         log_file = logs_dir / f"{worker_id}_20260131_130000.log"
-        log_file.write_text(
-            "Checking for qa work...\n"
-            "NO_WORK: poll 10/10\n"
-            "Exiting cleanly.\n"
-        )
+        log_file.write_text("Checking for qa work...\nNO_WORK: poll 10/10\nExiting cleanly.\n")
 
         assert manager._check_log_for_clean_exit(worker_id) is True
 
@@ -759,12 +755,7 @@ class TestCleanExitDetection:
         logs_dir.mkdir(parents=True, exist_ok=True)
 
         log_file = logs_dir / f"{worker_id}_20260131_140000.log"
-        log_file.write_text(
-            "Starting work...\n"
-            "Error: Something went wrong\n"
-            "Traceback:\n"
-            "  ...\n"
-        )
+        log_file.write_text("Starting work...\nError: Something went wrong\nTraceback:\n  ...\n")
 
         assert manager._check_log_for_clean_exit(worker_id) is False
 

@@ -936,9 +936,7 @@ class WorkerManager:
 
             for pattern in clean_exit_patterns:
                 if pattern.lower() in content.lower():
-                    logger.debug(
-                        f"Worker {worker_id} log contains clean exit indicator: {pattern}"
-                    )
+                    logger.debug(f"Worker {worker_id} log contains clean exit indicator: {pattern}")
                     return True
 
             return False
