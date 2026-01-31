@@ -459,21 +459,27 @@ class Spawner(ABC):
 
 You are a {role} agent in the multi-agent beads system. You operate in a CONTINUOUS POLLING LOOP - do NOT exit after completing one task.
 
-## CRITICAL: Log Function Override
+## CRITICAL: Setup Commands (RUN FIRST)
 
-**IMPORTANT**: You MUST redefine the log function to use the absolute path set in `$WORKER_LOG_FILE`.
-This ensures your logs are visible in the dashboard regardless of your working directory.
+**IMPORTANT**: You MUST run these setup commands FIRST before doing anything else.
 
-Run this command FIRST before any logging:
+### 1. Define log function with absolute path
 ```bash
 log() {{ echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$$] $1" >> "$WORKER_LOG_FILE"; }}
 ```
 
-This overrides the default relative path and writes to the main project's `claude.log`.
+### 2. Define bd alias to use main project database
+Workers run in isolated git worktrees that have stale `.beads` data. You MUST use the main project's beads database for all bd commands.
+
+```bash
+alias bd='bd --db "$WORKER_PROJECT/.beads/beads.db"'
+```
+
+This ensures all `bd` commands query the live beads database, not the worktree's stale copy.
 
 ## Session Protocol (CONTINUOUS POLLING)
 
-1. **FIRST**: Override log function (run the command above)
+1. **FIRST**: Run the two setup commands above (log function AND bd alias)
 2. Log session start: `log "SESSION_START"`
 3. Initialize idle counter: `idle_count=0`
 
