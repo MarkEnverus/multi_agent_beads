@@ -1232,6 +1232,54 @@ def town_update(
         raise SystemExit(1)
 
 
+@cli.command("fix-worktrees")
+@click.option(
+    "--project",
+    "-p",
+    "project_path",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project path (default: current directory)",
+)
+@click.pass_context
+def fix_worktrees(ctx: click.Context, project_path: Path) -> None:
+    """Fix .beads symlinks in existing worktrees.
+
+    This command repairs worktrees that were created before the symlink code
+    was added, or where symlink creation failed. It replaces stale .beads
+    directories with symlinks to the main project's .beads directory.
+
+    This ensures workers can see the live beads database instead of a
+    stale snapshot from when the worktree was created.
+    """
+    from mab.spawner import fix_worktree_beads_symlinks, get_git_root
+
+    project = project_path.resolve()
+    git_root = get_git_root(project)
+
+    if git_root is None:
+        click.secho(f"Error: {project} is not a git repository", fg="red", err=True)
+        raise SystemExit(1)
+
+    main_beads = git_root / ".beads"
+    if not main_beads.exists():
+        click.secho(f"No .beads directory found in {git_root}", fg="yellow")
+        raise SystemExit(0)
+
+    click.echo(f"Fixing .beads symlinks in worktrees for {git_root}...")
+
+    fixed, errors = fix_worktree_beads_symlinks(project)
+
+    if fixed > 0:
+        click.secho(f"Fixed {fixed} worktree(s)", fg="green")
+    elif errors == 0:
+        click.echo("All worktrees already have correct symlinks")
+
+    if errors > 0:
+        click.secho(f"Failed to fix {errors} worktree(s)", fg="red", err=True)
+        raise SystemExit(1)
+
+
 def main() -> None:
     """Entry point for the mab CLI."""
     cli()
