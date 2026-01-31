@@ -901,9 +901,7 @@ class WorkerManager:
                     worker.status = WorkerStatus.STOPPED
                     worker.exit_code = exit_code
                     worker.stopped_at = datetime.now().isoformat()
-                    logger.info(
-                        f"Worker {worker.id} stopped cleanly (exit code {exit_code})"
-                    )
+                    logger.info(f"Worker {worker.id} stopped cleanly (exit code {exit_code})")
                 else:
                     # Actual crash - increment crash_count
                     worker.status = WorkerStatus.CRASHED
