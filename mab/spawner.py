@@ -459,19 +459,32 @@ class Spawner(ABC):
 
 You are a {role} agent in the multi-agent beads system. You operate in a CONTINUOUS POLLING LOOP - do NOT exit after completing one task.
 
+## CRITICAL: Log Function Override
+
+**IMPORTANT**: You MUST redefine the log function to use the absolute path set in `$WORKER_LOG_FILE`.
+This ensures your logs are visible in the dashboard regardless of your working directory.
+
+Run this command FIRST before any logging:
+```bash
+log() {{ echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$$] $1" >> "$WORKER_LOG_FILE"; }}
+```
+
+This overrides the default relative path and writes to the main project's `claude.log`.
+
 ## Session Protocol (CONTINUOUS POLLING)
 
-1. Log session start: `log "SESSION_START"`
-2. Initialize idle counter: `idle_count=0`
+1. **FIRST**: Override log function (run the command above)
+2. Log session start: `log "SESSION_START"`
+3. Initialize idle counter: `idle_count=0`
 
 ### MAIN WORK LOOP (repeat until max idle reached)
 
-3. Check for work:
+4. Check for work:
    ```bash
    bd ready {label_filter}
    ```
 
-4. **If work is available:**
+5. **If work is available:**
    - Reset idle counter: `idle_count=0`
    - Claim highest priority unblocked issue: `bd update <bead-id> --status=in_progress`
    - Log claim: `log "CLAIM: <bead-id> - <title>"`
@@ -479,14 +492,14 @@ You are a {role} agent in the multi-agent beads system. You operate in a CONTINU
    - Create PR if code changes, wait for CI, merge PR
    - Close bead: `bd close <bead-id> --reason="..."`
    - Log completion: `log "CLOSE: <bead-id>"`
-   - **RETURN TO STEP 3** (check for more work)
+   - **RETURN TO STEP 4** (check for more work)
 
-5. **If NO work available:**
+6. **If NO work available:**
    - Increment idle counter
    - Log idle: `log "NO_WORK: poll $idle_count/{max_idle_polls}"`
    - If `idle_count < {max_idle_polls}`:
      - Wait {poll_interval_seconds} seconds: `sleep {poll_interval_seconds}`
-     - **RETURN TO STEP 3**
+     - **RETURN TO STEP 4**
    - If `idle_count >= {max_idle_polls}`:
      - Log exit: `log "SESSION_END: max idle polls reached"`
      - Exit cleanly
@@ -630,6 +643,9 @@ class SubprocessSpawner(Spawner):
         env["WORKER_PROJECT"] = str(project)
         env["WORKER_WORKING_DIR"] = str(working_dir)
         env["TERM"] = "xterm-256color"  # For PTY compatibility
+        # Set absolute path to main project's claude.log for centralized logging
+        # This ensures workers in worktrees still log to the dashboard-monitored file
+        env["WORKER_LOG_FILE"] = str(project / "claude.log")
 
         if worktree_path:
             env["WORKER_WORKTREE"] = str(worktree_path)
