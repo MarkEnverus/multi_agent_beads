@@ -208,9 +208,7 @@ def create_worktree(
                     logger.error(f"Failed to create symlink at {worktree_beads}")
 
             except OSError as e:
-                logger.error(
-                    f"Failed to create .beads symlink in worktree {worktree_path}: {e}"
-                )
+                logger.error(f"Failed to create .beads symlink in worktree {worktree_path}: {e}")
 
             if not symlink_created:
                 logger.warning(
