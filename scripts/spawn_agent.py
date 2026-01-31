@@ -249,8 +249,10 @@ export AGENT_LOG_FILE="{log_file}"
 export WORKER_ID="{worker_id}"
 """
 
+    # --dangerously-skip-permissions allows workers to run bash commands
+    # autonomously without interactive approval prompts
     terminal_command = (
-        f'cd "{repo_path}" && {env_exports.strip()} && claude --print "{escaped_prompt}"'
+        f'cd "{repo_path}" && {env_exports.strip()} && claude --dangerously-skip-permissions --print "{escaped_prompt}"'
     )
 
     applescript = f'''
