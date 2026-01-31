@@ -709,6 +709,64 @@ class TestCleanExitDetection:
         assert updated.crash_count == initial_crash_count  # No increment
         assert updated.exit_code == 0
 
+    def test_check_log_for_clean_exit_with_session_end(self, tmp_path: Path) -> None:
+        """Test log-based clean exit detection finds SESSION_END pattern."""
+        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        worker_id = "worker-dev-test123"
+
+        # Create logs directory and a log file with clean exit indicator
+        logs_dir = tmp_path / ".mab" / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        log_file = logs_dir / f"{worker_id}_20260131_120000.log"
+        log_file.write_text(
+            "=== Worker Spawn Log ===\n"
+            "Worker ID: worker-dev-test123\n"
+            "Role: dev\n"
+            "Started: 2026-01-31T12:00:00\n"
+            "========================================\n\n"
+            "Session Summary:\n"
+            "- Checked for work\n"
+            "- No dev-labeled issues found\n\n"
+            "SESSION_END: No work available\n"
+        )
+
+        assert manager._check_log_for_clean_exit(worker_id) is True
+
+    def test_check_log_for_clean_exit_with_no_work(self, tmp_path: Path) -> None:
+        """Test log-based clean exit detection finds NO_WORK pattern."""
+        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        worker_id = "worker-qa-test456"
+
+        logs_dir = tmp_path / ".mab" / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        log_file = logs_dir / f"{worker_id}_20260131_130000.log"
+        log_file.write_text("Checking for qa work...\nNO_WORK: poll 10/10\nExiting cleanly.\n")
+
+        assert manager._check_log_for_clean_exit(worker_id) is True
+
+    def test_check_log_for_clean_exit_no_pattern(self, tmp_path: Path) -> None:
+        """Test log-based clean exit returns False when no patterns found."""
+        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        worker_id = "worker-dev-crash789"
+
+        logs_dir = tmp_path / ".mab" / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        log_file = logs_dir / f"{worker_id}_20260131_140000.log"
+        log_file.write_text("Starting work...\nError: Something went wrong\nTraceback:\n  ...\n")
+
+        assert manager._check_log_for_clean_exit(worker_id) is False
+
+    def test_check_log_for_clean_exit_no_logs(self, tmp_path: Path) -> None:
+        """Test log-based clean exit returns False when no logs exist."""
+        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        worker_id = "worker-dev-nologs"
+
+        # Don't create any logs
+        assert manager._check_log_for_clean_exit(worker_id) is False
+
 
 class TestAutoRestartAsync:
     """Async tests for auto-restart functionality."""
