@@ -837,11 +837,55 @@ class WorkerManager:
             town_name=town_name,
         )
 
+    def _get_process_exit_code(self, worker_id: str) -> int | None:
+        """Get the exit code of a terminated worker process.
+
+        Args:
+            worker_id: Worker ID to check.
+
+        Returns:
+            Exit code if process has terminated, None if still running or unknown.
+        """
+        # Check if we have the Popen object
+        process = self._active_processes.get(worker_id)
+        if process is not None:
+            return process.poll()  # Returns None if still running, exit code otherwise
+
+        # Check process info for stored process
+        process_info = self._active_process_info.get(worker_id)
+        if process_info is not None and process_info.process is not None:
+            return process_info.process.poll()
+
+        return None
+
+    def _is_clean_exit(self, exit_code: int | None) -> bool:
+        """Determine if an exit code represents a clean shutdown.
+
+        Clean exits include:
+        - Exit code 0 (normal termination)
+        - Exit code -15 (SIGTERM - graceful shutdown signal)
+
+        Args:
+            exit_code: Process exit code or None.
+
+        Returns:
+            True if the exit represents a clean shutdown.
+        """
+        if exit_code is None:
+            return False
+        # Exit code 0 = clean exit
+        # Exit code -15 = SIGTERM (graceful shutdown)
+        return exit_code == 0 or exit_code == -signal.SIGTERM
+
     async def health_check(self) -> list[Worker]:
         """Check health of all running workers.
 
+        Distinguishes between workers that crashed (non-zero exit) and workers
+        that stopped cleanly (exit code 0 or SIGTERM). Only crashed workers
+        increment crash_count and trigger auto-restart.
+
         Returns:
-            List of workers that were marked as crashed.
+            List of workers that were marked as crashed (not clean exits).
         """
         crashed_workers = []
         running_workers = self.db.list_workers(status=WorkerStatus.RUNNING)
@@ -849,11 +893,30 @@ class WorkerManager:
         for worker in running_workers:
             is_healthy = await self._check_worker_health(worker)
             if not is_healthy:
-                worker.status = WorkerStatus.CRASHED
-                worker.crash_count += 1
-                worker.stopped_at = datetime.now().isoformat()
+                # Check if this was a clean exit or a crash
+                exit_code = self._get_process_exit_code(worker.id)
+
+                if self._is_clean_exit(exit_code):
+                    # Clean exit - worker finished naturally (e.g., no work found)
+                    worker.status = WorkerStatus.STOPPED
+                    worker.exit_code = exit_code
+                    worker.stopped_at = datetime.now().isoformat()
+                    logger.info(
+                        f"Worker {worker.id} stopped cleanly (exit code {exit_code})"
+                    )
+                else:
+                    # Actual crash - increment crash_count
+                    worker.status = WorkerStatus.CRASHED
+                    worker.crash_count += 1
+                    worker.exit_code = exit_code
+                    worker.stopped_at = datetime.now().isoformat()
+                    crashed_workers.append(worker)
+                    logger.warning(
+                        f"Worker {worker.id} crashed (exit code {exit_code}, "
+                        f"crash #{worker.crash_count})"
+                    )
+
                 self.db.update_worker(worker)
-                crashed_workers.append(worker)
 
                 # Cleanup
                 self._active_processes.pop(worker.id, None)

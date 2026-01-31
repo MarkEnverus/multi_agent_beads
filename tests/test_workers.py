@@ -630,6 +630,86 @@ class TestWorkerManagerHealthConfig:
         assert status.total_restarts == 0
 
 
+class TestCleanExitDetection:
+    """Tests for clean exit detection in health_check()."""
+
+    def test_is_clean_exit_code_zero(self, tmp_path: Path) -> None:
+        """Test exit code 0 is considered clean."""
+        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        assert manager._is_clean_exit(0) is True
+
+    def test_is_clean_exit_sigterm(self, tmp_path: Path) -> None:
+        """Test SIGTERM exit is considered clean."""
+        import signal
+
+        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        # On Unix, process killed by SIGTERM has exit code -15
+        assert manager._is_clean_exit(-signal.SIGTERM) is True
+
+    def test_is_clean_exit_non_zero(self, tmp_path: Path) -> None:
+        """Test non-zero exit code is not considered clean."""
+        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        assert manager._is_clean_exit(1) is False
+        assert manager._is_clean_exit(-9) is False  # SIGKILL
+        assert manager._is_clean_exit(255) is False
+
+    def test_is_clean_exit_none(self, tmp_path: Path) -> None:
+        """Test None exit code is not considered clean."""
+        manager = WorkerManager(mab_dir=tmp_path / ".mab")
+        assert manager._is_clean_exit(None) is False
+
+    @pytest.mark.asyncio
+    async def test_health_check_marks_clean_exit_as_stopped(self, tmp_path: Path) -> None:
+        """Test health check marks clean exit (code 0) as STOPPED not CRASHED."""
+        import subprocess
+
+        manager = WorkerManager(mab_dir=tmp_path / ".mab", test_mode=True)
+
+        # Spawn a worker
+        worker = await manager.spawn(
+            role="dev",
+            project_path=str(tmp_path),
+        )
+
+        # Verify worker started
+        assert worker.status == WorkerStatus.RUNNING
+        initial_crash_count = worker.crash_count
+
+        # First stop the real process gracefully
+        await manager.stop(worker.id)
+
+        # Re-insert the worker as RUNNING to simulate the scenario
+        worker.status = WorkerStatus.RUNNING
+        worker.stopped_at = None
+        manager.db.update_worker(worker)
+
+        # Create a process that exits cleanly with code 0
+        clean_exit_process = subprocess.Popen(
+            ["python3", "-c", "import sys; sys.exit(0)"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        clean_exit_process.wait()  # Wait for it to exit
+
+        # Update worker.pid to the clean exit process and track it
+        worker.pid = clean_exit_process.pid
+        manager.db.update_worker(worker)
+        manager._active_processes[worker.id] = clean_exit_process
+
+        # Health check should detect the stopped process
+        crashed = await manager.health_check()
+
+        # Clean exit should NOT be in crashed list
+        assert len(crashed) == 0
+
+        # Worker should be marked as STOPPED, not CRASHED
+        updated = manager.db.get_worker(worker.id)
+        assert updated is not None
+        assert updated.status == WorkerStatus.STOPPED
+        assert updated.crash_count == initial_crash_count  # No increment
+        assert updated.exit_code == 0
+
+
 class TestAutoRestartAsync:
     """Async tests for auto-restart functionality."""
 
