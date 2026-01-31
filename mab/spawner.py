@@ -719,8 +719,11 @@ while True:
             full_prompt = self._build_worker_prompt(role, prompt_content, worker_id)
 
             # Using -p flag to pass initial prompt
+            # --dangerously-skip-permissions allows workers to run bash commands
+            # autonomously without interactive approval prompts
             cmd = [
                 self.claude_path,
+                "--dangerously-skip-permissions",
                 "-p",
                 full_prompt,
             ]
@@ -1123,9 +1126,11 @@ export WORKER_PROJECT="{project}"
         )
 
         # Build command to run in tmux
+        # --dangerously-skip-permissions allows workers to run bash commands
+        # autonomously without interactive approval prompts
         tmux_cmd = (
             f'cd "{project}" && {env_exports.strip()} && '
-            f'{self.claude_path} -p "{escaped_prompt}" 2>&1 | tee -a "{log_file}"'
+            f'{self.claude_path} --dangerously-skip-permissions -p "{escaped_prompt}" 2>&1 | tee -a "{log_file}"'
         )
 
         logger.info(f"Creating tmux session {session_name} for worker {worker_id}")
