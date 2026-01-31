@@ -1,0 +1,551 @@
+# =============================================================================
+# DASHBOARD FULL QA TEST PLAN
+# =============================================================================
+# This is a comprehensive manual QA test for Claude to execute using Chrome MCP
+# tools. Test EVERY button, EVERY function, and create beads for failures.
+#
+# EXECUTION INSTRUCTIONS:
+# =======================
+# 1. Start the dashboard server:
+#      uv run python -m uvicorn dashboard.app:app --host 127.0.0.1 --port 8000 &
+#
+# 2. Wait for server to be ready:
+#      sleep 3 && curl -s http://127.0.0.1:8000/health
+#
+# 3. Execute tests using Chrome MCP tools:
+#      - mcp__chrome-devtools__navigate_page: Go to URLs
+#      - mcp__chrome-devtools__take_snapshot: See page structure and find element UIDs
+#      - mcp__chrome-devtools__click: Click buttons/links by UID
+#      - mcp__chrome-devtools__fill: Fill form inputs
+#      - mcp__chrome-devtools__list_console_messages: Check for JS errors
+#      - mcp__chrome-devtools__take_screenshot: Visual evidence of bugs
+#
+# 4. For EACH failure found, create a bead:
+#      bd create --title="[Dashboard Bug] <description>" --type=bug --priority=2
+#
+# 5. When done, stop the server:
+#      pkill -f "uvicorn dashboard.app:app"
+#
+# =============================================================================
+
+name: dashboard_full_qa_test
+description: |
+  Comprehensive QA testing of the Multi-Agent Dashboard.
+  Test every page, every button, every form, every filter.
+  Create beads for any bugs found.
+
+base_url: http://127.0.0.1:8000
+
+# =============================================================================
+# PHASE 0: SETUP
+# =============================================================================
+setup:
+  steps:
+    - name: "Start dashboard server"
+      command: "uv run python -m uvicorn dashboard.app:app --host 127.0.0.1 --port 8000 &"
+
+    - name: "Wait for server ready"
+      command: "sleep 3 && curl -s http://127.0.0.1:8000/health"
+      expected: '{"status":"ok"}'
+
+    - name: "Read recent logs for context"
+      command: "tail -100 claude.log"
+      purpose: "Understand recent system activity before testing"
+
+# =============================================================================
+# PHASE 1: DASHBOARD PAGE (/) - KANBAN BOARD
+# =============================================================================
+test_pages:
+  - page: "Dashboard Home"
+    url: "/"
+    description: "Main kanban board with beads, agents sidebar, and live logs"
+
+    initial_checks:
+      - action: "navigate_page"
+        params:
+          url: "http://127.0.0.1:8000/"
+        verify: "Page loads without error"
+
+      - action: "take_snapshot"
+        verify:
+          - "Heading 'Kanban Board' exists"
+          - "Columns: Ready, In Progress, Done visible"
+          - "Active Agents sidebar visible"
+          - "Live Logs section visible"
+          - "Navigation bar with all links"
+
+      - action: "list_console_messages"
+        verify: "No JavaScript errors (warnings OK)"
+
+    buttons_to_test:
+      - name: "Refresh Now button"
+        uid_hint: "button 'Refresh Now'"
+        action: "click"
+        expected: "Kanban board refreshes, bead counts update"
+        bug_if: "Shows 'Loading beads...' indefinitely"
+
+      - name: "Dependencies button"
+        uid_hint: "button 'Dependencies'"
+        action: "click"
+        expected: "Dependency graph view opens/toggles"
+        bug_if: "Nothing happens or JS error"
+
+    kanban_interactions:
+      - name: "Click bead card in Done column"
+        action: "click on any bead heading (h3) in Done column"
+        expected: |
+          Modal opens showing:
+          - Bead ID
+          - Title
+          - Description
+          - Status
+          - Priority
+          - Labels
+          - Close button
+        bug_if: "Modal shows 'Loading bead details...' forever"
+
+      - name: "Close bead modal"
+        action: "click Close button on modal"
+        expected: "Modal closes cleanly"
+
+    sidebar_active_agents:
+      - name: "Active Agents section"
+        verify: "Shows agent count (0 online or X online)"
+
+    sidebar_live_logs:
+      - name: "Log level dropdown"
+        uid_hint: "combobox with 'All Levels'"
+        action: "click to expand"
+        expected: "Shows: All Levels, Errors Only, Warnings+, All (Info+)"
+        then: "Select 'Errors Only'"
+        verify: "Log list filters to only show errors"
+
+      - name: "Role filter dropdown"
+        uid_hint: "combobox with 'All Roles'"
+        action: "click to expand"
+        expected: "Shows: All Roles, Developer, QA, Tech Lead, Manager, Reviewer"
+        then: "Select 'Developer'"
+        verify: "Logs filter to only developer entries"
+
+      - name: "Search logs textbox"
+        uid_hint: "textbox 'Search logs...'"
+        action: "fill with 'SESSION'"
+        expected: "Logs filter to only entries containing SESSION"
+
+      - name: "Filter by bead ID textbox"
+        uid_hint: "textbox 'Filter by bead ID...'"
+        action: "fill with any bead ID from Done column (e.g., 'hs268')"
+        expected: "Logs filter to only entries for that bead"
+
+      - name: "Auto-scroll checkbox"
+        uid_hint: "checkbox 'Auto-scroll'"
+        action: "uncheck"
+        expected: "Log view stops auto-scrolling"
+        then: "re-check"
+        verify: "Log view resumes auto-scrolling"
+
+      - name: "Export button"
+        uid_hint: "button 'Export'"
+        action: "click"
+        expected: "Downloads log file OR shows export dialog"
+        bug_if: "Nothing happens"
+
+      - name: "Clear button"
+        uid_hint: "button 'Clear'"
+        action: "click"
+        expected: "Clears the log display"
+
+    footer:
+      - name: "API Health link"
+        uid_hint: "link 'API Health'"
+        action: "click"
+        expected: "Shows JSON: {'status': 'ok'}"
+
+# =============================================================================
+# PHASE 2: ADMIN PAGE (/admin)
+# =============================================================================
+  - page: "Admin"
+    url: "/admin"
+    description: "System administration - daemon control, worker spawning"
+
+    initial_checks:
+      - action: "navigate_page"
+        params:
+          url: "http://127.0.0.1:8000/admin"
+        verify: "Admin page loads"
+
+      - action: "take_snapshot"
+        verify:
+          - "Daemon Status section"
+          - "Spawn New Worker form"
+          - "Workers list (may be empty)"
+          - "Health statistics"
+
+    daemon_controls:
+      - name: "Daemon status display"
+        verify: "Shows state (Running/Stopped) and PID if running"
+
+      - name: "Start Daemon button"
+        precondition: "Daemon is stopped"
+        action: "click 'Start Daemon'"
+        expected: "Daemon starts, status changes to Running with PID"
+        bug_if: "Error message or no status change"
+
+      - name: "Stop Daemon button"
+        precondition: "Daemon is running"
+        action: "click 'Stop Daemon'"
+        expected: "Daemon stops, status changes to Stopped"
+
+      - name: "Restart Daemon button"
+        action: "click 'Restart Daemon'"
+        expected: "Daemon restarts, brief status change, back to Running"
+
+    worker_spawn_form:
+      - name: "Role selector dropdown"
+        uid_hint: "select or combobox for role"
+        verify: "Has options: dev, qa, reviewer, tech-lead, manager"
+
+      - name: "Project path input"
+        uid_hint: "textbox for project path"
+        verify: "Pre-filled with current project path"
+
+      - name: "Auto-restart checkbox"
+        verify: "Exists and can be toggled"
+
+      - name: "Spawn Developer worker"
+        steps:
+          - "Select 'dev' from role dropdown"
+          - "Ensure project path is filled"
+          - "Click 'Spawn Worker' button"
+        expected: "Worker spawns, toast message, appears in workers list"
+        bug_if: "Error message, worker not appearing, or timeout"
+
+      - name: "Spawn QA worker"
+        steps:
+          - "Select 'qa' role"
+          - "Click Spawn"
+        expected: "QA worker spawns successfully"
+
+      - name: "Spawn Reviewer worker"
+        steps:
+          - "Select 'reviewer' role"
+          - "Click Spawn"
+        expected: "Reviewer worker spawns"
+
+      - name: "Spawn Tech Lead worker"
+        steps:
+          - "Select 'tech-lead' role"
+          - "Click Spawn"
+        expected: "Tech Lead worker spawns"
+
+      - name: "Spawn Manager worker"
+        steps:
+          - "Select 'manager' role"
+          - "Click Spawn"
+        expected: "Manager worker spawns"
+
+    workers_list:
+      - name: "Workers list displays"
+        verify: "Shows spawned workers with: ID, Role, Status, PID, Actions"
+
+      - name: "Stop worker button"
+        action: "Click Stop on any running worker"
+        expected: "Worker stops, status changes"
+
+      - name: "Restart worker button"
+        action: "Click Restart on a worker"
+        expected: "Worker restarts with new PID"
+
+    health_stats:
+      - name: "Health statistics section"
+        verify: "Shows: healthy count, unhealthy count, crashed count"
+
+# =============================================================================
+# PHASE 3: AGENTS PAGE (/agents)
+# =============================================================================
+  - page: "Agents"
+    url: "/agents"
+    description: "Agent monitoring with status and per-agent logs"
+
+    initial_checks:
+      - action: "navigate_page"
+        params:
+          url: "http://127.0.0.1:8000/agents"
+
+      - action: "take_snapshot"
+        verify:
+          - "Page loads"
+          - "Shows agent list or 'No active agents'"
+
+    tests:
+      - name: "Agent cards display (if workers spawned)"
+        verify: "Each agent shows: role icon/label, status indicator, session info"
+
+      - name: "Role filter dropdown"
+        action: "Use filter to show only 'dev' agents"
+        expected: "List filters to only developers"
+
+      - name: "Click agent card"
+        action: "Click on an agent card"
+        expected: "Shows agent details and per-agent logs"
+
+# =============================================================================
+# PHASE 4: BEADS PAGE (/beads)
+# =============================================================================
+  - page: "Beads"
+    url: "/beads"
+    description: "Bead management with filters and dependency graph"
+
+    initial_checks:
+      - action: "navigate_page"
+        params:
+          url: "http://127.0.0.1:8000/beads"
+
+      - action: "take_snapshot"
+        verify:
+          - "Bead list displays"
+          - "Filter controls visible"
+          - "Pagination if many beads"
+
+    filters:
+      - name: "Status filter"
+        action: "Filter by status: open, in_progress, closed"
+        expected: "List updates to show only selected status"
+
+      - name: "Priority filter"
+        action: "Filter by priority (P0, P1, P2, P3, P4)"
+        expected: "List shows only selected priority"
+
+      - name: "Type filter"
+        action: "Filter by type (task, bug, feature)"
+        expected: "List shows only selected type"
+
+      - name: "Search/text filter"
+        action: "Enter search text"
+        expected: "List filters to matching beads"
+
+      - name: "Clear filters"
+        action: "Clear all filters"
+        expected: "Full list returns"
+
+    interactions:
+      - name: "Click bead row"
+        action: "Click on a bead in the list"
+        expected: "Bead detail modal opens with full info"
+
+      - name: "Pagination"
+        precondition: "More beads than fit on one page"
+        action: "Click page 2 or Next"
+        expected: "Shows next page of beads"
+
+    dependency_graph:
+      - name: "Dependency graph section"
+        verify: "Visual graph shows bead dependencies"
+        bug_if: "Graph doesn't render or shows error"
+
+# =============================================================================
+# PHASE 5: LOGS PAGE (/logs)
+# =============================================================================
+  - page: "Logs"
+    url: "/logs"
+    description: "Full-screen log viewer with streaming"
+
+    initial_checks:
+      - action: "navigate_page"
+        params:
+          url: "http://127.0.0.1:8000/logs"
+
+      - action: "take_snapshot"
+        verify:
+          - "Log entries display"
+          - "Filter controls"
+          - "Log statistics"
+
+    tests:
+      - name: "Log entries format"
+        verify: "Each entry shows: timestamp, PID, event type, message"
+
+      - name: "Level filter"
+        action: "Filter by error level"
+        expected: "Only errors shown"
+
+      - name: "Time range selector"
+        action: "Select a time range"
+        expected: "Logs filter to that period"
+
+      - name: "Search/regex"
+        action: "Enter search pattern"
+        expected: "Logs filter to matching entries"
+
+      - name: "Export logs"
+        action: "Click Export"
+        expected: "Downloads filtered logs"
+
+      - name: "Live streaming"
+        verify: "New log entries appear automatically"
+        how_to_test: "Trigger activity (spawn worker), watch for new logs"
+
+      - name: "Log statistics"
+        verify: "Shows total count, error count, warning count"
+
+# =============================================================================
+# PHASE 6: HELP PAGE (/help)
+# =============================================================================
+  - page: "Help"
+    url: "/help"
+    description: "Documentation for worker roles and system usage"
+
+    initial_checks:
+      - action: "navigate_page"
+        params:
+          url: "http://127.0.0.1:8000/help"
+
+      - action: "take_snapshot"
+        verify:
+          - "Page loads with documentation"
+
+    content_checks:
+      - verify: "Developer role explained"
+      - verify: "QA role explained"
+      - verify: "Reviewer role explained"
+      - verify: "Tech Lead role explained"
+      - verify: "Manager role explained"
+      - verify: "Priority levels P0-P4 explained"
+      - verify: "Bead types (task, bug, feature) explained"
+
+# =============================================================================
+# PHASE 7: API DOCS (/docs)
+# =============================================================================
+  - page: "API Docs"
+    url: "/docs"
+    description: "FastAPI Swagger UI"
+
+    tests:
+      - name: "Swagger UI loads"
+        action: "navigate_page to /docs"
+        expected: "FastAPI Swagger UI renders"
+
+      - name: "Endpoints listed"
+        verify: "All API endpoints grouped by tag"
+
+      - name: "Try an endpoint"
+        action: "Expand /health, Try It Out, Execute"
+        expected: "Returns {'status': 'ok'}"
+
+# =============================================================================
+# PHASE 8: NAVIGATION BAR
+# =============================================================================
+  - section: "Navigation"
+    tests:
+      - name: "Dashboard link"
+        action: "click Dashboard in nav"
+        expected: "Goes to /"
+
+      - name: "Admin link"
+        action: "click Admin"
+        expected: "Goes to /admin"
+
+      - name: "Agents link"
+        action: "click Agents"
+        expected: "Goes to /agents"
+
+      - name: "Beads link"
+        action: "click Beads"
+        expected: "Goes to /beads"
+
+      - name: "Logs link"
+        action: "click Logs"
+        expected: "Goes to /logs"
+
+      - name: "Help link"
+        action: "click Help"
+        expected: "Goes to /help"
+
+      - name: "API Docs link"
+        action: "click API Docs"
+        expected: "Goes to /docs"
+
+      - name: "WebSocket indicator"
+        verify: "Shows 'Connected' in nav bar"
+
+# =============================================================================
+# PHASE 9: BEAD CREATION VIA CLI (verify in UI)
+# =============================================================================
+  - section: "Bead Integration"
+    tests:
+      - name: "Create bead via bd CLI"
+        command: 'bd create --title="QA Test Bead $(date +%s)" --type=task --priority=2'
+        expected: "Bead created, returns ID"
+
+      - name: "Verify bead in Dashboard"
+        action: "Navigate to /, click Refresh Now"
+        expected: "New bead appears in Ready column"
+
+      - name: "Verify bead in Beads page"
+        action: "Navigate to /beads"
+        expected: "New bead appears in list"
+
+# =============================================================================
+# CLEANUP
+# =============================================================================
+cleanup:
+  steps:
+    - name: "Stop dashboard server"
+      command: "pkill -f 'uvicorn dashboard.app:app' || true"
+
+# =============================================================================
+# BUG REPORTING TEMPLATE
+# =============================================================================
+# When you find a bug, create a bead immediately:
+#
+#   bd create --title="[Dashboard Bug] <SHORT_DESCRIPTION>" \
+#             --description="Steps to reproduce:
+#   1. Go to <page>
+#   2. Click <button>
+#   3. Expected: <what should happen>
+#   4. Actual: <what actually happens>
+#
+#   Error message (if any): <error>
+#   Console errors: <js errors>" \
+#             --type=bug \
+#             --priority=2 \
+#             --labels=dashboard,qa-found
+#
+# Priority guide:
+#   P0 - Dashboard completely unusable
+#   P1 - Major feature totally broken
+#   P2 - Feature partially broken (default)
+#   P3 - Minor issue, workaround exists
+#   P4 - Cosmetic or nice-to-have
+
+# =============================================================================
+# KNOWN ISSUES (from initial testing)
+# =============================================================================
+known_issues:
+  - id: 1
+    description: "Kanban shows 'Loading beads...' on initial page load"
+    workaround: "Click 'Refresh Now' button"
+    severity: P2
+
+  - id: 2
+    description: "Bead detail modal may show 'Loading bead details...' and not load"
+    workaround: "None - needs investigation"
+    severity: P1
+
+# =============================================================================
+# TEST EXECUTION CHECKLIST
+# =============================================================================
+# Use this to track your progress:
+#
+# [ ] Phase 0: Setup complete, server running
+# [ ] Phase 1: Dashboard page - all buttons tested
+# [ ] Phase 2: Admin page - daemon controls, worker spawn (all 5 roles)
+# [ ] Phase 3: Agents page - filters and cards
+# [ ] Phase 4: Beads page - filters, detail modal, dep graph
+# [ ] Phase 5: Logs page - filters, export, streaming
+# [ ] Phase 6: Help page - all docs present
+# [ ] Phase 7: API Docs - Swagger works
+# [ ] Phase 8: Navigation - all links work
+# [ ] Phase 9: Bead integration - CLI create shows in UI
+# [ ] Cleanup: Server stopped
+# [ ] Bugs filed as beads
