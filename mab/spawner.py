@@ -435,6 +435,8 @@ class Spawner(ABC):
         role: str,
         prompt_content: str,
         worker_id: str,
+        poll_interval_seconds: int = 30,
+        max_idle_polls: int = 10,
     ) -> str:
         """Build the full worker prompt with role context.
 
@@ -442,6 +444,8 @@ class Spawner(ABC):
             role: Worker role.
             prompt_content: Content from role-specific prompt file.
             worker_id: Worker identifier.
+            poll_interval_seconds: Seconds to wait between polls when no work found.
+            max_idle_polls: Max consecutive polls without finding work before exiting.
 
         Returns:
             Complete prompt string for Claude CLI.
@@ -453,19 +457,45 @@ class Spawner(ABC):
 
 ## Worker ID: {worker_id}
 
-You are a {role} agent in the multi-agent beads system. Follow the role-specific prompt below, then find work using:
-    bd ready {label_filter}
+You are a {role} agent in the multi-agent beads system. You operate in a CONTINUOUS POLLING LOOP - do NOT exit after completing one task.
 
-## Session Protocol
+## Session Protocol (CONTINUOUS POLLING)
 
-1. Log session start
-2. Find work with: bd ready {label_filter}
-3. Claim highest priority unblocked issue
-4. Do the work following your role guidelines
-5. Create PR if code changes
-6. Wait for CI, merge PR
-7. Close bead
-8. Exit cleanly
+1. Log session start: `log "SESSION_START"`
+2. Initialize idle counter: `idle_count=0`
+
+### MAIN WORK LOOP (repeat until max idle reached)
+
+3. Check for work:
+   ```bash
+   bd ready {label_filter}
+   ```
+
+4. **If work is available:**
+   - Reset idle counter: `idle_count=0`
+   - Claim highest priority unblocked issue: `bd update <bead-id> --status=in_progress`
+   - Log claim: `log "CLAIM: <bead-id> - <title>"`
+   - Do the work following your role guidelines
+   - Create PR if code changes, wait for CI, merge PR
+   - Close bead: `bd close <bead-id> --reason="..."`
+   - Log completion: `log "CLOSE: <bead-id>"`
+   - **RETURN TO STEP 3** (check for more work)
+
+5. **If NO work available:**
+   - Increment idle counter
+   - Log idle: `log "NO_WORK: poll $idle_count/{max_idle_polls}"`
+   - If `idle_count < {max_idle_polls}`:
+     - Wait {poll_interval_seconds} seconds: `sleep {poll_interval_seconds}`
+     - **RETURN TO STEP 3**
+   - If `idle_count >= {max_idle_polls}`:
+     - Log exit: `log "SESSION_END: max idle polls reached"`
+     - Exit cleanly
+
+### Key Rules
+- **NEVER exit immediately after "NO_WORK"** - always poll up to {max_idle_polls} times first
+- **NEVER exit after completing a bead** - always check for more work
+- Only exit after {max_idle_polls} consecutive polls ({max_idle_polls * poll_interval_seconds // 60} minutes) with no work
+- Reset idle counter to 0 every time you successfully claim work
 
 ---
 
