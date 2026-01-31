@@ -840,6 +840,9 @@ class WorkerManager:
     def _get_process_exit_code(self, worker_id: str) -> int | None:
         """Get the exit code of a terminated worker process.
 
+        Uses wait(timeout=0) instead of poll() to properly reap zombie processes
+        and capture exit codes reliably.
+
         Args:
             worker_id: Worker ID to check.
 
@@ -849,12 +852,25 @@ class WorkerManager:
         # Check if we have the Popen object
         process = self._active_processes.get(worker_id)
         if process is not None:
-            return process.poll()  # Returns None if still running, exit code otherwise
+            # First check cached returncode (set by previous poll/wait)
+            if process.returncode is not None:
+                return process.returncode
+            # Try wait with timeout=0 to reap zombie and get exit code
+            try:
+                return process.wait(timeout=0)
+            except subprocess.TimeoutExpired:
+                # Process is still running
+                return None
 
         # Check process info for stored process
         process_info = self._active_process_info.get(worker_id)
         if process_info is not None and process_info.process is not None:
-            return process_info.process.poll()
+            if process_info.process.returncode is not None:
+                return process_info.process.returncode
+            try:
+                return process_info.process.wait(timeout=0)
+            except subprocess.TimeoutExpired:
+                return None
 
         return None
 
@@ -877,6 +893,59 @@ class WorkerManager:
         # Exit code -15 = SIGTERM (graceful shutdown)
         return exit_code == 0 or exit_code == -signal.SIGTERM
 
+    def _check_log_for_clean_exit(self, worker_id: str) -> bool:
+        """Check worker log file for indicators of a clean exit.
+
+        This is a fallback heuristic when we can't get the exit code directly.
+        Looks for "SESSION_END" patterns that indicate the worker finished normally.
+
+        Args:
+            worker_id: Worker ID to check logs for.
+
+        Returns:
+            True if log indicates clean exit, False otherwise.
+        """
+        try:
+            # Check the most recent log file for this worker
+            logs_dir = self.mab_dir / "logs"
+            if not logs_dir.exists():
+                return False
+
+            # Find log files for this worker
+            log_files = sorted(
+                logs_dir.glob(f"{worker_id}_*.log"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+
+            if not log_files:
+                return False
+
+            # Check the most recent log file
+            recent_log = log_files[0]
+            content = recent_log.read_text(encoding="utf-8", errors="replace")
+
+            # Look for clean exit indicators
+            clean_exit_patterns = [
+                "SESSION_END",
+                "SESSION ENDED",
+                "NO_WORK",
+                "Exiting cleanly",
+                "no work available",
+            ]
+
+            for pattern in clean_exit_patterns:
+                if pattern.lower() in content.lower():
+                    logger.debug(
+                        f"Worker {worker_id} log contains clean exit indicator: {pattern}"
+                    )
+                    return True
+
+            return False
+        except (OSError, IOError) as e:
+            logger.debug(f"Could not check log for {worker_id}: {e}")
+            return False
+
     async def health_check(self) -> list[Worker]:
         """Check health of all running workers.
 
@@ -895,6 +964,17 @@ class WorkerManager:
             if not is_healthy:
                 # Check if this was a clean exit or a crash
                 exit_code = self._get_process_exit_code(worker.id)
+
+                # If exit_code is None, use log-based heuristic as fallback
+                if exit_code is None:
+                    logger.debug(
+                        f"Worker {worker.id} exit code unknown, checking logs for clean exit"
+                    )
+                    if self._check_log_for_clean_exit(worker.id):
+                        logger.info(
+                            f"Worker {worker.id} log indicates clean exit, treating as stopped"
+                        )
+                        exit_code = 0  # Treat as clean exit
 
                 if self._is_clean_exit(exit_code):
                     # Clean exit - worker finished naturally (e.g., no work found)
