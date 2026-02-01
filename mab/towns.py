@@ -135,7 +135,10 @@ class PortConflictError(TownError):
 class TownDatabase:
     """SQLite database for town metadata persistence.
 
-    Uses the same database file as workers (workers.db) for consistency.
+    Uses the global workers.db database at ~/.mab/workers.db for town
+    coordination. Towns remain global since they coordinate across projects.
+
+    Uses WAL mode (Write-Ahead Logging) for better concurrent performance.
     """
 
     def __init__(self, db_path: Path) -> None:
@@ -153,10 +156,17 @@ class TownDatabase:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _get_connection(self) -> sqlite3.Connection:
-        """Get a database connection."""
+        """Get a database connection.
+
+        Enables WAL mode for better concurrent read/write performance.
+        """
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        # Enable WAL mode for better concurrency
+        conn.execute("PRAGMA journal_mode = WAL")
+        # Set busy timeout to wait for locks instead of failing immediately
+        conn.execute("PRAGMA busy_timeout = 5000")  # 5 second timeout
         return conn
 
     def _init_schema(self) -> None:
