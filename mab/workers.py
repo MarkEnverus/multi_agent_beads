@@ -205,7 +205,18 @@ class WorkerSpawnError(WorkerError):
 class WorkerDatabase:
     """SQLite database for worker state persistence.
 
-    Uses a single database file at ~/.mab/workers.db for global worker state.
+    Supports both global (legacy) and per-project database locations:
+    - Legacy/global: ~/.mab/workers.db (all workers in one DB)
+    - Per-project: <project>/.mab/workers.db (isolated per project)
+
+    The per-project approach reduces contention when multiple projects
+    run workers simultaneously, since each project has its own database.
+
+    Uses WAL mode (Write-Ahead Logging) for better concurrent performance:
+    - Multiple readers can proceed simultaneously
+    - Writers don't block readers
+    - Reduced lock contention compared to rollback journal mode
+
     Thread-safe via sqlite3's built-in serialization.
     """
 
@@ -226,10 +237,20 @@ class WorkerDatabase:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _get_connection(self) -> sqlite3.Connection:
-        """Get a database connection."""
+        """Get a database connection.
+
+        Enables WAL mode for better concurrent read/write performance.
+        WAL allows multiple readers and one writer simultaneously,
+        reducing contention compared to the default rollback journal mode.
+        """
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        # Enable WAL mode for better concurrency - allows concurrent reads
+        # while a write is in progress, and reduces lock contention
+        conn.execute("PRAGMA journal_mode = WAL")
+        # Set busy timeout to wait for locks instead of failing immediately
+        conn.execute("PRAGMA busy_timeout = 5000")  # 5 second timeout
         return conn
 
     def _init_schema(self) -> None:
@@ -494,6 +515,13 @@ class WorkerManager:
     - Monitoring worker health via heartbeat files
     - Detecting crashed workers and auto-restart with exponential backoff
     - Graceful and forceful worker termination
+
+    Supports both global and per-project database modes:
+    - Global mode: All workers stored in ~/.mab/workers.db (legacy)
+    - Per-project mode: Workers stored in <project>/.mab/workers.db
+
+    Per-project mode reduces contention when running workers across
+    multiple projects simultaneously.
     """
 
     def __init__(
@@ -503,18 +531,23 @@ class WorkerManager:
         health_config: HealthConfig | None = None,
         spawner_type: str = "subprocess",
         test_mode: bool = False,
+        db_path: Path | None = None,
     ) -> None:
         """Initialize WorkerManager.
 
         Args:
-            mab_dir: Global .mab directory (for database).
+            mab_dir: Global .mab directory (for logs, heartbeats).
             heartbeat_dir: Directory for heartbeat files.
             health_config: Health monitoring configuration.
             spawner_type: Type of spawner to use ("subprocess" or "tmux").
             test_mode: If True, use placeholder scripts instead of Claude CLI.
+            db_path: Path to workers database. If None, uses mab_dir/workers.db.
+                    For per-project isolation, pass <project>/.mab/workers.db.
         """
         self.mab_dir = mab_dir
-        self.db = WorkerDatabase(mab_dir / "workers.db")
+        # Support custom db_path for per-project databases
+        self._db_path = db_path or mab_dir / "workers.db"
+        self.db = WorkerDatabase(self._db_path)
         self.heartbeat_dir = heartbeat_dir or mab_dir / "heartbeat"
         self.health_config = health_config or HealthConfig()
         self._active_processes: dict[str, subprocess.Popen[bytes]] = {}
@@ -1321,16 +1354,66 @@ class WorkerManager:
 def get_default_worker_manager(
     mab_dir: Path | None = None,
     heartbeat_dir: Path | None = None,
+    db_path: Path | None = None,
 ) -> WorkerManager:
     """Get a WorkerManager with default configuration.
 
     Args:
         mab_dir: Global .mab directory. Defaults to ~/.mab/.
         heartbeat_dir: Heartbeat directory. Defaults to mab_dir/heartbeat.
+        db_path: Path to workers database. If None, uses mab_dir/workers.db.
 
     Returns:
         Configured WorkerManager.
     """
     if mab_dir is None:
         mab_dir = Path.home() / ".mab"
-    return WorkerManager(mab_dir=mab_dir, heartbeat_dir=heartbeat_dir)
+    return WorkerManager(mab_dir=mab_dir, heartbeat_dir=heartbeat_dir, db_path=db_path)
+
+
+def get_project_worker_manager(
+    project_path: Path,
+    mab_dir: Path | None = None,
+    health_config: HealthConfig | None = None,
+    spawner_type: str = "subprocess",
+    test_mode: bool = False,
+) -> WorkerManager:
+    """Get a WorkerManager with per-project database isolation.
+
+    This creates a WorkerManager that stores worker state in a project-specific
+    database (<project>/.mab/workers.db) rather than the global ~/.mab/workers.db.
+
+    Per-project databases reduce contention when multiple projects run workers
+    simultaneously, since each project has its own SQLite database with its
+    own file-level locking.
+
+    Args:
+        project_path: Path to the project directory. Workers database will be
+                     created at <project_path>/.mab/workers.db.
+        mab_dir: Global .mab directory for logs. Defaults to ~/.mab/.
+        health_config: Health monitoring configuration.
+        spawner_type: Type of spawner to use ("subprocess" or "tmux").
+        test_mode: If True, use placeholder scripts instead of Claude CLI.
+
+    Returns:
+        WorkerManager configured for per-project isolation.
+    """
+    if mab_dir is None:
+        mab_dir = Path.home() / ".mab"
+
+    # Project-specific paths
+    project_mab_dir = project_path / ".mab"
+    project_db_path = project_mab_dir / "workers.db"
+    project_heartbeat_dir = project_mab_dir / "heartbeat"
+
+    # Ensure project .mab directory exists
+    project_mab_dir.mkdir(parents=True, exist_ok=True)
+
+    return WorkerManager(
+        mab_dir=mab_dir,  # Global dir for logs
+        heartbeat_dir=project_heartbeat_dir,  # Per-project heartbeats
+        health_config=health_config,
+        spawner_type=spawner_type,
+        test_mode=test_mode,
+        db_path=project_db_path,  # Per-project database
+    )

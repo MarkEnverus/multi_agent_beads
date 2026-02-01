@@ -38,6 +38,7 @@ from mab.workers import (
     WorkerNotFoundError,
     WorkerSpawnError,
     WorkerStatus,
+    get_project_worker_manager,
 )
 
 # Global daemon location - one daemon per user manages all towns/projects
@@ -106,13 +107,22 @@ class Daemon:
         ├── daemon.lock           # Exclusive lock (flock)
         ├── daemon.log            # Daemon structured logs
         ├── mab.sock              # Unix socket for RPC
-        ├── workers.db            # SQLite state (ALL workers)
+        ├── workers.db            # SQLite state (global workers, legacy)
         └── config.yaml           # Global defaults
 
-        <project>/.mab/           # PER-PROJECT town config
+        <project>/.mab/           # PER-PROJECT worker isolation
+        ├── workers.db            # SQLite state (project workers - reduces contention)
         ├── config.yaml           # Town-specific overrides
         ├── logs/                 # Worker logs for this town
         └── heartbeat/            # Heartbeat files for workers
+
+    The daemon supports both global and per-project worker databases:
+    - Global (legacy): All workers in ~/.mab/workers.db
+    - Per-project: Workers in <project>/.mab/workers.db (recommended)
+
+    Per-project databases reduce SQLite lock contention when multiple projects
+    run workers simultaneously. Each project has its own database with its
+    own file-level locking, eliminating cross-project write serialization.
     """
 
     def __init__(
@@ -157,7 +167,8 @@ class Daemon:
         self._started_at: datetime | None = None
         self._rpc_server: RPCServer | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
-        self._worker_manager: WorkerManager | None = None
+        self._worker_manager: WorkerManager | None = None  # Global/fallback manager
+        self._project_managers: dict[str, WorkerManager] = {}  # Per-project managers
         self._health_check_task: asyncio.Task[None] | None = None
 
         # Set up logging
@@ -476,16 +487,24 @@ class Daemon:
                     pass
                 self.logger.info("Health check loop stopped")
 
-            # Cancel pending restarts
-            if self._worker_manager is not None:
-                cancelled = self._worker_manager.cancel_pending_restarts()
-                if cancelled > 0:
-                    self.logger.info(f"Cancelled {cancelled} pending restarts")
+            # Cancel pending restarts and stop workers from ALL managers
+            total_cancelled = 0
+            total_stopped = 0
 
-            # Stop all workers gracefully
             if self._worker_manager is not None:
+                total_cancelled += self._worker_manager.cancel_pending_restarts()
                 stopped = await self._worker_manager.stop_all(graceful=True)
-                self.logger.info(f"Stopped {len(stopped)} workers on shutdown")
+                total_stopped += len(stopped)
+
+            for manager in self._project_managers.values():
+                total_cancelled += manager.cancel_pending_restarts()
+                stopped = await manager.stop_all(graceful=True)
+                total_stopped += len(stopped)
+
+            if total_cancelled > 0:
+                self.logger.info(f"Cancelled {total_cancelled} pending restarts")
+            if total_stopped > 0:
+                self.logger.info(f"Stopped {total_stopped} workers on shutdown")
 
             # Stop RPC server
             if self._rpc_server is not None:
@@ -493,34 +512,70 @@ class Daemon:
                 self.logger.info("RPC server stopped")
 
     async def _health_check_loop(self) -> None:
-        """Periodic health check for workers with auto-restart."""
+        """Periodic health check for workers with auto-restart.
+
+        Checks all worker managers (global and per-project).
+        """
         while not self._shutting_down:
             try:
                 # Use configurable health check interval
                 await asyncio.sleep(self.health_config.health_check_interval_seconds)
 
+                # Check global manager
                 if self._worker_manager is not None:
-                    # Use health_check_and_restart for crash detection + auto-restart
-                    (
-                        crashed,
-                        restart_scheduled,
-                    ) = await self._worker_manager.health_check_and_restart()
+                    await self._run_health_check(self._worker_manager)
 
-                    for worker in crashed:
-                        self.logger.warning(
-                            f"Worker {worker.id} crashed (count: {worker.crash_count})"
-                        )
-
-                    for worker in restart_scheduled:
-                        backoff = self.health_config.calculate_backoff(worker.crash_count)
-                        self.logger.info(
-                            f"Auto-restart scheduled for {worker.id} in {backoff:.1f}s"
-                        )
+                # Check all per-project managers
+                for manager in self._project_managers.values():
+                    await self._run_health_check(manager)
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 self.logger.error(f"Health check error: {e}")
+
+    async def _run_health_check(self, manager: WorkerManager) -> None:
+        """Run health check on a single worker manager.
+
+        Args:
+            manager: The WorkerManager to check.
+        """
+        crashed, restart_scheduled = await manager.health_check_and_restart()
+
+        for worker in crashed:
+            self.logger.warning(
+                f"Worker {worker.id} crashed (count: {worker.crash_count})"
+            )
+
+        for worker in restart_scheduled:
+            backoff = self.health_config.calculate_backoff(worker.crash_count)
+            self.logger.info(
+                f"Auto-restart scheduled for {worker.id} in {backoff:.1f}s"
+            )
+
+    def _get_project_manager(self, project_path: str) -> WorkerManager:
+        """Get or create a project-specific WorkerManager.
+
+        Per-project managers use isolated databases to reduce SQLite lock
+        contention when multiple projects run workers simultaneously.
+
+        Args:
+            project_path: Path to the project directory.
+
+        Returns:
+            WorkerManager for the specified project.
+        """
+        if project_path not in self._project_managers:
+            project_dir = Path(project_path)
+            manager = get_project_worker_manager(
+                project_path=project_dir,
+                mab_dir=self.mab_dir,
+                health_config=self.health_config,
+            )
+            self._project_managers[project_path] = manager
+            self.logger.info(f"Created per-project worker manager for {project_path}")
+
+        return self._project_managers[project_path]
 
     def _register_rpc_handlers(self) -> None:
         """Register RPC method handlers."""
@@ -549,9 +604,12 @@ class Daemon:
         if self._started_at is not None:
             uptime_seconds = (datetime.now() - self._started_at).total_seconds()
 
+        # Count workers from all managers (global + per-project)
         workers_count = 0
         if self._worker_manager is not None:
-            workers_count = self._worker_manager.count_running()
+            workers_count += self._worker_manager.count_running()
+        for manager in self._project_managers.values():
+            workers_count += manager.count_running()
 
         return {
             "state": DaemonState.RUNNING.value,
@@ -583,35 +641,56 @@ class Daemon:
         """Handle worker.list RPC request.
 
         Returns list of all workers, optionally filtered by town/role/status.
+        Searches across all worker managers (global and per-project).
         """
-        if self._worker_manager is None:
-            return {"workers": []}
-
         # Parse filters
         status_str = params.get("status")
         status = WorkerStatus(status_str) if status_str else None
         project_path = params.get("project_path")
         role = params.get("role")
 
-        workers = self._worker_manager.list_workers(
-            status=status,
-            project_path=project_path,
-            role=role,
-        )
+        all_workers = []
 
-        return {"workers": [w.to_dict() for w in workers]}
+        # If filtering by project_path, only check that project's manager
+        if project_path:
+            if project_path in self._project_managers:
+                workers = self._project_managers[project_path].list_workers(
+                    status=status,
+                    project_path=project_path,
+                    role=role,
+                )
+                all_workers.extend(workers)
+            # Also check global manager for backwards compatibility
+            if self._worker_manager is not None:
+                workers = self._worker_manager.list_workers(
+                    status=status,
+                    project_path=project_path,
+                    role=role,
+                )
+                all_workers.extend(workers)
+        else:
+            # No project filter - aggregate from all managers
+            if self._worker_manager is not None:
+                workers = self._worker_manager.list_workers(
+                    status=status,
+                    role=role,
+                )
+                all_workers.extend(workers)
+            for manager in self._project_managers.values():
+                workers = manager.list_workers(
+                    status=status,
+                    role=role,
+                )
+                all_workers.extend(workers)
+
+        return {"workers": [w.to_dict() for w in all_workers]}
 
     async def _handle_worker_spawn(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle worker.spawn RPC request.
 
-        Spawns a new worker with the specified role.
+        Spawns a new worker with the specified role. Uses per-project worker
+        databases by default to reduce SQLite lock contention.
         """
-        if self._worker_manager is None:
-            raise RPCError(
-                RPCErrorCode.INTERNAL_ERROR,
-                "Worker manager not initialized",
-            )
-
         role = params.get("role")
         if not role:
             raise RPCError(
@@ -626,10 +705,20 @@ class Daemon:
                 "Missing required parameter: project_path",
             )
 
-        self.logger.info(f"Worker spawn requested: role={role}, project={project_path}")
+        # Use per-project manager for isolation (reduces DB contention)
+        use_global_db = params.get("use_global_db", False)
+        if use_global_db and self._worker_manager is not None:
+            manager = self._worker_manager
+        else:
+            manager = self._get_project_manager(project_path)
+
+        self.logger.info(
+            f"Worker spawn requested: role={role}, project={project_path}, "
+            f"db={'global' if use_global_db else 'per-project'}"
+        )
 
         try:
-            worker = await self._worker_manager.spawn(
+            worker = await manager.spawn(
                 role=role,
                 project_path=project_path,
                 auto_restart=params.get("auto_restart", True),
@@ -652,17 +741,41 @@ class Daemon:
                 f"Failed to spawn worker: {e}",
             )
 
+    def _find_worker_manager(self, worker_id: str) -> WorkerManager | None:
+        """Find the manager that contains a specific worker.
+
+        Searches across all managers (global and per-project) to find
+        the worker by ID.
+
+        Args:
+            worker_id: The worker ID to find.
+
+        Returns:
+            The WorkerManager containing the worker, or None if not found.
+        """
+        # Check global manager first
+        if self._worker_manager is not None:
+            try:
+                self._worker_manager.get(worker_id)
+                return self._worker_manager
+            except WorkerNotFoundError:
+                pass
+
+        # Check per-project managers
+        for manager in self._project_managers.values():
+            try:
+                manager.get(worker_id)
+                return manager
+            except WorkerNotFoundError:
+                pass
+
+        return None
+
     async def _handle_worker_stop(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle worker.stop RPC request.
 
-        Stops a worker by ID.
+        Stops a worker by ID. Searches across all managers to find the worker.
         """
-        if self._worker_manager is None:
-            raise RPCError(
-                RPCErrorCode.INTERNAL_ERROR,
-                "Worker manager not initialized",
-            )
-
         worker_id = params.get("worker_id")
         if not worker_id:
             raise RPCError(
@@ -673,10 +786,18 @@ class Daemon:
         graceful = params.get("graceful", True)
         timeout = params.get("timeout", 30.0)
 
+        # Find which manager has this worker
+        manager = self._find_worker_manager(worker_id)
+        if manager is None:
+            raise RPCError(
+                RPCErrorCode.INVALID_PARAMS,
+                f"Worker not found: {worker_id}",
+            )
+
         self.logger.info(f"Worker stop requested: worker_id={worker_id}")
 
         try:
-            worker = await self._worker_manager.stop(
+            worker = await manager.stop(
                 worker_id=worker_id,
                 graceful=graceful,
                 timeout=timeout,
@@ -704,14 +825,8 @@ class Daemon:
     async def _handle_worker_get(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle worker.get RPC request.
 
-        Returns details of a specific worker.
+        Returns details of a specific worker. Searches across all managers.
         """
-        if self._worker_manager is None:
-            raise RPCError(
-                RPCErrorCode.INTERNAL_ERROR,
-                "Worker manager not initialized",
-            )
-
         worker_id = params.get("worker_id")
         if not worker_id:
             raise RPCError(
@@ -719,8 +834,16 @@ class Daemon:
                 "Missing required parameter: worker_id",
             )
 
+        # Find which manager has this worker
+        manager = self._find_worker_manager(worker_id)
+        if manager is None:
+            raise RPCError(
+                RPCErrorCode.INVALID_PARAMS,
+                f"Worker not found: {worker_id}",
+            )
+
         try:
-            worker = self._worker_manager.get(worker_id)
+            worker = manager.get(worker_id)
             return {"worker": worker.to_dict()}
 
         except WorkerNotFoundError:
@@ -732,16 +855,40 @@ class Daemon:
     async def _handle_health_status(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle health.status RPC request.
 
-        Returns current health status including worker counts and configuration.
+        Returns aggregated health status from all worker managers.
         """
-        if self._worker_manager is None:
-            raise RPCError(
-                RPCErrorCode.INTERNAL_ERROR,
-                "Worker manager not initialized",
-            )
+        # Aggregate health status from all managers
+        total_healthy = 0
+        total_unhealthy = 0
+        total_crashed = 0
+        total_restarts = 0
+        total_at_max = 0
 
-        health_status = self._worker_manager.get_health_status()
-        return health_status.to_dict()
+        if self._worker_manager is not None:
+            status = self._worker_manager.get_health_status()
+            total_healthy += status.healthy_workers
+            total_unhealthy += status.unhealthy_workers
+            total_crashed += status.crashed_workers
+            total_restarts += status.total_restarts
+            total_at_max += status.workers_at_max_restarts
+
+        for manager in self._project_managers.values():
+            status = manager.get_health_status()
+            total_healthy += status.healthy_workers
+            total_unhealthy += status.unhealthy_workers
+            total_crashed += status.crashed_workers
+            total_restarts += status.total_restarts
+            total_at_max += status.workers_at_max_restarts
+
+        # Return aggregated status with global health config
+        return {
+            "healthy_workers": total_healthy,
+            "unhealthy_workers": total_unhealthy,
+            "crashed_workers": total_crashed,
+            "total_restarts": total_restarts,
+            "workers_at_max_restarts": total_at_max,
+            "config": self.health_config.to_dict(),
+        }
 
     def _cleanup(self) -> None:
         """Clean up daemon resources on shutdown."""

@@ -18,6 +18,7 @@ from mab.workers import (
     WorkerSpawnError,
     WorkerStatus,
     get_default_worker_manager,
+    get_project_worker_manager,
 )
 
 
@@ -456,6 +457,122 @@ class TestGetDefaultWorkerManager:
             heartbeat_dir=tmp_path / "heartbeat",
         )
         assert manager.heartbeat_dir == tmp_path / "heartbeat"
+
+    def test_custom_db_path(self, tmp_path: Path) -> None:
+        """Test manager with custom db_path for per-project isolation."""
+        custom_db = tmp_path / "project" / ".mab" / "workers.db"
+        manager = get_default_worker_manager(
+            mab_dir=tmp_path / ".mab",
+            db_path=custom_db,
+        )
+        assert manager._db_path == custom_db
+
+
+class TestGetProjectWorkerManager:
+    """Tests for get_project_worker_manager function."""
+
+    def test_creates_project_mab_directory(self, tmp_path: Path) -> None:
+        """Test that project .mab directory is created."""
+        project_path = tmp_path / "my_project"
+        project_path.mkdir()
+
+        manager = get_project_worker_manager(project_path=project_path)
+
+        assert (project_path / ".mab").exists()
+        assert (project_path / ".mab" / "heartbeat").exists()
+
+    def test_uses_project_database(self, tmp_path: Path) -> None:
+        """Test that manager uses project-specific database."""
+        project_path = tmp_path / "my_project"
+        project_path.mkdir()
+
+        manager = get_project_worker_manager(project_path=project_path)
+
+        expected_db = project_path / ".mab" / "workers.db"
+        assert manager._db_path == expected_db
+
+    def test_uses_project_heartbeat_dir(self, tmp_path: Path) -> None:
+        """Test that manager uses project-specific heartbeat directory."""
+        project_path = tmp_path / "my_project"
+        project_path.mkdir()
+
+        manager = get_project_worker_manager(project_path=project_path)
+
+        expected_heartbeat = project_path / ".mab" / "heartbeat"
+        assert manager.heartbeat_dir == expected_heartbeat
+
+    def test_uses_global_mab_dir(self, tmp_path: Path) -> None:
+        """Test that manager uses global mab_dir for logs."""
+        project_path = tmp_path / "my_project"
+        project_path.mkdir()
+        global_mab = tmp_path / "global_mab"
+
+        manager = get_project_worker_manager(
+            project_path=project_path,
+            mab_dir=global_mab,
+        )
+
+        assert manager.mab_dir == global_mab
+
+    def test_accepts_health_config(self, tmp_path: Path) -> None:
+        """Test that manager accepts custom health config."""
+        project_path = tmp_path / "my_project"
+        project_path.mkdir()
+        config = HealthConfig(max_restart_count=10)
+
+        manager = get_project_worker_manager(
+            project_path=project_path,
+            health_config=config,
+        )
+
+        assert manager.health_config.max_restart_count == 10
+
+    def test_isolation_between_projects(self, tmp_path: Path) -> None:
+        """Test that different projects have isolated databases."""
+        project1 = tmp_path / "project1"
+        project2 = tmp_path / "project2"
+        project1.mkdir()
+        project2.mkdir()
+
+        manager1 = get_project_worker_manager(project_path=project1)
+        manager2 = get_project_worker_manager(project_path=project2)
+
+        # Databases should be different files
+        assert manager1._db_path != manager2._db_path
+        assert manager1._db_path == project1 / ".mab" / "workers.db"
+        assert manager2._db_path == project2 / ".mab" / "workers.db"
+
+
+class TestWorkerDatabaseWAL:
+    """Tests for WAL mode in WorkerDatabase."""
+
+    def test_database_uses_wal_mode(self, tmp_path: Path) -> None:
+        """Test that database is configured with WAL journal mode."""
+        import sqlite3
+
+        db = WorkerDatabase(tmp_path / "workers.db")
+
+        # Check that WAL mode is enabled
+        conn = sqlite3.connect(str(db.db_path))
+        cursor = conn.execute("PRAGMA journal_mode")
+        result = cursor.fetchone()
+        conn.close()
+
+        assert result[0] == "wal"
+
+    def test_database_busy_timeout(self, tmp_path: Path) -> None:
+        """Test that database has busy timeout configured."""
+        import sqlite3
+
+        db = WorkerDatabase(tmp_path / "workers.db")
+
+        conn = sqlite3.connect(str(db.db_path))
+        cursor = conn.execute("PRAGMA busy_timeout")
+        result = cursor.fetchone()
+        conn.close()
+
+        # Should have a reasonable timeout (at least 1 second)
+        assert result[0] >= 1000
 
 
 class TestHealthConfig:
