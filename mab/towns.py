@@ -17,6 +17,8 @@ Each town provides:
 from __future__ import annotations
 
 import logging
+import os
+import signal
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -473,7 +475,13 @@ class TownManager:
         if town.status == TownStatus.RUNNING and not force:
             raise TownError(f"Town '{name}' is running. Stop it first or use --force.")
 
-        # TODO: Stop town dashboard if running
+        # Stop town dashboard if running
+        if town.status == TownStatus.RUNNING and town.pid:
+            try:
+                os.kill(town.pid, signal.SIGTERM)
+                logger.info(f"Stopped dashboard process {town.pid} for town '{name}'")
+            except (OSError, ProcessLookupError):
+                logger.debug(f"Dashboard process {town.pid} already terminated")
 
         deleted = self.db.delete_town(name)
         if deleted:
