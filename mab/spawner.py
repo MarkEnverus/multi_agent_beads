@@ -177,7 +177,17 @@ def create_worktree(
     # Check if worktree already exists
     if worktree_path.exists():
         logger.warning(f"Worktree already exists at {worktree_path}, removing first")
-        remove_worktree(git_root, worktree_path)
+        if not remove_worktree(git_root, worktree_path):
+            # Removal failed - use unique suffix to avoid collision
+            import uuid
+
+            suffix = uuid.uuid4().hex[:8]
+            original_path = worktree_path
+            worktree_path = worktrees_dir / f"{worker_id}-{suffix}"
+            logger.warning(
+                f"Failed to remove existing worktree at {original_path}, "
+                f"using unique path: {worktree_path}"
+            )
 
     # Create the worktree with a new branch from HEAD
     try:
@@ -269,7 +279,11 @@ def create_worktree(
                     f"Failed to create .beads symlink after {max_retries} attempts, "
                     "removing worktree"
                 )
-                remove_worktree(git_root, worktree_path)
+                if not remove_worktree(git_root, worktree_path):
+                    logger.warning(
+                        f"Failed to cleanup worktree at {worktree_path} after symlink failure. "
+                        "Manual cleanup may be required."
+                    )
                 raise SpawnerError(
                     message="Failed to create .beads symlink in worktree",
                     worker_id=worker_id,
@@ -1049,7 +1063,11 @@ while True:
             if worktree_path and is_git_repo(project):
                 git_root = get_git_root(project)
                 if git_root:
-                    remove_worktree(git_root, worktree_path)
+                    if not remove_worktree(git_root, worktree_path):
+                        logger.warning(
+                            f"Failed to cleanup worktree at {worktree_path} after spawn failure. "
+                            "Manual cleanup may be required."
+                        )
                 self._worktrees.pop(worker_id, None)
             raise SpawnerError(
                 message=f"Failed to spawn process: {e}",
@@ -1216,7 +1234,11 @@ while True:
             git_root = get_git_root(project_path)
             if git_root:
                 logger.info(f"Cleaning up worktree at {worktree_path}")
-                remove_worktree(git_root, worktree_path)
+                if not remove_worktree(git_root, worktree_path):
+                    logger.warning(
+                        f"Failed to cleanup worktree at {worktree_path} during termination. "
+                        "Manual cleanup may be required."
+                    )
 
         # Also check process_info for worktree (in case terminate called externally)
         if process_info.worktree_path and process_info.worktree_path.exists():
@@ -1226,7 +1248,11 @@ while True:
                 logger.info(
                     f"Cleaning up worktree from process_info at {process_info.worktree_path}"
                 )
-                remove_worktree(git_root, process_info.worktree_path)
+                if not remove_worktree(git_root, process_info.worktree_path):
+                    logger.warning(
+                        f"Failed to cleanup worktree at {process_info.worktree_path} "
+                        "during termination. Manual cleanup may be required."
+                    )
 
         # Get exit code
         if process_info.process:
