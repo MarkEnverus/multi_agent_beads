@@ -25,6 +25,7 @@ import fcntl
 import logging
 import os
 import pty
+import re
 import shutil
 import subprocess
 import termios
@@ -58,6 +59,30 @@ ROLE_TO_LABEL = {
 
 # Default worktrees directory name
 WORKTREES_DIR = ".worktrees"
+
+# Regex pattern for valid worker_id (alphanumeric, hyphens, underscores only)
+WORKER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+
+
+def validate_worker_id(worker_id: str) -> None:
+    """Validate worker_id to prevent shell injection.
+
+    Args:
+        worker_id: Worker identifier to validate.
+
+    Raises:
+        ValueError: If worker_id contains invalid characters.
+    """
+    if not worker_id:
+        raise ValueError("worker_id cannot be empty")
+    if len(worker_id) > 128:
+        raise ValueError(f"worker_id too long: {len(worker_id)} chars (max 128)")
+    if not WORKER_ID_PATTERN.match(worker_id):
+        raise ValueError(
+            f"Invalid worker_id '{worker_id}': must contain only "
+            "alphanumeric characters, hyphens, and underscores, "
+            "and must start with an alphanumeric character"
+        )
 
 
 def is_git_repo(path: Path) -> bool:
@@ -123,7 +148,13 @@ def create_worktree(
 
     Raises:
         SpawnerError: If worktree creation fails.
+        ValueError: If worker_id or bead_id contains invalid characters.
     """
+    # Validate inputs to prevent shell injection
+    validate_worker_id(worker_id)
+    if bead_id is not None:
+        validate_worker_id(bead_id)
+
     git_root = get_git_root(project_path)
     if git_root is None:
         raise SpawnerError(
@@ -761,6 +792,11 @@ class SubprocessSpawner(Spawner):
                 worker_id=worker_id,
             )
 
+        # Validate worker_id to prevent shell injection
+        validate_worker_id(worker_id)
+        if bead_id is not None:
+            validate_worker_id(bead_id)
+
         self._ensure_logs_dir()
 
         # Set up log file
@@ -1279,6 +1315,9 @@ class TmuxSpawner(Spawner):
                 role=role,
                 worker_id=worker_id,
             )
+
+        # Validate worker_id to prevent shell injection
+        validate_worker_id(worker_id)
 
         self._ensure_logs_dir()
 
