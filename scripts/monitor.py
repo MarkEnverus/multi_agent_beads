@@ -18,7 +18,12 @@ from pathlib import Path
 
 def clear_screen() -> None:
     """Clear terminal screen."""
-    os.system("cls" if os.name == "nt" else "clear")
+    if os.name == "nt":
+        # cls is a shell built-in on Windows, requires shell=True
+        subprocess.run("cls", shell=True, check=False)
+    else:
+        # clear is an executable on Unix, no shell needed
+        subprocess.run(["clear"], check=False)
 
 
 def get_beads_by_status() -> dict[str, list[dict]]:
