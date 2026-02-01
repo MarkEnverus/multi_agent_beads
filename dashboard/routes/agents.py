@@ -144,8 +144,22 @@ def _extract_agents_from_logs(entries: list[dict[str, Any]]) -> dict[int, dict[s
                 agents[pid]["status"] = "idle"
                 agents[pid]["last_activity"] = timestamp
         elif pid in agents:
-            # Any other activity updates timestamp
-            agents[pid]["last_activity"] = timestamp
+            # Only meaningful work events update the activity timestamp
+            # NO_WORK polls should NOT count as activity
+            meaningful_prefixes = (
+                "WORK_START:",
+                "READ:",
+                "TESTS",
+                "BEAD_CREATE:",
+                "PR_CREATE:",
+                "PR_CREATED:",
+                "PR_MERGED:",
+                "CI:",
+                "BLOCKED:",
+                "ERROR:",
+            )
+            if content.startswith(meaningful_prefixes):
+                agents[pid]["last_activity"] = timestamp
 
     return agents
 
