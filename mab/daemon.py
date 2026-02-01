@@ -32,6 +32,7 @@ from typing import Any
 from mab.rpc import RPCError, RPCErrorCode, RPCServer
 from mab.workers import (
     HealthConfig,
+    WorkerDatabase,
     WorkerError,
     WorkerManager,
     WorkerNotFoundError,
@@ -359,12 +360,20 @@ class Daemon:
             except ValueError:
                 pass
 
+        # Count running workers from database
+        workers_count = 0
+        try:
+            db = WorkerDatabase(MAB_HOME / "workers.db")
+            workers_count = db.count_workers(status=WorkerStatus.RUNNING)
+        except Exception:
+            pass  # If DB doesn't exist or is corrupted, default to 0
+
         return DaemonStatus(
             state=DaemonState.RUNNING,
             pid=pid,
             uptime_seconds=uptime_seconds,
             started_at=started_at,
-            workers_count=0,  # TODO: Read from workers.db
+            workers_count=workers_count,
         )
 
     def start(self, foreground: bool = False) -> None:
