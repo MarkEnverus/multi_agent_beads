@@ -21,11 +21,13 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
 import os
 import pty
 import shutil
 import subprocess
+import termios
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
@@ -849,18 +851,52 @@ while True:
             # Create pseudo-terminal
             master_fd, slave_fd = pty.openpty()
 
+            # Get slave device name for reopening in child
+            slave_name = os.ttyname(slave_fd)
+
+            def setup_pty_child() -> None:
+                """Set up PTY in child process before exec.
+
+                This ensures the PTY slave becomes the controlling terminal,
+                which is required for proper terminal I/O from Claude CLI.
+                """
+                # Create new session (makes this process session leader)
+                os.setsid()
+
+                # Open the slave PTY to make it the controlling terminal
+                # This must be done AFTER setsid() and the fd must be opened fresh
+                child_slave = os.open(slave_name, os.O_RDWR)
+
+                # Set the slave as controlling terminal (TIOCSCTTY)
+                # The 0 argument means don't steal from other sessions
+                try:
+                    fcntl.ioctl(child_slave, termios.TIOCSCTTY, 0)
+                except OSError:
+                    # May fail on some systems, but usually not fatal
+                    pass
+
+                # Redirect standard streams to the PTY
+                os.dup2(child_slave, 0)  # stdin
+                os.dup2(child_slave, 1)  # stdout
+                os.dup2(child_slave, 2)  # stderr
+
+                # Close the extra fd (0,1,2 now point to the pty)
+                if child_slave > 2:
+                    os.close(child_slave)
+
             # Fork the process - use working_dir (worktree) instead of project
+            # Note: preexec_fn handles session creation and PTY setup
             process = subprocess.Popen(
                 cmd,
-                stdin=slave_fd,
-                stdout=slave_fd,
-                stderr=slave_fd,
+                stdin=subprocess.DEVNULL,  # Will be overridden by preexec_fn
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 cwd=str(working_dir),
                 env=env,
-                start_new_session=True,
+                preexec_fn=setup_pty_child,
             )
 
-            # Close slave fd in parent (worker process uses it)
+            # Close slave fd in parent (child has its own copy from preexec_fn)
             os.close(slave_fd)
 
             # Start async task to copy PTY output to log file
@@ -942,6 +978,11 @@ while True:
                 worker_id=worker_id,
             ) from e
 
+    @staticmethod
+    def _read_pty(fd: int) -> bytes:
+        """Read from PTY fd - used in executor to avoid lambda closure issues."""
+        return os.read(fd, 4096)
+
     async def _copy_pty_to_log(
         self,
         master_fd: int,
@@ -955,25 +996,35 @@ while True:
             log_fd: Log file descriptor.
             worker_id: Worker ID for logging.
         """
-        loop = asyncio.get_event_loop()
+        # Use get_running_loop() to ensure we get the correct event loop
+        # (get_event_loop() behavior is inconsistent in Python 3.10+)
+        loop = asyncio.get_running_loop()
         bytes_written = 0
         read_errors = 0
+
+        logger.debug(f"Starting PTY copy for {worker_id}, master_fd={master_fd}")
 
         try:
             while True:
                 # Read from PTY (non-blocking via asyncio)
+                # Use functools.partial or explicit function to avoid lambda closure issues
                 try:
                     data = await loop.run_in_executor(
                         None,
-                        lambda: os.read(master_fd, 4096),
+                        self._read_pty,
+                        master_fd,
                     )
                 except OSError as e:
-                    # PTY closed - write final message
+                    # PTY closed or error - common when process exits
                     read_errors += 1
-                    logger.debug(f"PTY read error for {worker_id}: {e}")
+                    if e.errno == 5:  # EIO - normal when slave closes
+                        logger.debug(f"PTY closed for {worker_id} (process likely exited)")
+                    else:
+                        logger.debug(f"PTY read error for {worker_id}: {e}")
                     break
 
                 if not data:
+                    logger.debug(f"PTY EOF for {worker_id}")
                     break
 
                 # Write to log file
@@ -1012,19 +1063,22 @@ while True:
             except OSError:
                 pass
         finally:
-            # Write session end marker if we logged anything
-            if bytes_written > 0:
-                try:
-                    end_msg = (
-                        f"\n{'=' * 40}\n"
-                        f"=== SESSION ENDED ===\n"
-                        f"Time: {datetime.now().isoformat()}\n"
-                        f"Total bytes logged: {bytes_written}\n"
-                        f"{'=' * 40}\n"
-                    ).encode("utf-8")
-                    os.write(log_fd, end_msg)
-                except OSError:
-                    pass
+            # Always write session end marker (helps debugging even with 0 bytes)
+            try:
+                end_msg = (
+                    f"\n{'=' * 40}\n"
+                    f"=== SESSION ENDED ===\n"
+                    f"Time: {datetime.now().isoformat()}\n"
+                    f"Total bytes logged: {bytes_written}\n"
+                    f"Read errors: {read_errors}\n"
+                    f"{'=' * 40}\n"
+                ).encode("utf-8")
+                os.write(log_fd, end_msg)
+            except OSError:
+                pass
+            logger.debug(
+                f"PTY copy ended for {worker_id}: {bytes_written} bytes, {read_errors} errors"
+            )
             try:
                 os.close(log_fd)
             except OSError:
