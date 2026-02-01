@@ -229,6 +229,7 @@ def create_worktree(
                 # Small delay between retries to handle transient issues
                 if attempt < max_retries:
                     import time
+
                     time.sleep(0.1)
 
             if not symlink_created:
