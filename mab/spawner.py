@@ -182,40 +182,68 @@ def create_worktree(
 
         if main_beads.exists():
             symlink_created = False
-            try:
-                # Remove the stale .beads directory in the worktree
-                # Git worktree add copies tracked files, including .beads contents
-                if worktree_beads.exists() and not worktree_beads.is_symlink():
-                    logger.info(f"Removing stale .beads directory in worktree: {worktree_beads}")
-                    shutil.rmtree(worktree_beads)
-                elif worktree_beads.is_symlink():
-                    logger.debug(f"Removing existing .beads symlink: {worktree_beads}")
-                    worktree_beads.unlink()
+            last_error: Exception | None = None
+            max_retries = 3
 
-                # Create symlink to main project's .beads
-                worktree_beads.symlink_to(main_beads, target_is_directory=True)
-
-                # Verify the symlink was created correctly
-                if worktree_beads.is_symlink():
-                    resolved = worktree_beads.resolve()
-                    if resolved == main_beads.resolve():
-                        logger.info(f"Symlinked .beads from {main_beads} to {worktree_beads}")
-                        symlink_created = True
-                    else:
-                        logger.error(
-                            f"Symlink created but points to wrong target: {resolved} "
-                            f"(expected {main_beads.resolve()})"
+            for attempt in range(1, max_retries + 1):
+                try:
+                    # Remove the stale .beads directory in the worktree
+                    # Git worktree add copies tracked files, including .beads contents
+                    if worktree_beads.exists() and not worktree_beads.is_symlink():
+                        logger.info(
+                            f"Removing stale .beads directory in worktree: {worktree_beads} "
+                            f"(attempt {attempt}/{max_retries})"
                         )
-                else:
-                    logger.error(f"Failed to create symlink at {worktree_beads}")
+                        shutil.rmtree(worktree_beads)
+                    elif worktree_beads.is_symlink():
+                        logger.debug(f"Removing existing .beads symlink: {worktree_beads}")
+                        worktree_beads.unlink()
 
-            except OSError as e:
-                logger.error(f"Failed to create .beads symlink in worktree {worktree_path}: {e}")
+                    # Create symlink to main project's .beads
+                    worktree_beads.symlink_to(main_beads, target_is_directory=True)
+
+                    # Verify the symlink was created correctly
+                    if worktree_beads.is_symlink():
+                        resolved = worktree_beads.resolve()
+                        if resolved == main_beads.resolve():
+                            logger.info(f"Symlinked .beads from {main_beads} to {worktree_beads}")
+                            symlink_created = True
+                            break
+                        else:
+                            last_error = OSError(
+                                f"Symlink created but points to wrong target: {resolved} "
+                                f"(expected {main_beads.resolve()})"
+                            )
+                            logger.error(str(last_error))
+                    else:
+                        last_error = OSError(f"Failed to create symlink at {worktree_beads}")
+                        logger.error(str(last_error))
+
+                except OSError as e:
+                    last_error = e
+                    logger.error(
+                        f"Failed to create .beads symlink in worktree {worktree_path} "
+                        f"(attempt {attempt}/{max_retries}): {e}"
+                    )
+
+                # Small delay between retries to handle transient issues
+                if attempt < max_retries:
+                    import time
+
+                    time.sleep(0.1)
 
             if not symlink_created:
-                logger.warning(
-                    f"Worktree {worktree_path} has no .beads symlink! "
-                    "Workers MUST use BD_ROOT env var or --db flag to access live beads."
+                # Remove the worktree since it's unusable without the beads symlink
+                logger.error(
+                    f"Failed to create .beads symlink after {max_retries} attempts, "
+                    "removing worktree"
+                )
+                remove_worktree(git_root, worktree_path)
+                raise SpawnerError(
+                    message="Failed to create .beads symlink in worktree",
+                    worker_id=worker_id,
+                    detail=f"Workers cannot operate without access to live beads database. "
+                    f"Last error: {last_error}",
                 )
         else:
             logger.debug(f"No .beads directory found at {main_beads}, skipping symlink")
