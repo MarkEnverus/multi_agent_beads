@@ -60,10 +60,31 @@ def has_git_remote() -> bool:
         return False
 
 
+def _bead_id_in_meaningful_context(pr: dict, bead_id: str) -> bool:
+    """Check if bead_id appears in a meaningful PR context.
+
+    Validates that the bead_id is referenced in the PR title, body, or
+    head branch name - not just in an unrelated comment.
+
+    Args:
+        pr: PR data dict with title, body, and headRefName fields
+        bead_id: The bead identifier to search for
+
+    Returns:
+        True if bead_id appears in title, body, or branch name
+    """
+    title = pr.get("title", "") or ""
+    body = pr.get("body", "") or ""
+    branch = pr.get("headRefName", "") or ""
+
+    return bead_id in title or bead_id in body or bead_id in branch
+
+
 def get_pr_for_bead(bead_id: str) -> PRInfo | None:
     """Find a PR that references the given bead ID.
 
-    Searches for PRs that mention the bead ID in title, body, or commits.
+    Searches for PRs that mention the bead ID in title, body, or branch name.
+    PRs that only reference the bead ID in comments are excluded.
 
     Args:
         bead_id: The bead identifier (e.g., "multi_agent_beads-9zu7")
@@ -87,7 +108,7 @@ def get_pr_for_bead(bead_id: str) -> PRInfo | None:
                 "--search",
                 bead_id,
                 "--json",
-                "number,title,state,url,mergedAt",
+                "number,title,body,headRefName,state,url,mergedAt",
                 "--limit",
                 "10",
             ],
@@ -102,6 +123,10 @@ def get_pr_for_bead(bead_id: str) -> PRInfo | None:
         prs = json.loads(result.stdout) if result.stdout.strip() else []
 
         for pr in prs:
+            # Verify bead_id is in a meaningful context, not just a comment
+            if not _bead_id_in_meaningful_context(pr, bead_id):
+                continue
+
             status = PRStatus.NOT_FOUND
             if pr.get("state") == "MERGED":
                 status = PRStatus.MERGED

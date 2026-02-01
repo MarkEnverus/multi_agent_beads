@@ -10,6 +10,7 @@ from mab.pr_validation import (
     PRInfo,
     PRStatus,
     ValidationResult,
+    _bead_id_in_meaningful_context,
     get_pr_by_number,
     get_pr_for_bead,
     has_git_remote,
@@ -42,6 +43,40 @@ class TestHasGitRemote:
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=5)
             assert has_git_remote() is False
+
+
+class TestBeadIdInMeaningfulContext:
+    """Tests for _bead_id_in_meaningful_context helper function."""
+
+    def test_returns_true_when_bead_in_title(self) -> None:
+        """Test returns True when bead_id is in PR title."""
+        pr = {"title": "Fix multi_agent_beads-abc12", "body": "", "headRefName": "main"}
+        assert _bead_id_in_meaningful_context(pr, "multi_agent_beads-abc12") is True
+
+    def test_returns_true_when_bead_in_body(self) -> None:
+        """Test returns True when bead_id is in PR body."""
+        pr = {"title": "Some PR", "body": "Fixes multi_agent_beads-xyz99", "headRefName": "main"}
+        assert _bead_id_in_meaningful_context(pr, "multi_agent_beads-xyz99") is True
+
+    def test_returns_true_when_bead_in_branch(self) -> None:
+        """Test returns True when bead_id is in branch name."""
+        pr = {"title": "Some PR", "body": "Description", "headRefName": "multi_agent_beads-def45"}
+        assert _bead_id_in_meaningful_context(pr, "multi_agent_beads-def45") is True
+
+    def test_returns_false_when_bead_not_in_any_field(self) -> None:
+        """Test returns False when bead_id is not in title, body, or branch."""
+        pr = {"title": "Unrelated PR", "body": "Other content", "headRefName": "feature/other"}
+        assert _bead_id_in_meaningful_context(pr, "multi_agent_beads-missing") is False
+
+    def test_handles_none_values(self) -> None:
+        """Test handles None values gracefully."""
+        pr = {"title": None, "body": None, "headRefName": None}
+        assert _bead_id_in_meaningful_context(pr, "test-bead") is False
+
+    def test_handles_missing_keys(self) -> None:
+        """Test handles missing keys gracefully."""
+        pr = {}
+        assert _bead_id_in_meaningful_context(pr, "test-bead") is False
 
 
 class TestGetPRForBead:
@@ -111,6 +146,80 @@ class TestGetPRForBead:
                 )
                 result = get_pr_for_bead("unknown-bead-999")
                 assert result is None
+
+    def test_filters_pr_without_bead_in_meaningful_context(self) -> None:
+        """Test filters out PRs where bead_id only appears in comments, not title/body/branch."""
+        # PR data where bead_id is NOT in title, body, or branch
+        # This simulates a PR that was returned by search but only mentions bead in a comment
+        pr_data = [
+            {
+                "number": 99,
+                "title": "Unrelated PR title",
+                "body": "Some other description without the bead reference",
+                "headRefName": "feature/other-branch",
+                "state": "MERGED",
+                "url": "https://github.com/user/repo/pull/99",
+                "mergedAt": "2024-01-15T10:30:00Z",
+            }
+        ]
+
+        with patch("mab.pr_validation.has_git_remote", return_value=True):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(
+                    returncode=0,
+                    stdout=json.dumps(pr_data),
+                )
+                # Should return None because bead_id not in title/body/branch
+                result = get_pr_for_bead("test-bead-123")
+                assert result is None
+
+    def test_matches_pr_with_bead_in_body(self) -> None:
+        """Test matches PR when bead_id is in body."""
+        pr_data = [
+            {
+                "number": 100,
+                "title": "Some PR",
+                "body": "Fixes test-bead-body-456 bug",
+                "headRefName": "feature/other",
+                "state": "MERGED",
+                "url": "https://github.com/user/repo/pull/100",
+                "mergedAt": "2024-01-15T10:30:00Z",
+            }
+        ]
+
+        with patch("mab.pr_validation.has_git_remote", return_value=True):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(
+                    returncode=0,
+                    stdout=json.dumps(pr_data),
+                )
+                result = get_pr_for_bead("test-bead-body-456")
+                assert result is not None
+                assert result.number == 100
+
+    def test_matches_pr_with_bead_in_branch(self) -> None:
+        """Test matches PR when bead_id is in branch name."""
+        pr_data = [
+            {
+                "number": 101,
+                "title": "Some PR",
+                "body": "Some description",
+                "headRefName": "test-bead-branch-789",
+                "state": "MERGED",
+                "url": "https://github.com/user/repo/pull/101",
+                "mergedAt": "2024-01-15T10:30:00Z",
+            }
+        ]
+
+        with patch("mab.pr_validation.has_git_remote", return_value=True):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(
+                    returncode=0,
+                    stdout=json.dumps(pr_data),
+                )
+                result = get_pr_for_bead("test-bead-branch-789")
+                assert result is not None
+                assert result.number == 101
 
 
 class TestGetPRByNumber:
