@@ -16,6 +16,7 @@ import json
 import os
 import socket
 import struct
+import time
 import uuid
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -191,6 +192,7 @@ class RPCClient:
     """
 
     DEFAULT_TIMEOUT = 30.0
+    MAX_IDLE_TIME = 300.0  # 5 minutes - discard connections idle longer than this
 
     def __init__(self, mab_dir: Path | None = None) -> None:
         """Initialize RPC client.
@@ -200,7 +202,8 @@ class RPCClient:
         """
         self.mab_dir = mab_dir or MAB_HOME
         self.socket_path = self.mab_dir / "mab.sock"
-        self._connection_pool: list[socket.socket] = []
+        # Pool stores tuples of (socket, last_used_time)
+        self._connection_pool: list[tuple[socket.socket, float]] = []
         self._pool_size = 3
 
     def _get_connection(self, timeout: float) -> socket.socket:
@@ -221,8 +224,17 @@ class RPCClient:
             raise DaemonNotRunningError("Daemon socket not found")
 
         # Try to reuse from pool
+        current_time = time.monotonic()
         while self._connection_pool:
-            sock = self._connection_pool.pop()
+            sock, last_used = self._connection_pool.pop()
+
+            # Check if connection has been idle too long
+            idle_time = current_time - last_used
+            if idle_time > self.MAX_IDLE_TIME:
+                # Connection is stale, discard it
+                sock.close()
+                continue
+
             try:
                 # Test if connection is still alive
                 sock.setblocking(False)
@@ -265,7 +277,7 @@ class RPCClient:
             sock: Socket to return.
         """
         if len(self._connection_pool) < self._pool_size:
-            self._connection_pool.append(sock)
+            self._connection_pool.append((sock, time.monotonic()))
         else:
             sock.close()
 
@@ -389,7 +401,7 @@ class RPCClient:
 
     def close(self) -> None:
         """Close all connections in the pool."""
-        for sock in self._connection_pool:
+        for sock, _ in self._connection_pool:
             try:
                 sock.close()
             except Exception:
