@@ -519,7 +519,9 @@ class WorkerManager:
         self.health_config = health_config or HealthConfig()
         self._active_processes: dict[str, subprocess.Popen[bytes]] = {}
         self._active_process_info: dict[str, ProcessInfo] = {}
-        self._cached_exit_codes: dict[str, int] = {}  # Cache exit codes to prevent race condition loss
+        self._cached_exit_codes: dict[
+            str, int
+        ] = {}  # Cache exit codes to prevent race condition loss
         self._pending_restarts: dict[str, asyncio.Task[None]] = {}
         self._test_mode = test_mode
 
