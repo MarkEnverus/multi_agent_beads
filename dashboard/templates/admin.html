@@ -1093,7 +1093,7 @@
 
             if (response.ok) {
                 const data = await response.json();
-                showToast(`Worker spawned: ${data.worker_id}`, 'success');
+                showToast(`Worker spawned: ${data.id}`, 'success');
                 refreshAll();
             } else {
                 const error = await response.json();
