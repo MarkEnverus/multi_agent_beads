@@ -860,6 +860,11 @@ while True:
         logger.debug(f"Command: {' '.join(cmd[:2])}...")
         logger.debug(f"Log file: {log_file}")
 
+        # Initialize fd variables for cleanup tracking
+        log_fd = -1
+        master_fd = -1
+        slave_fd = -1
+
         try:
             # Open log file for writing
             log_fd = os.open(str(log_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
@@ -926,6 +931,7 @@ while True:
 
             # Close slave fd in parent (child has its own copy from preexec_fn)
             os.close(slave_fd)
+            slave_fd = -1  # Mark as closed for cleanup tracking
 
             # Start async task to copy PTY output to log file
             asyncio.create_task(self._copy_pty_to_log(master_fd, log_fd, worker_id))
@@ -969,7 +975,9 @@ while True:
                 os.write(log_fd, crash_msg)
 
                 os.close(master_fd)
+                master_fd = -1  # Mark as closed for cleanup tracking
                 os.close(log_fd)
+                log_fd = -1  # Mark as closed for cleanup tracking
                 raise SpawnerError(
                     message=f"Worker process exited immediately (code {exit_code})",
                     role=role,
@@ -994,6 +1002,13 @@ while True:
             )
 
         except OSError as e:
+            # Clean up file descriptors to prevent leaks
+            for fd in (slave_fd, master_fd, log_fd):
+                if fd >= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass  # Already closed or invalid
             # Clean up worktree if spawn failed
             if worktree_path and is_git_repo(project):
                 git_root = get_git_root(project)
