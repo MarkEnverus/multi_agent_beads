@@ -476,7 +476,7 @@ class TestGetProjectWorkerManager:
         project_path = tmp_path / "my_project"
         project_path.mkdir()
 
-        manager = get_project_worker_manager(project_path=project_path)
+        get_project_worker_manager(project_path=project_path)
 
         assert (project_path / ".mab").exists()
         assert (project_path / ".mab" / "heartbeat").exists()
