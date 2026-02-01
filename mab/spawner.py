@@ -1077,8 +1077,7 @@ while True:
             except OSError:
                 pass
             logger.debug(
-                f"PTY copy ended for {worker_id}: "
-                f"{bytes_written} bytes, {read_errors} errors"
+                f"PTY copy ended for {worker_id}: {bytes_written} bytes, {read_errors} errors"
             )
             try:
                 os.close(log_fd)
