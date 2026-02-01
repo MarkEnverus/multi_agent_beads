@@ -543,15 +543,11 @@ class Daemon:
         crashed, restart_scheduled = await manager.health_check_and_restart()
 
         for worker in crashed:
-            self.logger.warning(
-                f"Worker {worker.id} crashed (count: {worker.crash_count})"
-            )
+            self.logger.warning(f"Worker {worker.id} crashed (count: {worker.crash_count})")
 
         for worker in restart_scheduled:
             backoff = self.health_config.calculate_backoff(worker.crash_count)
-            self.logger.info(
-                f"Auto-restart scheduled for {worker.id} in {backoff:.1f}s"
-            )
+            self.logger.info(f"Auto-restart scheduled for {worker.id} in {backoff:.1f}s")
 
     def _get_project_manager(self, project_path: str) -> WorkerManager:
         """Get or create a project-specific WorkerManager.
