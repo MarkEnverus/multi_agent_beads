@@ -6,15 +6,17 @@ Manages dashboard processes across multiple projects with:
 - Project-specific isolation
 """
 
+import fcntl
 import hashlib
 import json
 import os
 import signal
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from mab.daemon import MAB_HOME
 
@@ -67,6 +69,29 @@ class DashboardManager:
         # Ensure directories exist
         self.mab_home.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Lock file for synchronizing dashboard operations
+        self._lock_file = self.mab_home / "dashboard.lock"
+
+    @contextmanager
+    def _dashboard_lock(self) -> Iterator[None]:
+        """Acquire an exclusive lock for dashboard operations.
+
+        This prevents race conditions when multiple processes try to
+        start dashboards simultaneously.
+        """
+        # Create lock file if it doesn't exist
+        self._lock_file.touch(exist_ok=True)
+
+        lock_fd = open(self._lock_file, "r")
+        try:
+            # Acquire exclusive lock (blocks until available)
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            # Release lock
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+            lock_fd.close()
 
     def _get_project_hash(self, project_path: Path) -> str:
         """Generate a short hash for a project path."""
@@ -211,70 +236,73 @@ class DashboardManager:
         project_path = project_path.resolve()
         project_hash = self._get_project_hash(project_path)
 
-        # Check if already running
-        existing = self.get_dashboard(project_path)
-        if existing:
-            raise DashboardAlreadyRunningError(
-                f"Dashboard already running for {project_path} on port {existing.port}"
-            )
-
-        # Load dashboards and find port
-        dashboards = self._load_dashboards()
-        if port is None:
-            port = self._find_available_port(dashboards)
-
-        # Prepare paths
-        project_name = project_path.name
-        log_file = self._get_log_file(project_name)
-        pid_file = self._get_pid_file(project_hash)
-
-        # Build command to start dashboard
-        # Use uvicorn directly for proper daemon support
-        cmd = [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "dashboard.app:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-        ]
-
-        # Set environment variables
-        env = os.environ.copy()
-        env["DASHBOARD_PORT"] = str(port)
-        env["DASHBOARD_TOWN"] = project_name
-
-        # Start as background process
-        with open(log_file, "a") as log_handle:
-            try:
-                process = subprocess.Popen(
-                    cmd,
-                    cwd=str(project_path),
-                    stdout=log_handle,
-                    stderr=subprocess.STDOUT,
-                    env=env,
-                    start_new_session=True,
+        # Use file locking to prevent race conditions when multiple processes
+        # try to start dashboards simultaneously
+        with self._dashboard_lock():
+            # Check if already running (inside lock to prevent TOCTOU race)
+            existing = self.get_dashboard(project_path)
+            if existing:
+                raise DashboardAlreadyRunningError(
+                    f"Dashboard already running for {project_path} on port {existing.port}"
                 )
-            except Exception as e:
-                raise DashboardStartError(f"Failed to start dashboard: {e}") from e
 
-        # Write PID file
-        self._write_pid_file(pid_file, process.pid)
+            # Load dashboards and find port (inside lock for atomic port assignment)
+            dashboards = self._load_dashboards()
+            if port is None:
+                port = self._find_available_port(dashboards)
 
-        # Register dashboard
-        dashboard = DashboardInfo(
-            project_path=str(project_path),
-            port=port,
-            pid=process.pid,
-            project_hash=project_hash,
-            log_file=str(log_file),
-        )
-        dashboards[project_hash] = dashboard
-        self._save_dashboards(dashboards)
+            # Prepare paths
+            project_name = project_path.name
+            log_file = self._get_log_file(project_name)
+            pid_file = self._get_pid_file(project_hash)
 
-        return dashboard
+            # Build command to start dashboard
+            # Use uvicorn directly for proper daemon support
+            cmd = [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "dashboard.app:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+            ]
+
+            # Set environment variables
+            env = os.environ.copy()
+            env["DASHBOARD_PORT"] = str(port)
+            env["DASHBOARD_TOWN"] = project_name
+
+            # Start as background process
+            with open(log_file, "a") as log_handle:
+                try:
+                    process = subprocess.Popen(
+                        cmd,
+                        cwd=str(project_path),
+                        stdout=log_handle,
+                        stderr=subprocess.STDOUT,
+                        env=env,
+                        start_new_session=True,
+                    )
+                except Exception as e:
+                    raise DashboardStartError(f"Failed to start dashboard: {e}") from e
+
+            # Write PID file
+            self._write_pid_file(pid_file, process.pid)
+
+            # Register dashboard
+            dashboard = DashboardInfo(
+                project_path=str(project_path),
+                port=port,
+                pid=process.pid,
+                project_hash=project_hash,
+                log_file=str(log_file),
+            )
+            dashboards[project_hash] = dashboard
+            self._save_dashboards(dashboards)
+
+            return dashboard
 
     def stop(self, project_path: Path, force: bool = False) -> bool:
         """Stop a dashboard for a project.
