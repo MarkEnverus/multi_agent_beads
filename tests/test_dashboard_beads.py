@@ -616,3 +616,62 @@ class TestResponseConsistency:
             response = client.get("/api/beads/test-id-123")
 
             assert "test-id-123" in response.json()["message"]
+
+
+class TestCacheFailureTracking:
+    """Tests for cache refresh failure tracking."""
+
+    def test_record_refresh_failure_increments_count(self) -> None:
+        """Test that recording failures increments the count."""
+        from dashboard.services.beads import _BeadCache
+
+        cache = _BeadCache()
+        assert cache.get_failure_count("test-key") == 0
+
+        count1 = cache.record_refresh_failure("test-key")
+        assert count1 == 1
+        assert cache.get_failure_count("test-key") == 1
+
+        count2 = cache.record_refresh_failure("test-key")
+        assert count2 == 2
+        assert cache.get_failure_count("test-key") == 2
+
+    def test_reset_failure_count_clears_count(self) -> None:
+        """Test that resetting failure count clears it."""
+        from dashboard.services.beads import _BeadCache
+
+        cache = _BeadCache()
+        cache.record_refresh_failure("test-key")
+        cache.record_refresh_failure("test-key")
+        assert cache.get_failure_count("test-key") == 2
+
+        cache.reset_failure_count("test-key")
+        assert cache.get_failure_count("test-key") == 0
+
+    def test_reset_nonexistent_key_is_safe(self) -> None:
+        """Test that resetting a non-existent key doesn't raise."""
+        from dashboard.services.beads import _BeadCache
+
+        cache = _BeadCache()
+        cache.reset_failure_count("nonexistent")  # Should not raise
+        assert cache.get_failure_count("nonexistent") == 0
+
+    def test_get_all_failure_counts_returns_all(self) -> None:
+        """Test that get_all_failure_counts returns all failures."""
+        from dashboard.services.beads import _BeadCache
+
+        cache = _BeadCache()
+        cache.record_refresh_failure("key1")
+        cache.record_refresh_failure("key1")
+        cache.record_refresh_failure("key2")
+
+        all_counts = cache.get_all_failure_counts()
+        assert all_counts == {"key1": 2, "key2": 1}
+
+    def test_failure_alert_threshold_is_defined(self) -> None:
+        """Test that FAILURE_ALERT_THRESHOLD is defined and reasonable."""
+        from dashboard.services.beads import _BeadCache
+
+        assert hasattr(_BeadCache, "FAILURE_ALERT_THRESHOLD")
+        assert _BeadCache.FAILURE_ALERT_THRESHOLD >= 2
+        assert _BeadCache.FAILURE_ALERT_THRESHOLD <= 10

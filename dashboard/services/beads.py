@@ -56,7 +56,13 @@ class _BeadCache:
     - Fresh TTL: Data within this age is served directly (default 30s)
     - Stale TTL: Data within this age is served while triggering background refresh (default 120s)
     - Beyond stale TTL: Cache miss, must block on fresh data
+
+    Also tracks consecutive refresh failures per cache key and emits alerts
+    when failures exceed a threshold, preventing silent stale data issues.
     """
+
+    # Number of consecutive failures before escalating to error-level logging
+    FAILURE_ALERT_THRESHOLD = 3
 
     def __init__(
         self,
@@ -68,6 +74,8 @@ class _BeadCache:
         self._stale_ttl = stale_ttl
         # Track which keys are currently being refreshed to prevent stampede
         self._refreshing: set[str] = set()
+        # Track consecutive refresh failures per key
+        self._failure_counts: dict[str, int] = {}
 
     def get(self, key: str) -> Any | None:
         """Get cached value if not expired (beyond stale TTL)."""
@@ -139,6 +147,31 @@ class _BeadCache:
     def make_key(self, *args: Any) -> str:
         """Create a cache key from arguments."""
         return ":".join(str(a) for a in args)
+
+    def record_refresh_failure(self, key: str) -> int:
+        """Record a refresh failure for a cache key.
+
+        Returns the current consecutive failure count for this key.
+        When failures exceed FAILURE_ALERT_THRESHOLD, higher-severity
+        logging should be used to alert operators.
+        """
+        self._failure_counts[key] = self._failure_counts.get(key, 0) + 1
+        return self._failure_counts[key]
+
+    def reset_failure_count(self, key: str) -> None:
+        """Reset failure count for a cache key after successful refresh."""
+        self._failure_counts.pop(key, None)
+
+    def get_failure_count(self, key: str) -> int:
+        """Get the current failure count for a cache key."""
+        return self._failure_counts.get(key, 0)
+
+    def get_all_failure_counts(self) -> dict[str, int]:
+        """Get all cache keys with non-zero failure counts.
+
+        Useful for exposing cache health to monitoring endpoints.
+        """
+        return dict(self._failure_counts)
 
 
 # Global cache instance
@@ -771,6 +804,7 @@ class BeadService:
         try:
             result = cls._fetch_kanban_data(done_limit)
             _cache.set(cache_key, result)
+            _cache.reset_failure_count(cache_key)
             elapsed = time.monotonic() - start
             logger.debug(
                 "Background refresh complete in %.2fs: %d beads",
@@ -779,6 +813,25 @@ class BeadService:
             )
         except Exception as e:
             elapsed = time.monotonic() - start
-            logger.warning("Background refresh failed after %.2fs: %s", elapsed, e)
+            failure_count = _cache.record_refresh_failure(cache_key)
+            if failure_count >= _cache.FAILURE_ALERT_THRESHOLD:
+                logger.error(
+                    "Background refresh for %s failed %d consecutive times "
+                    "(threshold: %d). Dashboard may show stale data. "
+                    "Last error after %.2fs: %s",
+                    cache_key,
+                    failure_count,
+                    _cache.FAILURE_ALERT_THRESHOLD,
+                    elapsed,
+                    e,
+                )
+            else:
+                logger.warning(
+                    "Background refresh failed after %.2fs (%d/%d failures): %s",
+                    elapsed,
+                    failure_count,
+                    _cache.FAILURE_ALERT_THRESHOLD,
+                    e,
+                )
         finally:
             _cache.mark_refresh_complete(cache_key)
