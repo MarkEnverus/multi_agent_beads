@@ -519,6 +519,7 @@ class WorkerManager:
         self.health_config = health_config or HealthConfig()
         self._active_processes: dict[str, subprocess.Popen[bytes]] = {}
         self._active_process_info: dict[str, ProcessInfo] = {}
+        self._cached_exit_codes: dict[str, int] = {}  # Cache exit codes to prevent race condition loss
         self._pending_restarts: dict[str, asyncio.Task[None]] = {}
         self._test_mode = test_mode
 
@@ -742,6 +743,7 @@ class WorkerManager:
         # Remove from active tracking
         self._active_processes.pop(worker_id, None)
         self._active_process_info.pop(worker_id, None)
+        self._cached_exit_codes.pop(worker_id, None)
 
         # Cleanup heartbeat
         self._cleanup_heartbeat(worker_id)
@@ -841,7 +843,8 @@ class WorkerManager:
         """Get the exit code of a terminated worker process.
 
         Uses wait(timeout=0) instead of poll() to properly reap zombie processes
-        and capture exit codes reliably.
+        and capture exit codes reliably. Exit codes are cached immediately when
+        detected to prevent loss due to race conditions between checking and waiting.
 
         Args:
             worker_id: Worker ID to check.
@@ -849,30 +852,44 @@ class WorkerManager:
         Returns:
             Exit code if process has terminated, None if still running or unknown.
         """
+        # Check cache first - prevents race condition where exit code is lost
+        # between detecting termination and calling wait()
+        if worker_id in self._cached_exit_codes:
+            return self._cached_exit_codes[worker_id]
+
+        exit_code: int | None = None
+
         # Check if we have the Popen object
         process = self._active_processes.get(worker_id)
         if process is not None:
             # First check cached returncode (set by previous poll/wait)
             if process.returncode is not None:
-                return process.returncode
-            # Try wait with timeout=0 to reap zombie and get exit code
-            try:
-                return process.wait(timeout=0)
-            except subprocess.TimeoutExpired:
-                # Process is still running
-                return None
+                exit_code = process.returncode
+            else:
+                # Try wait with timeout=0 to reap zombie and get exit code
+                try:
+                    exit_code = process.wait(timeout=0)
+                except subprocess.TimeoutExpired:
+                    # Process is still running
+                    return None
 
-        # Check process info for stored process
-        process_info = self._active_process_info.get(worker_id)
-        if process_info is not None and process_info.process is not None:
-            if process_info.process.returncode is not None:
-                return process_info.process.returncode
-            try:
-                return process_info.process.wait(timeout=0)
-            except subprocess.TimeoutExpired:
-                return None
+        # Check process info for stored process if not found yet
+        if exit_code is None:
+            process_info = self._active_process_info.get(worker_id)
+            if process_info is not None and process_info.process is not None:
+                if process_info.process.returncode is not None:
+                    exit_code = process_info.process.returncode
+                else:
+                    try:
+                        exit_code = process_info.process.wait(timeout=0)
+                    except subprocess.TimeoutExpired:
+                        return None
 
-        return None
+        # Cache the exit code immediately to prevent race condition loss
+        if exit_code is not None:
+            self._cached_exit_codes[worker_id] = exit_code
+
+        return exit_code
 
     def _is_clean_exit(self, exit_code: int | None) -> bool:
         """Determine if an exit code represents a clean shutdown.
@@ -997,6 +1014,7 @@ class WorkerManager:
                 # Cleanup
                 self._active_processes.pop(worker.id, None)
                 self._active_process_info.pop(worker.id, None)
+                self._cached_exit_codes.pop(worker.id, None)
                 self._cleanup_heartbeat(worker.id)
 
         return crashed_workers
