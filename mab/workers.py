@@ -523,6 +523,7 @@ class WorkerManager:
             str, int
         ] = {}  # Cache exit codes to prevent race condition loss
         self._pending_restarts: dict[str, asyncio.Task[None]] = {}
+        self._restart_lock = asyncio.Lock()  # Prevent race condition in auto_restart
         self._test_mode = test_mode
 
         # Initialize cross-platform spawner
@@ -1091,27 +1092,30 @@ class WorkerManager:
             self.db.update_worker(worker)
             return None
 
-        # Check if already pending restart
-        if worker.id in self._pending_restarts:
-            task = self._pending_restarts[worker.id]
-            if not task.done():
-                logger.debug(f"Worker {worker.id} already has pending restart")
-                return None
-            else:
-                # Clean up completed task
-                del self._pending_restarts[worker.id]
+        # Use lock to prevent race condition when multiple health checks detect
+        # the same crash simultaneously (check-and-create must be atomic)
+        async with self._restart_lock:
+            # Check if already pending restart
+            if worker.id in self._pending_restarts:
+                task = self._pending_restarts[worker.id]
+                if not task.done():
+                    logger.debug(f"Worker {worker.id} already has pending restart")
+                    return None
+                else:
+                    # Clean up completed task
+                    del self._pending_restarts[worker.id]
 
-        # Calculate backoff delay
-        backoff_delay = self.health_config.calculate_backoff(worker.crash_count)
+            # Calculate backoff delay
+            backoff_delay = self.health_config.calculate_backoff(worker.crash_count)
 
-        logger.info(
-            f"Scheduling auto-restart for {worker.id} in {backoff_delay:.1f}s "
-            f"(crash #{worker.crash_count})"
-        )
+            logger.info(
+                f"Scheduling auto-restart for {worker.id} in {backoff_delay:.1f}s "
+                f"(crash #{worker.crash_count})"
+            )
 
-        # Schedule the restart with backoff
-        task = asyncio.create_task(self._delayed_restart(worker, backoff_delay))
-        self._pending_restarts[worker.id] = task
+            # Schedule the restart with backoff
+            task = asyncio.create_task(self._delayed_restart(worker, backoff_delay))
+            self._pending_restarts[worker.id] = task
 
         return None  # Return None immediately, restart will happen later
 
