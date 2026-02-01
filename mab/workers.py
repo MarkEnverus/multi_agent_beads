@@ -941,9 +941,17 @@ class WorkerManager:
             if not log_files:
                 return False
 
-            # Check the most recent log file
+            # Check the most recent log file - only look at the last N lines
+            # to avoid false positives from patterns appearing earlier in the log
             recent_log = log_files[0]
             content = recent_log.read_text(encoding="utf-8", errors="replace")
+
+            # Only check the last 20 lines for clean exit indicators
+            # This prevents false positives when a worker logged a pattern earlier
+            # but then crashed later in the session
+            lines = content.splitlines()
+            last_lines = lines[-20:] if len(lines) > 20 else lines
+            last_content = "\n".join(last_lines)
 
             # Look for clean exit indicators
             clean_exit_patterns = [
@@ -955,7 +963,7 @@ class WorkerManager:
             ]
 
             for pattern in clean_exit_patterns:
-                if pattern.lower() in content.lower():
+                if pattern.lower() in last_content.lower():
                     logger.debug(f"Worker {worker_id} log contains clean exit indicator: {pattern}")
                     return True
 
