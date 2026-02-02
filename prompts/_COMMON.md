@@ -68,6 +68,25 @@ grep "<bead-id>" claude.log
 
 ## Beads Protocol
 
+### Status Flow
+
+Beads progress through these statuses as work moves between agents:
+
+```
+open → in_progress → ready_for_qa → qa_in_progress → ready_for_review → closed
+       ↑                                 │
+       └─────────── (if tests fail) ─────┘
+```
+
+| Status            | Owner          | Description                              |
+| ----------------- | -------------- | ---------------------------------------- |
+| `open`            | None           | Work not yet started                     |
+| `in_progress`     | Developer      | Developer is implementing                |
+| `ready_for_qa`    | QA             | PR created, CI passed, ready for QA      |
+| `qa_in_progress`  | QA             | QA is testing the PR branch              |
+| `ready_for_review`| Code Reviewer  | QA approved, ready for final review/merge |
+| `closed`          | -              | PR merged, work complete                 |
+
 ### Session Lifecycle
 
 ```bash
@@ -77,9 +96,11 @@ log "SESSION_START"
 # 2. Find work
 bd ready                    # All available work
 bd ready -l <role-label>    # Filter by role
+bd ready --status=<status>  # Filter by status
 
 # 3. Claim
-bd update <bead-id> --status=in_progress
+bd update <bead-id> --status=in_progress  # Developer
+bd update <bead-id> --status=qa_in_progress  # QA
 log "CLAIM: <bead-id> - <title>"
 
 # 4. Read
@@ -90,33 +111,43 @@ log "READ: <bead-id>"
 log "WORK_START: <description>"
 # ... do the work ...
 
-# 6. Close (after PR merged for code changes)
+# 6. Handoff (for code changes)
+# Developer → QA:
+bd update <bead-id> --status=ready_for_qa
+# QA → Code Reviewer:
+bd update <bead-id> --status=ready_for_review
+
+# 7. Close (only Code Reviewer after merge)
 bd close <bead-id> --reason="<reason>"
 log "CLOSE: <bead-id> - <reason>"
 
-# 7. Sync
+# 8. Sync
 bd sync --flush-only
 
-# 8. Exit
+# 9. Exit
 log "SESSION_END: <bead-id>"
 ```
 
 ### Essential bd Commands
 
-| Action            | Command                                 |
-| ----------------- | --------------------------------------- |
-| Find work         | `bd ready`                              |
-| Find by label     | `bd ready -l <label>`                   |
-| Claim bead        | `bd update <id> --status=in_progress`   |
-| View bead         | `bd show <id>`                          |
-| Add comment       | `bd comment <id> "message"`             |
-| Close bead        | `bd close <id> --reason="..."`          |
-| Sync changes      | `bd sync --flush-only`                  |
-| Check blocked     | `bd blocked`                            |
-| List all open     | `bd list --status=open`                 |
-| Show dependencies | `bd dep show <id>`                      |
-| Create bead       | `bd create --title="..." -p <0-4> -l <label>` |
-| Add dependency    | `bd dep add <issue> <depends-on>`       |
+| Action              | Command                                   |
+| ------------------- | ----------------------------------------- |
+| Find work           | `bd ready`                                |
+| Find by label       | `bd ready -l <label>`                     |
+| Find by status      | `bd ready --status=<status>`              |
+| Claim (Developer)   | `bd update <id> --status=in_progress`     |
+| Claim (QA)          | `bd update <id> --status=qa_in_progress`  |
+| Hand to QA          | `bd update <id> --status=ready_for_qa`    |
+| Hand to Reviewer    | `bd update <id> --status=ready_for_review`|
+| View bead           | `bd show <id>`                            |
+| Add comment         | `bd comment <id> "message"`               |
+| Close bead          | `bd close <id> --reason="..."`            |
+| Sync changes        | `bd sync --flush-only`                    |
+| Check blocked       | `bd blocked`                              |
+| List all open       | `bd list --status=open`                   |
+| Show dependencies   | `bd dep show <id>`                        |
+| Create bead         | `bd create --title="..." -p <0-4> -l <label>` |
+| Add dependency      | `bd dep add <issue> <depends-on>`         |
 
 ### Sync Requirements
 
@@ -150,12 +181,14 @@ No claims without proof:
 - NEVER claim tests pass without running them
 - ALWAYS cite sources (file:line, command output)
 
-### PR Requirements (STRICT)
+### PR Workflow (STRICT)
 
 - Every code change MUST have a PR
-- PR MUST pass CI before bead can be closed
-- NEVER close a bead without a merged PR (for code changes)
-- Non-code beads (docs only, config) can close without PR
+- PR MUST pass CI before handoff to QA
+- QA tests on PR branch, approves if tests pass
+- Code Reviewer merges after QA approval
+- Only Code Reviewer closes beads (after PR merged)
+- Non-code beads (docs only, config) can close without full PR workflow
 
 ### Code Quality (STRICT)
 

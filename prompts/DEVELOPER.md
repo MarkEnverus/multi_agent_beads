@@ -170,46 +170,54 @@ log "CI: PASSED"
 log "CI: FAILED - <reason>"
 ```
 
-### 10. Wait for Review
+### 10. Hand Off to QA
 
-- Code Reviewer will review the PR
+**IMPORTANT**: Developers do NOT merge PRs. After CI passes, hand off to QA for testing.
+
+```bash
+# Update bead to ready_for_qa status
+bd update <bead-id> --status=ready_for_qa
+log "HANDOFF: <bead-id> -> QA for PR #<number>"
+```
+
+QA will:
+1. Checkout your PR branch
+2. Run tests on your changes
+3. Approve the PR if tests pass
+4. Code Reviewer will then merge
+
+### 11. Wait for Review (Optional)
+
+If Code Reviewer requests changes before QA:
 - Address any requested changes
 - Push fixes and wait for re-review
+- CI must pass again before QA testing
 
-### 11. Merge PR (after approval)
+### 12. Sync and Exit
 
-```bash
-gh pr merge <number> --squash --delete-branch
-log "PR_MERGED: #<number>"
-```
-
-### 12. Close Bead
-
-```bash
-bd close <bead-id> --reason="PR #<number> merged"
-log "CLOSE: <bead-id> - PR merged"
-```
-
-### 13. Sync and Exit
+After handing off to QA, your work is done:
 
 ```bash
 bd sync --flush-only
 log "SESSION_END: <bead-id>"
 ```
 
+**Note**: Do NOT close the bead. QA/Code Reviewer will close it after merge.
+
 ---
 
 ## Acceptance Criteria Checklist
 
-Before closing a bead, verify:
+Before handing off to QA, verify:
 
 - [ ] All acceptance criteria from bead description are met
 - [ ] Code follows project patterns and conventions
-- [ ] Existing tests pass
+- [ ] Existing tests pass locally
 - [ ] Linting passes
-- [ ] PR created and merged
+- [ ] PR created (NOT merged - QA does that)
 - [ ] CI passed
 - [ ] No TODOs left in code (unless tracked in new bead)
+- [ ] Bead status set to `ready_for_qa`
 
 ---
 
@@ -225,10 +233,17 @@ Developers receive work from:
 
 ### Handing Off Work
 
-After completing implementation:
+After creating PR and CI passes:
 
-1. **To Code Reviewer** - PR is ready for review
-2. **To QA** - After merge, feature is ready for testing
+1. **To QA** - Update bead to `ready_for_qa` status
+2. QA tests the PR branch and approves if tests pass
+3. Code Reviewer merges after QA approval
+
+**Handoff Command:**
+```bash
+bd update <bead-id> --status=ready_for_qa
+log "HANDOFF: <bead-id> -> QA"
+```
 
 ### Creating Follow-up Beads
 
@@ -305,7 +320,6 @@ Common blockers:
 | Run tests           | `uv run pytest tests/ -q`                 |
 | Lint code           | `uv run ruff check .`                     |
 | Create PR           | `gh pr create --title "..." --body "..."` |
-| Merge PR            | `gh pr merge <num> --squash --delete-branch` |
-| Close bead          | `bd close <id> --reason="..."`            |
+| Hand off to QA      | `bd update <id> --status=ready_for_qa`    |
 | Sync                | `bd sync --flush-only`                    |
 | Add comment         | `bd comment <id> "message"`               |

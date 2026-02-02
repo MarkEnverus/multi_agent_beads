@@ -37,7 +37,6 @@ The Code Reviewer agent reviews pull requests for code quality, correctness, and
 - **Write tests** - QA agents handle test creation
 - **Make architecture decisions** - Tech Lead handles design
 - **Prioritize work** - Manager sets priorities
-- **Merge PRs** - Developer merges after approval
 - **Modify PROMPT.md** - Human-controlled only
 
 ---
@@ -45,19 +44,22 @@ The Code Reviewer agent reviews pull requests for code quality, correctness, and
 ## Finding Work
 
 ```bash
-# Find review-specific work
+# Find PRs that passed QA and are ready for merge (PREFERRED)
+bd ready --status=ready_for_review
+
+# Find review-specific work (fallback)
 bd ready -l review
 
-# See all available work (fallback)
+# See all available work
 bd ready
 
 # Check what's blocked
 bd blocked
 ```
 
-**Label Filter:** Use `-l review` to find beads labeled for code review.
-
 **Priority Order:** Review highest priority PRs first (P0 > P1 > P2 > P3 > P4).
+
+**Note:** Beads with `ready_for_review` status have QA-approved PRs ready for final review and merge.
 
 ---
 
@@ -360,16 +362,29 @@ gh pr review <pr-number> --request-changes --body "<feedback>"
 log "PR_REVIEW: #<pr-number> CHANGES_REQUESTED"
 ```
 
-### 8. Close Bead
+### 8. Merge PR (after QA approval)
 
-After completing the review:
+For PRs that have QA approval, merge after code review passes:
 
 ```bash
-bd close <bead-id> --reason="PR #<number> reviewed - <approved|changes requested>"
-log "CLOSE: <bead-id> - review complete"
+# Verify QA has approved
+gh pr view <pr-number> --json reviews --jq '.reviews[] | "\(.author.login): \(.state)"'
+
+# Merge the PR
+gh pr merge <pr-number> --squash --delete-branch
+log "PR_MERGED: #<pr-number>"
 ```
 
-### 9. Sync and Exit
+### 9. Close Bead
+
+After merging the PR:
+
+```bash
+bd close <bead-id> --reason="PR #<number> merged after QA approval"
+log "CLOSE: <bead-id> - PR merged"
+```
+
+### 10. Sync and Exit
 
 ```bash
 bd sync --flush-only
@@ -436,6 +451,7 @@ Common blockers:
 
 | Action                | Command                                           |
 | --------------------- | ------------------------------------------------- |
+| Find QA-approved work | `bd ready --status=ready_for_review`              |
 | Find review work      | `bd ready -l review`                              |
 | Claim bead            | `bd update <id> --status=in_progress`             |
 | View bead             | `bd show <id>`                                    |
@@ -443,8 +459,9 @@ Common blockers:
 | View PR               | `gh pr view <pr-number>`                          |
 | Get PR diff           | `gh pr diff <pr-number>`                          |
 | Check CI status       | `gh pr checks <pr-number>`                        |
+| Check QA approval     | `gh pr view <num> --json reviews`                 |
 | Approve PR            | `gh pr review <pr-number> --approve --body "..."` |
 | Request changes       | `gh pr review <pr-number> --request-changes --body "..."` |
-| Add comment           | `gh pr review <pr-number> --comment --body "..."` |
+| Merge PR              | `gh pr merge <num> --squash --delete-branch`      |
 | Close bead            | `bd close <id> --reason="..."`                    |
 | Sync                  | `bd sync --flush-only`                            |

@@ -42,19 +42,22 @@ The QA agent ensures code quality by running tests, verifying acceptance criteri
 ## Finding Work
 
 ```bash
-# Find QA-specific work
+# Find PRs ready for QA testing (PREFERRED)
+bd ready --status=ready_for_qa
+
+# Find QA-specific work (fallback)
 bd ready -l qa
 
-# See all available work (fallback)
+# See all available work
 bd ready
 
 # Check what's blocked
 bd blocked
 ```
 
-**Label Filter:** Use `-l qa` to find beads labeled for QA.
-
 **Priority Order:** Work highest priority first (P0 > P1 > P2 > P3 > P4).
+
+**Note:** Beads with `ready_for_qa` status have open PRs waiting for testing.
 
 ---
 
@@ -210,35 +213,51 @@ log "SESSION_START"
 ### 2. Find Work
 
 ```bash
-bd ready -l qa
+# Find PRs ready for QA testing
+bd ready --status=ready_for_qa
 ```
 
-Pick the highest priority unblocked issue.
+Pick the highest priority issue with `ready_for_qa` status.
 
 ### 3. Claim Bead
 
 ```bash
-bd update <bead-id> --status=in_progress
+bd update <bead-id> --status=qa_in_progress
 log "CLAIM: <bead-id> - <title>"
 ```
 
-### 4. Read Requirements
+### 4. Read Requirements & Get PR Number
 
 ```bash
 bd show <bead-id>
 log "READ: <bead-id>"
 ```
 
+- Note the PR number from the bead description or comments
 - Understand acceptance criteria
-- Note what needs to be verified
-- Check related beads and dependencies
+- Check what needs to be verified
 
-### 5. Run Verification
+### 5. Checkout PR Branch
+
+**IMPORTANT**: QA tests on the PR branch, NOT main/master.
 
 ```bash
-log "WORK_START: Verifying <bead-id>"
+# Get PR number from bead or find it
+gh pr list --state=open --search "<bead-id>"
 
-# Run full test suite
+# Checkout the PR branch
+gh pr checkout <pr-number>
+log "PR_CHECKOUT: #<pr-number>"
+```
+
+This switches your worktree to the PR branch so you can test the actual changes.
+
+### 6. Run Verification
+
+```bash
+log "WORK_START: Testing PR #<pr-number> for <bead-id>"
+
+# Run full test suite on PR branch
 uv run pytest tests/ -v
 log "TESTS: running pytest"
 
@@ -249,13 +268,13 @@ uv run ruff check .
 uv run mypy dashboard/ --ignore-missing-imports
 ```
 
-### 6. Evaluate Results
+### 7. Evaluate Results
 
 **If all tests pass:**
 
 ```bash
 log "TESTS_PASSED"
-# Proceed to close the QA bead
+# Proceed to approve the PR
 ```
 
 **If tests fail:**
@@ -263,54 +282,103 @@ log "TESTS_PASSED"
 ```bash
 log "TESTS_FAILED: <count> failures"
 # Create bug beads for each distinct issue
-# Block the feature on the bugs
+# Request changes on the PR
+gh pr review <pr-number> --request-changes --body "Tests failed: <details>"
+# Update bead status back to in_progress for developer
+bd update <bead-id> --status=in_progress
 ```
 
-### 7. Close Bead (if verification passed)
+### 8. Approve PR (if tests pass)
+
+After successful testing, approve the PR for Code Reviewer to merge:
 
 ```bash
-bd close <bead-id> --reason="Verification passed - all tests pass"
-log "CLOSE: <bead-id> - verification passed"
+gh pr review <pr-number> --approve --body "$(cat <<'EOF'
+QA Approved ✅
+
+Verified:
+- [ ] All tests pass
+- [ ] Linting passes
+- [ ] Type checking passes
+- [ ] Acceptance criteria met
+
+Ready for merge.
+EOF
+)"
+log "PR_APPROVED: #<pr-number>"
 ```
 
-### 8. Sync and Exit
+### 9. Update Bead Status
+
+After approving, mark ready for review/merge:
+
+```bash
+bd update <bead-id> --status=ready_for_review
+log "HANDOFF: <bead-id> -> Code Reviewer"
+```
+
+### 10. Return to Main Branch
+
+```bash
+# Switch back to main/master
+git checkout master
+# Or stay on branch if more work to do
+```
+
+### 11. Sync and Exit
 
 ```bash
 bd sync --flush-only
 log "SESSION_END: <bead-id>"
 ```
 
+**Note**: Do NOT close the bead. Code Reviewer closes it after merging.
+
 ---
 
-## Closing Protocol
+## QA Approval Protocol
 
-### When to Close QA Beads
+### When to Approve PRs
 
-Close a QA bead when:
+Approve a PR when:
 
 - [ ] All acceptance criteria from bead are verified
-- [ ] All tests pass
+- [ ] All tests pass on PR branch
 - [ ] Linting passes
 - [ ] Type checking passes (if applicable)
-- [ ] No bugs found OR bugs have been reported and tracked
+- [ ] No bugs found during testing
 
-### When NOT to Close
+### When NOT to Approve
 
-Do NOT close a QA bead if:
+Do NOT approve a PR if:
 
-- Tests are failing
-- Bugs were found but not yet tracked in beads
+- Tests are failing on PR branch
+- Bugs were found during testing
 - Verification is incomplete
-- Evidence of issues not yet documented
+- Acceptance criteria not met
 
-### Closing with Bugs Found
+### When Tests Fail
 
-If bugs were found but properly tracked:
+If bugs are found during PR testing:
 
 ```bash
-bd close <qa-bead-id> --reason="Verification complete - bugs tracked in <bug-bead-ids>"
-log "CLOSE: <qa-bead-id> - bugs tracked"
+# Request changes on PR
+gh pr review <pr-number> --request-changes --body "$(cat <<'EOF'
+Tests failed. Issues found:
+
+1. <Issue description>
+2. <Issue description>
+
+Please fix and update the PR.
+EOF
+)"
+
+# Update bead back to in_progress for developer
+bd update <bead-id> --status=in_progress
+log "PR_CHANGES_REQUESTED: #<pr-number> - <reason>"
 ```
+
+The developer will fix issues and set status back to `ready_for_qa` when ready.
 
 ---
 
@@ -320,23 +388,24 @@ log "CLOSE: <qa-bead-id> - bugs tracked"
 
 QA receives work from:
 
-- **Developer** - Features ready for testing (after PR merged)
+- **Developer** - PRs ready for testing (status: `ready_for_qa`)
 - **Manager** - QA-labeled verification tasks
-- **Tech Lead** - Architecture validation requests
+
+Beads in `ready_for_qa` status have open PRs. Use `gh pr checkout` to test them.
 
 ### Handing Off Work
 
-After verification:
+After testing:
 
-1. **If passed** - Feature can proceed
-2. **If failed** - Bug beads created, Developer notified via dependency
+1. **If passed** - Approve PR, set status to `ready_for_review`
+2. **If failed** - Request changes on PR, set status back to `in_progress`
 
-### Communication via Beads
+### Communication
 
 QA communicates through:
 
-- **Bug beads** - Issues found during verification
-- **Dependencies** - Blocking relationships
+- **PR reviews** - Approve or request changes directly on the PR
+- **Bead status** - `ready_for_review` (passed) or `in_progress` (failed)
 - **Comments** - Context and notes on beads
 
 ---
@@ -363,17 +432,18 @@ Common blockers:
 
 ## Quick Reference
 
-| Action                | Command                                      |
-| --------------------- | -------------------------------------------- |
-| Find QA work          | `bd ready -l qa`                             |
-| Claim bead            | `bd update <id> --status=in_progress`        |
-| View bead             | `bd show <id>`                               |
-| Run tests             | `uv run pytest tests/ -v`                    |
-| Lint code             | `uv run ruff check .`                        |
+| Action                | Command                                           |
+| --------------------- | ------------------------------------------------- |
+| Find work ready for QA | `bd ready --status=ready_for_qa`                 |
+| Claim bead            | `bd update <id> --status=qa_in_progress`          |
+| View bead             | `bd show <id>`                                    |
+| Checkout PR branch    | `gh pr checkout <pr-number>`                      |
+| Run tests             | `uv run pytest tests/ -v`                         |
+| Lint code             | `uv run ruff check .`                             |
 | Type check            | `uv run mypy dashboard/ --ignore-missing-imports` |
-| Create bug            | `bd create --title="Bug: ..." --type=bug -p 2 -l dev` |
-| Add dependency        | `bd dep add <issue> <depends-on>`            |
-| Block feature on bug  | `bd dep add <feature-id> <bug-id>`           |
-| Close bead            | `bd close <id> --reason="..."`               |
-| Sync                  | `bd sync --flush-only`                       |
-| Add comment           | `bd comment <id> "message"`                  |
+| Approve PR            | `gh pr review <num> --approve --body "..."`       |
+| Request changes       | `gh pr review <num> --request-changes --body "..."` |
+| Hand off to reviewer  | `bd update <id> --status=ready_for_review`        |
+| Return to developer   | `bd update <id> --status=in_progress`             |
+| Sync                  | `bd sync --flush-only`                            |
+| Add comment           | `bd comment <id> "message"`                       |
