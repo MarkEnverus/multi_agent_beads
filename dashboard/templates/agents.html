@@ -313,7 +313,9 @@
                         status: displayStatus,
                         last_activity: (agentInfo ? agentInfo.last_activity : null) || worker.started_at || new Date().toISOString(),
                         pid: worker.pid || null,
-                        worker_id: worker.id  // Keep worker ID for reference
+                        worker_id: worker.id,  // Keep worker ID for reference
+                        worktree_path: worker.worktree_path || null,
+                        worktree_branch: worker.worktree_branch || null
                     };
                 });
                 renderAgents(agents);
@@ -431,6 +433,23 @@
                         <div class="text-xs text-gray-500 italic">No bead claimed</div>
                     </div>
                 `}
+
+                {# Worktree info #}
+                ${agent.worktree_path ? `
+                    <div class="mb-3">
+                        <div class="text-xs ${config.text} opacity-75 mb-1">Worktree:</div>
+                        <div class="text-xs text-gray-400 font-mono truncate" title="${agent.worktree_path}">
+                            ${agent.worktree_path.split('/').slice(-2).join('/')}
+                        </div>
+                        ${agent.worktree_branch ? `
+                            <div class="text-xs text-gray-500 font-mono truncate mt-0.5" title="Branch: ${agent.worktree_branch}">
+                                <svg class="inline h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                                </svg>${agent.worktree_branch}
+                            </div>
+                        ` : ''}
+                    </div>
+                ` : ''}
 
                 {# Footer: PID and last activity #}
                 <div class="flex items-center justify-between text-xs">
