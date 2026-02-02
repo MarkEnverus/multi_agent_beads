@@ -1005,6 +1005,11 @@
         const errorMsg = worker.error_message ? escapeHtml(worker.error_message) : null;
         const exitCode = worker.exit_code;
 
+        // Format worktree path for display (show last 2 parts)
+        const worktreePath = worker.worktree_path;
+        const worktreeDisplay = worktreePath ? worktreePath.split('/').slice(-2).join('/') : null;
+        const worktreeBranch = worker.worktree_branch;
+
         return `
             <div class="px-6 py-4 hover:bg-gray-700/50 transition-colors">
                 <div class="flex items-center justify-between">
@@ -1018,6 +1023,14 @@
                                 PID: ${worker.pid || '-'}
                                 ${worker.crash_count > 0 ? `<span class="mx-1">|</span> Crashes: <span class="text-red-400">${worker.crash_count}</span>` : ''}
                             </p>
+                            ${worktreeDisplay ? `
+                                <p class="text-xs text-gray-500 mt-1 font-mono" title="${worktreePath}">
+                                    <svg class="inline h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                                    </svg>${worktreeDisplay}
+                                    ${worktreeBranch ? `<span class="ml-2 text-gray-600">@${worktreeBranch}</span>` : ''}
+                                </p>
+                            ` : ''}
                         </div>
                     </div>
                     <div class="flex items-center space-x-4">
