@@ -18,7 +18,6 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from dashboard.config import LOG_FILE
 from mab.daemon import (
     MAB_HOME,
     Daemon,
@@ -27,6 +26,7 @@ from mab.daemon import (
 from mab.daemon import (
     DaemonNotRunningError as DaemonNotRunning,
 )
+from mab.db import get_db
 from mab.rpc import DaemonNotRunningError, RPCClient, RPCError, get_default_client
 
 logger = logging.getLogger(__name__)
@@ -108,6 +108,33 @@ class HealthStatusResponse(BaseModel):
 
 # Shorter timeout for dashboard operations to prevent long waits
 DASHBOARD_RPC_TIMEOUT = 5.0
+
+
+def _get_worker_log_file(project_path: str, worker_id: str) -> Path | None:
+    """Get the log file path for a worker from mab.db.
+
+    Args:
+        project_path: Path to the project directory.
+        worker_id: Worker unique identifier.
+
+    Returns:
+        Path to the worker's log file, or None if not found.
+    """
+    try:
+        conn = get_db(project_path)
+        cursor = conn.execute(
+            "SELECT log_file FROM workers WHERE id = ?",
+            (worker_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        if row and row["log_file"]:
+            return Path(row["log_file"])
+        return None
+    except Exception as e:
+        logger.warning("Failed to get log file for worker %s: %s", worker_id, e)
+        return None
 
 
 def _get_rpc_client() -> RPCClient:
@@ -814,13 +841,21 @@ async def _stream_worker_logs(
     worker_id: str,
     log_path: Path,
     tail_lines: int = 50,
+    filter_by_worker_id: bool = False,
 ) -> AsyncIterator[str]:
-    """Stream log entries for a specific worker ID via SSE.
+    """Stream log entries from a log file via SSE.
+
+    When streaming from a per-worker log file (default), no filtering is needed
+    since the entire file belongs to one worker.
+
+    When streaming from a shared log file (legacy mode), set filter_by_worker_id=True
+    to filter entries by worker_id.
 
     Args:
-        worker_id: The worker ID to filter logs for.
+        worker_id: The worker ID (used for logging and optional filtering).
         log_path: Path to the log file.
         tail_lines: Number of recent lines to include initially.
+        filter_by_worker_id: If True, filter log entries by worker_id.
 
     Yields:
         SSE-formatted event strings.
@@ -840,8 +875,10 @@ async def _stream_worker_logs(
 
             for line in recent_lines:
                 entry = _parse_log_line(line)
-                if entry and entry.get("worker_id") == worker_id:
-                    yield _format_sse_event(entry)
+                if entry:
+                    # For per-worker files, include all entries; for shared files, filter
+                    if not filter_by_worker_id or entry.get("worker_id") == worker_id:
+                        yield _format_sse_event(entry)
 
             stat = log_path.stat()
             last_position = stat.st_size
@@ -884,8 +921,10 @@ async def _stream_worker_logs(
 
                 for line in new_content.splitlines():
                     entry = _parse_log_line(line)
-                    if entry and entry.get("worker_id") == worker_id:
-                        yield _format_sse_event(entry)
+                    if entry:
+                        # For per-worker files, include all entries; for shared files, filter
+                        if not filter_by_worker_id or entry.get("worker_id") == worker_id:
+                            yield _format_sse_event(entry)
 
             await asyncio.sleep(0.5)
 
@@ -908,8 +947,8 @@ async def stream_worker_logs(
 ) -> StreamingResponse:
     """Stream live log entries for a specific worker via Server-Sent Events.
 
-    Opens a persistent SSE connection that streams log entries filtered
-    by the worker's unique identifier.
+    Opens a persistent SSE connection that streams log entries from the
+    worker's dedicated log file.
 
     Args:
         worker_id: Worker unique identifier
@@ -919,7 +958,7 @@ async def stream_worker_logs(
         StreamingResponse with SSE content.
 
     Raises:
-        HTTPException: If worker not found or daemon not running.
+        HTTPException: If worker not found, log file not found, or daemon not running.
     """
     try:
         client = _get_rpc_client()
@@ -932,21 +971,44 @@ async def stream_worker_logs(
         if not worker:
             raise HTTPException(status_code=404, detail=f"Worker not found: {worker_id}")
 
-        # Determine log file path based on worker's project
         project_path = worker.get("project_path")
-        if project_path:
+        if not project_path:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Worker {worker_id} has no project_path",
+            )
+
+        # Look up log file from mab.db
+        log_path = await asyncio.to_thread(_get_worker_log_file, project_path, worker_id)
+
+        # Fall back to project claude.log if no per-worker log file (legacy workers)
+        filter_by_worker_id = False
+        if log_path is None or not log_path.exists():
             log_path = Path(project_path) / "claude.log"
-        else:
-            log_path = Path(LOG_FILE)
+            filter_by_worker_id = True  # Need to filter shared log file
+            logger.debug(
+                "No per-worker log file for %s, falling back to %s",
+                worker_id,
+                log_path,
+            )
+
+        if not log_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Log file not found for worker {worker_id}",
+            )
 
         logger.info(
-            "Starting log stream for worker %s from %s",
+            "Starting log stream for worker %s from %s (filter=%s)",
             worker_id,
             log_path,
+            filter_by_worker_id,
         )
 
         return StreamingResponse(
-            _stream_worker_logs(worker_id, log_path, tail_lines=tail),
+            _stream_worker_logs(
+                worker_id, log_path, tail_lines=tail, filter_by_worker_id=filter_by_worker_id
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -979,7 +1041,9 @@ async def get_worker_recent_logs(
 ) -> list[dict[str, Any]]:
     """Get recent log entries for a specific worker.
 
-    Returns log entries filtered by the worker's unique identifier.
+    Reads log entries from the worker's dedicated log file. Falls back to
+    filtering from the shared claude.log for legacy workers without a
+    per-worker log file.
 
     Args:
         worker_id: Worker unique identifier
@@ -1002,31 +1066,39 @@ async def get_worker_recent_logs(
         if not worker:
             raise HTTPException(status_code=404, detail=f"Worker not found: {worker_id}")
 
-        # Determine log file path
         project_path = worker.get("project_path")
-        if project_path:
+        if not project_path:
+            return []
+
+        # Look up log file from mab.db
+        log_path = await asyncio.to_thread(_get_worker_log_file, project_path, worker_id)
+
+        # Fall back to project claude.log if no per-worker log file (legacy workers)
+        filter_by_worker_id = False
+        if log_path is None or not log_path.exists():
             log_path = Path(project_path) / "claude.log"
-        else:
-            log_path = Path(LOG_FILE)
+            filter_by_worker_id = True  # Need to filter shared log file
 
         if not log_path.exists():
             return []
 
-        # Read and filter logs (run file I/O in thread pool)
-        def read_and_filter_logs() -> list[dict[str, Any]]:
+        # Read logs (run file I/O in thread pool)
+        def read_logs() -> list[dict[str, Any]]:
             entries = []
             try:
                 lines = log_path.read_text(encoding="utf-8").splitlines()
                 for line in lines:
                     entry = _parse_log_line(line)
-                    if entry and entry.get("worker_id") == worker_id:
-                        entries.append(entry)
+                    if entry:
+                        # For per-worker files, include all entries; for shared files, filter
+                        if not filter_by_worker_id or entry.get("worker_id") == worker_id:
+                            entries.append(entry)
             except OSError as e:
                 logger.warning("Failed to read log file %s: %s", log_path, e)
                 raise
             return entries
 
-        entries = await asyncio.to_thread(read_and_filter_logs)
+        entries = await asyncio.to_thread(read_logs)
 
         # Return most recent first, limited
         entries.reverse()
