@@ -171,7 +171,12 @@ invalid line without proper format
     def test_extract_agents_session_lifecycle(self) -> None:
         """Test agent extraction through full session lifecycle."""
         entries = [
-            {"timestamp": "2026-01-24 14:00:00", "pid": 1001, "worker_id": "1001", "content": "SESSION_START"},
+            {
+                "timestamp": "2026-01-24 14:00:00",
+                "pid": 1001,
+                "worker_id": "1001",
+                "content": "SESSION_START",
+            },
             {
                 "timestamp": "2026-01-24 14:00:05",
                 "pid": 1001,
@@ -184,8 +189,18 @@ invalid line without proper format
                 "worker_id": "1001",
                 "content": "WORK_START: implementing",
             },
-            {"timestamp": "2026-01-24 14:02:00", "pid": 1001, "worker_id": "1001", "content": "CLOSE: mab-abc"},
-            {"timestamp": "2026-01-24 14:02:05", "pid": 1001, "worker_id": "1001", "content": "SESSION_END: mab-abc"},
+            {
+                "timestamp": "2026-01-24 14:02:00",
+                "pid": 1001,
+                "worker_id": "1001",
+                "content": "CLOSE: mab-abc",
+            },
+            {
+                "timestamp": "2026-01-24 14:02:05",
+                "pid": 1001,
+                "worker_id": "1001",
+                "content": "SESSION_END: mab-abc",
+            },
         ]
 
         agents = _extract_agents_from_logs(entries)
