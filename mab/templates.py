@@ -181,7 +181,8 @@ def get_workflow_for_role(template: TeamTemplate, current_role: str) -> str | No
             return "human_merge"
         if next_step == WorkflowStep.DONE:
             return "done"
-        return next_step.value
+        # WorkflowStep inherits from str, so value is always str
+        return str(next_step.value)
 
     return None
 
