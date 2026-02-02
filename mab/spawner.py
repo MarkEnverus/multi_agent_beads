@@ -847,9 +847,10 @@ class SubprocessSpawner(Spawner):
         env["WORKER_PROJECT"] = str(project)
         env["WORKER_WORKING_DIR"] = str(working_dir)
         env["TERM"] = "xterm-256color"  # For PTY compatibility
-        # Set absolute path to main project's claude.log for centralized logging
-        # This ensures workers in worktrees still log to the dashboard-monitored file
-        env["WORKER_LOG_FILE"] = str(project / "claude.log")
+        # Set per-worker log file path for isolated worker logging
+        # Each worker logs to its own file: .mab/logs/{worker_id}_{timestamp}.log
+        # Dashboard reads this from the database to display worker-specific logs
+        env["WORKER_LOG_FILE"] = str(log_file)
         # BD_ROOT points to main project - workers use this to find the live beads database
         # This is the fallback when .beads symlink doesn't exist or is broken
         env["BD_ROOT"] = str(project)
