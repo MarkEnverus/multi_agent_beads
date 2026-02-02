@@ -11,21 +11,23 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Network filesystem types that don't support reliable flock()
-NETWORK_FS_TYPES = frozenset({
-    "nfs",
-    "nfs4",
-    "cifs",
-    "smbfs",
-    "afs",
-    "gfs",
-    "gfs2",
-    "glusterfs",
-    "lustre",
-    "ceph",
-    "fuse.sshfs",
-    "fuse.s3fs",
-    "fuse.gcsfuse",
-})
+NETWORK_FS_TYPES = frozenset(
+    {
+        "nfs",
+        "nfs4",
+        "cifs",
+        "smbfs",
+        "afs",
+        "gfs",
+        "gfs2",
+        "glusterfs",
+        "lustre",
+        "ceph",
+        "fuse.sshfs",
+        "fuse.s3fs",
+        "fuse.gcsfuse",
+    }
+)
 
 
 def get_filesystem_type(path: Path) -> str | None:
