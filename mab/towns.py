@@ -712,3 +712,38 @@ def get_default_town_manager(mab_dir: Path | None = None) -> TownManager:
     if mab_dir is None:
         mab_dir = Path.home() / ".mab"
     return TownManager(mab_dir=mab_dir)
+
+
+def get_next_handoff(current_role: str, workflow: list[str]) -> str | None:
+    """Get the next handoff target for a role in a workflow.
+
+    Given a current role and a workflow sequence, returns the next step
+    that work should be handed off to.
+
+    Args:
+        current_role: The current role completing work (e.g., "dev", "qa").
+        workflow: List of workflow step strings defining the handoff chain.
+
+    Returns:
+        Next role/step in the workflow (e.g., "qa", "human_merge", "done"),
+        or None if current role is not in the workflow or is the last step.
+
+    Examples:
+        >>> get_next_handoff("dev", ["dev", "qa", "human_merge"])
+        "qa"
+        >>> get_next_handoff("qa", ["dev", "qa", "human_merge"])
+        "human_merge"
+        >>> get_next_handoff("dev", ["dev", "human_merge"])
+        "human_merge"
+        >>> get_next_handoff("reviewer", ["dev", "qa"])  # Not in workflow
+        None
+    """
+    try:
+        current_index = workflow.index(current_role)
+    except ValueError:
+        return None
+
+    if current_index + 1 < len(workflow):
+        return workflow[current_index + 1]
+
+    return None
