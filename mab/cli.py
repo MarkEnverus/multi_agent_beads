@@ -1280,6 +1280,138 @@ def fix_worktrees(ctx: click.Context, project_path: Path) -> None:
         raise SystemExit(1)
 
 
+@cli.command("cleanup-worktrees")
+@click.option(
+    "--project",
+    "-p",
+    "project_path",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project path (default: current directory)",
+)
+@click.option(
+    "--all",
+    "-a",
+    "cleanup_all",
+    is_flag=True,
+    default=False,
+    help="Remove ALL worktrees, including those for active workers",
+)
+@click.option(
+    "--dry-run",
+    "-n",
+    is_flag=True,
+    default=False,
+    help="Show what would be removed without actually removing",
+)
+@click.pass_context
+def cleanup_worktrees(
+    ctx: click.Context, project_path: Path, cleanup_all: bool, dry_run: bool
+) -> None:
+    """Clean up orphaned git worktrees from stopped/killed workers.
+
+    This command removes worktrees in .worktrees/ that are not associated
+    with any active (RUNNING status) workers. Use this to reclaim disk space
+    after workers are stopped or if the daemon crashes without proper cleanup.
+
+    By default, only cleans up worktrees for workers that are no longer running.
+    Use --all to remove all worktrees (will break any running workers!).
+
+    Examples:
+
+      \b
+      mab cleanup-worktrees            # Clean orphaned worktrees
+      mab cleanup-worktrees -n         # Dry run - show what would be removed
+      mab cleanup-worktrees --all      # Remove ALL worktrees (dangerous)
+    """
+    from mab.spawner import (
+        WORKTREES_DIR,
+        cleanup_stale_worktrees,
+        get_git_root,
+        list_worktrees,
+    )
+    from mab.workers import WorkerDatabase, WorkerStatus
+
+    project = project_path.resolve()
+    git_root = get_git_root(project)
+
+    if git_root is None:
+        click.secho(f"Error: {project} is not a git repository", fg="red", err=True)
+        raise SystemExit(1)
+
+    worktrees_dir = git_root / WORKTREES_DIR
+    if not worktrees_dir.exists():
+        click.echo("No worktrees directory found - nothing to clean up")
+        raise SystemExit(0)
+
+    # List existing worktrees
+    worktrees = list_worktrees(project)
+    # Filter to just those in .worktrees/
+    worker_worktrees = [w for w in worktrees if WORKTREES_DIR in w.get("path", "")]
+
+    if not worker_worktrees:
+        click.echo("No worker worktrees found - nothing to clean up")
+        raise SystemExit(0)
+
+    # Get active worker IDs if not cleaning all
+    active_ids: set[str] = set()
+    if not cleanup_all:
+        # Check project-specific database
+        project_db = project / ".mab" / "workers.db"
+        if project_db.exists():
+            try:
+                db = WorkerDatabase(project_db)
+                for worker in db.list_workers(status=WorkerStatus.RUNNING):
+                    active_ids.add(worker.id)
+            except Exception as e:
+                click.secho(f"Warning: Could not read worker database: {e}", fg="yellow")
+
+        # Also check global database
+        global_db = MAB_HOME / "workers.db"
+        if global_db.exists():
+            try:
+                db = WorkerDatabase(global_db)
+                for worker in db.list_workers(
+                    status=WorkerStatus.RUNNING, project_path=str(project)
+                ):
+                    active_ids.add(worker.id)
+            except Exception:
+                pass
+
+    # Determine which worktrees to remove
+    to_remove = []
+    for wt in worker_worktrees:
+        wt_path = Path(wt["path"])
+        worker_id = wt_path.name
+        if cleanup_all or worker_id not in active_ids:
+            to_remove.append((worker_id, wt_path, wt.get("branch", "unknown")))
+
+    if not to_remove:
+        click.echo("No orphaned worktrees found - all worktrees belong to active workers")
+        raise SystemExit(0)
+
+    # Show what will be removed
+    click.echo(f"Found {len(to_remove)} worktree(s) to remove:")
+    for worker_id, wt_path, branch in to_remove:
+        status = "active" if worker_id in active_ids else "orphaned"
+        click.echo(f"  - {worker_id} ({branch}) [{status}]")
+
+    if dry_run:
+        click.echo("\nDry run - no changes made")
+        raise SystemExit(0)
+
+    # Actually remove them
+    if cleanup_all:
+        removed = cleanup_stale_worktrees(project, active_worker_ids=None)
+    else:
+        removed = cleanup_stale_worktrees(project, active_worker_ids=active_ids)
+
+    if removed > 0:
+        click.secho(f"Removed {removed} worktree(s)", fg="green")
+    else:
+        click.secho("No worktrees were removed", fg="yellow")
+
+
 def main() -> None:
     """Entry point for the mab CLI."""
     cli()

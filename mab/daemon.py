@@ -31,6 +31,7 @@ from typing import Any
 
 from mab.filesystem import warn_if_network_filesystem
 from mab.rpc import RPCError, RPCErrorCode, RPCServer
+from mab.spawner import cleanup_stale_worktrees, get_git_root
 from mab.workers import (
     HealthConfig,
     WorkerDatabase,
@@ -468,6 +469,9 @@ class Daemon:
             f"max_restarts={self.health_config.max_restart_count})"
         )
 
+        # Startup cleanup: clean up stale workers and orphaned worktrees from previous sessions
+        await self._startup_cleanup()
+
         # Create and start RPC server
         self._rpc_server = RPCServer(mab_dir=self.mab_dir)
         self._register_rpc_handlers()
@@ -554,6 +558,90 @@ class Daemon:
         for worker in restart_scheduled:
             backoff = self.health_config.calculate_backoff(worker.crash_count)
             self.logger.info(f"Auto-restart scheduled for {worker.id} in {backoff:.1f}s")
+
+    async def _startup_cleanup(self) -> None:
+        """Clean up stale workers and orphaned worktrees from previous sessions.
+
+        This is called at daemon startup to handle workers that were left in
+        RUNNING/STARTING state from a previous daemon session that crashed or
+        was killed without proper cleanup.
+        """
+        self.logger.info("Running startup cleanup for stale workers and worktrees")
+
+        stale_workers = 0
+        cleaned_worktrees = 0
+        project_paths_seen: set[str] = set()
+
+        if self._worker_manager is not None:
+            # Check global worker database for stale workers
+            running_workers = self._worker_manager.list_workers(status=WorkerStatus.RUNNING)
+            starting_workers = self._worker_manager.list_workers(status=WorkerStatus.STARTING)
+
+            for worker in running_workers + starting_workers:
+                project_paths_seen.add(worker.project_path)
+
+                # Check if process is actually running
+                if worker.pid is None or not self._is_process_running(worker.pid):
+                    self.logger.info(
+                        f"Found stale worker {worker.id} (PID {worker.pid}) - "
+                        "process not running, cleaning up"
+                    )
+                    stale_workers += 1
+
+                    # Clean up worktree if one exists
+                    if worker.worktree_path:
+                        worktree_path = Path(worker.worktree_path)
+                        if worktree_path.exists():
+                            git_root = get_git_root(Path(worker.project_path))
+                            if git_root:
+                                from mab.spawner import remove_worktree
+
+                                self.logger.info(f"Removing orphaned worktree at {worktree_path}")
+                                if remove_worktree(git_root, worktree_path):
+                                    cleaned_worktrees += 1
+                                else:
+                                    self.logger.warning(
+                                        f"Failed to remove worktree at {worktree_path}"
+                                    )
+
+                    # Update worker status to STOPPED
+                    worker.status = WorkerStatus.STOPPED
+                    worker.stopped_at = datetime.now().isoformat()
+                    worker.error_message = "Cleaned up at daemon startup - process was not running"
+                    worker.worktree_path = None
+                    worker.worktree_branch = None
+                    self._worker_manager.db.update_worker(worker)
+
+        # Also clean up orphaned worktrees for each project we've seen
+        for project_path in project_paths_seen:
+            project_dir = Path(project_path)
+            if project_dir.exists():
+                # Get list of active worker IDs for this project
+                active_ids: set[str] = set()
+                if self._worker_manager is not None:
+                    for w in self._worker_manager.list_workers(
+                        status=WorkerStatus.RUNNING, project_path=project_path
+                    ):
+                        active_ids.add(w.id)
+
+                # Clean up any worktrees not belonging to active workers
+                try:
+                    removed = cleanup_stale_worktrees(project_dir, active_ids)
+                    if removed > 0:
+                        self.logger.info(
+                            f"Cleaned up {removed} orphaned worktrees in {project_path}"
+                        )
+                        cleaned_worktrees += removed
+                except Exception as e:
+                    self.logger.warning(f"Error cleaning up worktrees in {project_path}: {e}")
+
+        if stale_workers > 0 or cleaned_worktrees > 0:
+            self.logger.info(
+                f"Startup cleanup complete: {stale_workers} stale workers marked stopped, "
+                f"{cleaned_worktrees} orphaned worktrees removed"
+            )
+        else:
+            self.logger.info("Startup cleanup complete: no stale workers or worktrees found")
 
     def _get_project_manager(self, project_path: str) -> WorkerManager:
         """Get or create a project-specific WorkerManager.
