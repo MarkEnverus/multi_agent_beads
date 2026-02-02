@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from mab.daemon import MAB_HOME
+from mab.filesystem import warn_if_network_filesystem
 
 
 @dataclass
@@ -69,6 +70,9 @@ class DashboardManager:
         # Ensure directories exist
         self.mab_home.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Warn if on network filesystem (flock doesn't work reliably on NFS/CIFS)
+        warn_if_network_filesystem(self.mab_home, context="Dashboard manager")
 
         # Lock file for synchronizing dashboard operations
         self._lock_file = self.mab_home / "dashboard.lock"
