@@ -5,17 +5,13 @@ All file I/O operations are wrapped with asyncio.to_thread() to avoid blocking t
 
 import asyncio
 import logging
-import os
-import re
-from datetime import datetime
-from pathlib import Path
+import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from dashboard.config import AGENT_STALE_MINUTES, LOG_FILE
-from dashboard.exceptions import LogFileError
+from dashboard.config import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +21,7 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 class AgentStatus(BaseModel):
     """Response model for an agent's current status."""
 
+    worker_id: str = Field(..., description="Unique worker identifier")
     role: str = Field(..., description="Agent role (developer, qa, etc.)")
     instance: int = Field(..., description="Agent instance number")
     current_bead: str | None = Field(None, description="Currently claimed bead ID")
@@ -34,353 +31,187 @@ class AgentStatus(BaseModel):
     pid: int = Field(..., description="Process ID of the agent")
 
 
-# Log line pattern: [TIMESTAMP] [ID] EVENT_TYPE: details
-# ID can be either a numeric PID or an alphanumeric worker ID (e.g., "worker-dev-1")
-# Worker IDs fix the tracking bug where PIDs change per bash subshell command
-LOG_PATTERN = re.compile(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[([a-zA-Z0-9_-]+)\] (.+)")
-
-# Valid agent roles
+# Valid agent roles - maps DB roles to API roles
+ROLE_MAP = {
+    "dev": "developer",
+    "qa": "qa",
+    "tech_lead": "tech_lead",
+    "manager": "manager",
+    "reviewer": "reviewer",
+}
 VALID_ROLES = {"developer", "qa", "reviewer", "tech_lead", "manager", "unknown"}
 
 
-def _parse_log_file() -> list[dict[str, Any]]:
-    """Parse claude.log and return list of log entries.
+def _get_workers_from_db() -> list[dict[str, Any]]:
+    """Get worker state from mab.db.
 
-    Returns:
-        List of parsed log entry dictionaries.
-
-    Raises:
-        LogFileError: If the log file cannot be read or parsed.
+    Returns running/spawning workers and recently stopped workers (last hour).
     """
-    log_path = Path(LOG_FILE)
-
-    if not log_path.exists():
-        logger.debug("Log file does not exist: %s", log_path)
+    db_path = PROJECT_ROOT / ".mab" / "mab.db"
+    if not db_path.exists():
+        logger.debug("Database does not exist: %s", db_path)
         return []
 
-    entries = []
     try:
-        with open(log_path, encoding="utf-8") as f:
-            for line_num, line in enumerate(f, 1):
-                line = line.strip()
-                if not line:
-                    continue
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
 
-                match = LOG_PATTERN.match(line)
-                if match:
-                    timestamp_str, id_str, content = match.groups()
-                    # ID can be numeric PID or alphanumeric worker_id
-                    # For backward compatibility, try to parse as int first
-                    try:
-                        pid = int(id_str)
-                        worker_id = id_str  # Use string version for tracking
-                    except ValueError:
-                        # Alphanumeric worker ID - use 0 as placeholder PID
-                        pid = 0
-                        worker_id = id_str
+        # Note: Python ISO timestamps use 'T' separator while SQLite datetime uses space.
+        # Use REPLACE to normalize the comparison.
+        one_hour_ago = conn.execute("SELECT datetime('now', 'localtime', '-1 hour')").fetchone()[0]
 
-                    entries.append(
-                        {
-                            "timestamp": timestamp_str,
-                            "pid": pid,  # For backward compatibility
-                            "worker_id": worker_id,  # Primary tracking key
-                            "content": content,
-                        }
-                    )
+        workers = conn.execute(
+            """
+            SELECT w.*,
+                   (SELECT COUNT(*) FROM worker_events e
+                    WHERE e.worker_id = w.id AND e.event_type = 'claim') as beads_claimed
+            FROM workers w
+            WHERE w.status IN ('running', 'spawning')
+               OR REPLACE(w.stopped_at, 'T', ' ') > ?
+            ORDER BY w.started_at DESC
+        """,
+            (one_hour_ago,),
+        ).fetchall()
 
-    except PermissionError:
-        logger.error("Permission denied reading log file: %s", log_path)
-        raise LogFileError(
-            message="Permission denied when reading log file",
-            file_path=str(log_path),
-        ) from None
+        result = [dict(w) for w in workers]
+        conn.close()
 
-    except OSError as e:
-        logger.error("Error reading log file: %s - %s", log_path, e)
-        raise LogFileError(
-            message=f"Failed to read log file: {e}",
-            file_path=str(log_path),
-        ) from None
+        logger.debug("Found %d workers in database", len(result))
+        return result
 
-    logger.debug("Parsed %d log entries from %s", len(entries), log_path)
-    return entries
+    except sqlite3.Error as e:
+        logger.error("Database error: %s", e)
+        return []
 
 
-def _extract_agents_from_logs(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Extract agent sessions from log entries.
+def _get_current_bead_for_worker(worker_id: str) -> tuple[str | None, str | None]:
+    """Get the current bead for a worker from events.
 
-    Returns a dict of worker_id -> agent info for active sessions.
-    Uses worker_id for tracking to handle the PID instability bug where
-    each bash command runs in a different subshell with a different PID.
+    Returns tuple of (bead_id, bead_title).
     """
-    agents: dict[str, dict[str, Any]] = {}
+    db_path = PROJECT_ROOT / ".mab" / "mab.db"
+    if not db_path.exists():
+        return None, None
 
-    for entry in entries:
-        # Use worker_id as primary tracking key (handles both PIDs and alphanumeric IDs)
-        worker_id = entry.get("worker_id", str(entry["pid"]))
-        pid = entry["pid"]
-        content = entry["content"]
-        timestamp = entry["timestamp"]
-
-        if content == "SESSION_START":
-            # New session started
-            agents[worker_id] = {
-                "pid": pid,  # Keep for API compatibility
-                "worker_id": worker_id,  # Primary identifier
-                "status": "idle",
-                "current_bead": None,
-                "current_bead_title": None,
-                "last_activity": timestamp,
-                "role": "unknown",
-                "instance": 1,
-            }
-        elif content.startswith("SESSION_END:"):
-            # Session ended - mark as ended
-            if worker_id in agents:
-                agents[worker_id]["status"] = "ended"
-                agents[worker_id]["last_activity"] = timestamp
-        elif content.startswith("CLAIM:"):
-            # Agent claimed a bead
-            if worker_id in agents:
-                # Parse: CLAIM: bead-id - title
-                parts = content[6:].strip().split(" - ", 1)
-                if parts:
-                    agents[worker_id]["current_bead"] = parts[0].strip()
-                    if len(parts) > 1:
-                        agents[worker_id]["current_bead_title"] = parts[1].strip()
-                    agents[worker_id]["status"] = "working"
-                    agents[worker_id]["last_activity"] = timestamp
-        elif content.startswith("CLOSE:"):
-            # Bead closed - still active until SESSION_END
-            if worker_id in agents:
-                agents[worker_id]["current_bead"] = None
-                agents[worker_id]["current_bead_title"] = None
-                agents[worker_id]["status"] = "idle"
-                agents[worker_id]["last_activity"] = timestamp
-        elif worker_id in agents:
-            # Only meaningful work events update the activity timestamp
-            # NO_WORK polls should NOT count as activity
-            meaningful_prefixes = (
-                "WORK_START:",
-                "READ:",
-                "TESTS",
-                "BEAD_CREATE:",
-                "PR_CREATE:",
-                "PR_CREATED:",
-                "PR_MERGED:",
-                "CI:",
-                "BLOCKED:",
-                "ERROR:",
-            )
-            if content.startswith(meaningful_prefixes):
-                agents[worker_id]["last_activity"] = timestamp
-
-    return agents
-
-
-def _infer_role_from_bead_title(title: str | None) -> str:
-    """Infer agent role from bead title or labels."""
-    if not title:
-        return "unknown"
-
-    title_lower = title.lower()
-
-    # Simple heuristics based on common patterns
-    if any(kw in title_lower for kw in ["test", "qa", "verify"]):
-        return "qa"
-    if any(kw in title_lower for kw in ["review", "pr review"]):
-        return "reviewer"
-    if any(kw in title_lower for kw in ["arch", "design", "tech lead"]):
-        return "tech_lead"
-    if any(kw in title_lower for kw in ["epic", "priorit", "manage"]):
-        return "manager"
-
-    return "developer"
-
-
-def _format_iso_timestamp(timestamp_str: str) -> str:
-    """Convert log timestamp to ISO format."""
     try:
-        dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # noqa: DTZ007
-        return dt.isoformat() + "Z"
-    except ValueError:
-        logger.warning("Invalid timestamp format: %s", timestamp_str)
-        return timestamp_str
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+
+        # Get the most recent claim event for this worker
+        event = conn.execute(
+            """
+            SELECT bead_id, message FROM worker_events
+            WHERE worker_id = ? AND event_type = 'claim'
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """,
+            (worker_id,),
+        ).fetchone()
+
+        conn.close()
+
+        if event:
+            return event["bead_id"], event["message"]
+        return None, None
+
+    except sqlite3.Error:
+        return None, None
 
 
-def _is_agent_stale(timestamp_str: str, stale_minutes: int) -> bool:
-    """Check if an agent's last activity is older than the staleness threshold.
+def _map_db_status_to_api(db_status: str, current_bead: str | None) -> str:
+    """Map database status to API status.
 
-    Args:
-        timestamp_str: The agent's last activity timestamp (YYYY-MM-DD HH:MM:SS).
-        stale_minutes: Threshold in minutes after which an agent is considered stale.
-
-    Returns:
-        True if the agent is stale (no activity for longer than threshold).
+    DB statuses: spawning, running, stopped, crashed
+    API statuses: working, idle, ended
     """
-    try:
-        last_activity = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")  # noqa: DTZ007
-        now = datetime.now()  # noqa: DTZ005
-        age_minutes = (now - last_activity).total_seconds() / 60
-        return age_minutes > stale_minutes
-    except ValueError:
-        logger.warning("Invalid timestamp format for staleness check: %s", timestamp_str)
-        return True  # Treat unparseable timestamps as stale
+    if db_status in ("stopped", "crashed"):
+        return "ended"
+    if db_status == "spawning":
+        return "idle"
+    # running status - check if working on a bead
+    if current_bead:
+        return "working"
+    return "idle"
 
 
-def _is_pid_running(pid: int) -> bool:
-    """Check if a process with the given PID is currently running.
+def _extract_instance_from_worker_id(worker_id: str) -> int:
+    """Extract instance number from worker ID.
 
-    Uses os.kill with signal 0 which doesn't actually send a signal,
-    but checks if the process exists and we have permission to signal it.
-
-    Args:
-        pid: Process ID to check.
-
-    Returns:
-        True if the process is running, False otherwise.
+    Worker IDs are formatted like: worker-dev-abc123 or worker-qa-1-xyz789
+    Returns 1 as default if no instance found.
     """
-    # PIDs must be positive integers
-    if pid <= 0:
-        return False
-
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        # Process does not exist
-        return False
-    except PermissionError:
-        # Process exists but we don't have permission to signal it
-        # This means it's running (owned by another user)
-        return True
-    except OSError:
-        # Other OS error - assume not running
-        return False
+    parts = worker_id.split("-")
+    for part in parts:
+        if part.isdigit():
+            return int(part)
+    return 1
 
 
-def _is_claude_agent_process(pid: int) -> bool:
-    """Check if the process is actually a Claude agent, not a recycled PID.
-
-    Uses the `ps` command to inspect the process command line. A Claude agent
-    process should have 'claude' in its command line. This prevents false
-    positives when a PID has been recycled by the OS for a completely
-    different process.
-
-    Args:
-        pid: Process ID to check.
-
-    Returns:
-        True if the process appears to be a Claude agent, False otherwise.
-    """
-    import subprocess
-
-    try:
-        # Get the command line of the process
-        # Works on macOS and Linux
-        result = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "command="],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-
-        if result.returncode != 0:
-            # Process doesn't exist or ps failed
-            return False
-
-        command = result.stdout.strip().lower()
-        if not command:
-            return False
-
-        # Check if this looks like a Claude agent process
-        # Claude Code runs as a Node.js process with "claude" in the command
-        # or as a spawned subprocess from the dashboard
-        claude_indicators = ["claude", "anthropic", "mab", "multi_agent"]
-
-        return any(indicator in command for indicator in claude_indicators)
-
-    except subprocess.TimeoutExpired:
-        logger.warning("Timeout checking process %d command line", pid)
-        return False
-    except (OSError, subprocess.SubprocessError) as e:
-        logger.warning("Error checking process %d: %s", pid, e)
-        return False
+def _format_db_timestamp(timestamp_str: str | None) -> str:
+    """Convert database timestamp to ISO format for API response."""
+    if not timestamp_str:
+        return ""
+    # DB timestamps are already in ISO format
+    if "T" in timestamp_str:
+        return timestamp_str if timestamp_str.endswith("Z") else timestamp_str + "Z"
+    # Convert space-separated format
+    return timestamp_str.replace(" ", "T") + "Z"
 
 
 def _get_active_agents() -> list[dict[str, Any]]:
-    """Get list of currently active (non-ended, non-stale) agents.
+    """Get list of currently active agents from mab.db.
 
     Returns:
         List of active agent dictionaries.
-
-    Raises:
-        LogFileError: If the log file cannot be read.
     """
-    entries = _parse_log_file()
-    agents = _extract_agents_from_logs(entries)
+    workers = _get_workers_from_db()
 
-    # Filter to only active agents (not ended, not stale, and process verification)
-    active = []
-    for agent in agents.values():
-        if agent["status"] == "ended":
-            continue
+    agents = []
+    for worker in workers:
+        worker_id = worker["id"]
+        current_bead, bead_title = _get_current_bead_for_worker(worker_id)
 
-        worker_id = agent.get("worker_id", str(agent["pid"]))
-        pid = agent["pid"]
+        # Map DB role to API role
+        db_role = worker.get("role", "unknown")
+        role = ROLE_MAP.get(db_role, db_role)
+        if role not in VALID_ROLES:
+            role = "unknown"
 
-        # Check freshness - skip agents that haven't had activity recently
-        if _is_agent_stale(agent["last_activity"], AGENT_STALE_MINUTES):
-            logger.debug(
-                "Skipping stale agent %s (last activity: %s)",
-                worker_id,
-                agent["last_activity"],
-            )
-            continue
+        db_status = worker.get("status", "unknown")
+        api_status = _map_db_status_to_api(db_status, current_bead)
 
-        # PID verification: only for numeric worker_ids (actual PIDs)
-        # For alphanumeric worker_ids, we can't verify the process - rely on staleness
-        is_numeric_pid = pid > 0 and worker_id.isdigit()
-        if is_numeric_pid:
-            # Verify process is actually running - skip phantom agents
-            if not _is_pid_running(pid):
-                logger.debug(
-                    "Skipping phantom agent PID %d (process not running)",
-                    pid,
-                )
-                continue
+        # Use stopped_at if available, otherwise started_at
+        last_activity = worker.get("stopped_at") or worker.get("started_at", "")
 
-            # Verify the process is actually a Claude agent, not a recycled PID
-            if not _is_claude_agent_process(pid):
-                logger.debug(
-                    "Skipping recycled PID %d (not a Claude agent process)",
-                    pid,
-                )
-                continue
-
-        # Infer role from current bead title
-        agent["role"] = _infer_role_from_bead_title(agent.get("current_bead_title"))
-        agent["last_activity"] = _format_iso_timestamp(agent["last_activity"])
-        active.append(agent)
+        agents.append(
+            {
+                "pid": worker.get("pid") or 0,
+                "worker_id": worker_id,
+                "role": role,
+                "instance": _extract_instance_from_worker_id(worker_id),
+                "current_bead": current_bead,
+                "current_bead_title": bead_title,
+                "status": api_status,
+                "last_activity": _format_db_timestamp(last_activity),
+            }
+        )
 
     # Sort by last activity (most recent first)
-    active.sort(key=lambda a: a["last_activity"], reverse=True)
+    agents.sort(key=lambda a: a["last_activity"], reverse=True)
 
-    logger.debug("Found %d active agents", len(active))
-    return active
+    logger.debug("Found %d active agents from database", len(agents))
+    return agents
 
 
 @router.get("", response_model=list[AgentStatus])
 async def list_agents() -> list[dict[str, Any]]:
     """List all active agent sessions.
 
-    Returns agents that have started but not yet ended their session.
+    Returns workers from mab.db that are currently running/spawning,
+    plus recently stopped workers (last hour).
     Each agent shows their current bead (if claimed) and status.
-
-    Raises:
-        LogFileError: If the log file cannot be read.
     """
-    # Run blocking file I/O in thread pool to avoid blocking event loop
+    # Run blocking DB I/O in thread pool to avoid blocking event loop
     return await asyncio.to_thread(_get_active_agents)
 
 
@@ -396,7 +227,6 @@ async def list_agents_by_role(role: str) -> list[dict[str, Any]]:
 
     Raises:
         HTTPException: If the role is invalid.
-        LogFileError: If the log file cannot be read.
     """
     role_normalized = role.lower().replace("-", "_")
 
@@ -407,7 +237,7 @@ async def list_agents_by_role(role: str) -> list[dict[str, Any]]:
             detail=f"Invalid role: {role}. Valid roles: {', '.join(sorted(VALID_ROLES))}",
         )
 
-    # Run blocking file I/O in thread pool to avoid blocking event loop
+    # Run blocking DB I/O in thread pool to avoid blocking event loop
     agents = await asyncio.to_thread(_get_active_agents)
     filtered = [a for a in agents if a["role"] == role_normalized]
     logger.debug("Found %d agents with role %s", len(filtered), role_normalized)
