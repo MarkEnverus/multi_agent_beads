@@ -66,6 +66,7 @@ def insert_test_worker(
     pid: int = 1000,
     started_at: datetime | None = None,
     stopped_at: datetime | None = None,
+    project_path: str = "/test/project",
 ) -> None:
     """Insert a test worker record."""
     now = datetime.now()
@@ -80,7 +81,7 @@ def insert_test_worker(
         (
             worker_id,
             role,
-            "/test/project",
+            project_path,
             status,
             pid,
             now.isoformat(),
@@ -140,7 +141,7 @@ class TestAgentsEndpoints:
         conn = create_test_db(db_path)
 
         # Insert running worker
-        insert_test_worker(conn, "worker-dev-abc123", role="dev", status="running", pid=1001)
+        insert_test_worker(conn, "worker-dev-abc123", role="dev", status="running", pid=1001, project_path=str(tmp_path))
         # Note: workers.db doesn't track bead claims (no worker_events table)
 
         conn.close()
@@ -172,6 +173,7 @@ class TestAgentsEndpoints:
             status="stopped",
             started_at=datetime.now() - timedelta(hours=3),
             stopped_at=old_stop,
+            project_path=str(tmp_path),
         )
 
         # Worker stopped 30 minutes ago - should be included
@@ -182,6 +184,7 @@ class TestAgentsEndpoints:
             status="stopped",
             started_at=datetime.now() - timedelta(hours=1),
             stopped_at=recent_stop,
+            project_path=str(tmp_path),
         )
 
         conn.close()
@@ -199,7 +202,7 @@ class TestAgentsEndpoints:
         db_path = tmp_path / ".mab" / "workers.db"
         conn = create_test_db(db_path)
 
-        insert_test_worker(conn, "worker-spawning", status="spawning")
+        insert_test_worker(conn, "worker-spawning", status="spawning", project_path=str(tmp_path))
         conn.close()
 
         with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
@@ -214,8 +217,8 @@ class TestAgentsEndpoints:
         db_path = tmp_path / ".mab" / "workers.db"
         conn = create_test_db(db_path)
 
-        insert_test_worker(conn, "worker-dev-1", role="dev", status="running")
-        insert_test_worker(conn, "worker-qa-1", role="qa", status="running")
+        insert_test_worker(conn, "worker-dev-1", role="dev", status="running", project_path=str(tmp_path))
+        insert_test_worker(conn, "worker-qa-1", role="qa", status="running", project_path=str(tmp_path))
         conn.close()
 
         with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
@@ -257,8 +260,8 @@ class TestDatabaseFunctions:
         db_path = tmp_path / ".mab" / "workers.db"
         conn = create_test_db(db_path)
 
-        insert_test_worker(conn, "worker-1", status="running", pid=1001)
-        insert_test_worker(conn, "worker-2", status="spawning", pid=1002)
+        insert_test_worker(conn, "worker-1", status="running", pid=1001, project_path=str(tmp_path))
+        insert_test_worker(conn, "worker-2", status="spawning", pid=1002, project_path=str(tmp_path))
         conn.close()
 
         with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
@@ -302,6 +305,16 @@ class TestStatusMapping:
     def test_map_db_status_crashed(self) -> None:
         """Test crashed status -> ended."""
         assert _map_db_status_to_api("crashed", None) == "ended"
+
+    def test_map_db_status_failed(self) -> None:
+        """Test failed status -> ended."""
+        assert _map_db_status_to_api("failed", None) == "ended"
+        assert _map_db_status_to_api("failed", "mab-task") == "ended"
+
+    def test_map_db_status_stopping(self) -> None:
+        """Test stopping status -> ended."""
+        assert _map_db_status_to_api("stopping", None) == "ended"
+        assert _map_db_status_to_api("stopping", "mab-task") == "ended"
 
 
 class TestRoleMapping:
@@ -362,10 +375,10 @@ class TestGetActiveAgents:
         conn = create_test_db(db_path)
 
         # Create workers with various states
-        insert_test_worker(conn, "worker-dev-1-abc", role="dev", status="running", pid=1001)
+        insert_test_worker(conn, "worker-dev-1-abc", role="dev", status="running", pid=1001, project_path=str(tmp_path))
         # Note: workers.db doesn't track bead claims (no worker_events table)
 
-        insert_test_worker(conn, "worker-qa-2-xyz", role="qa", status="spawning", pid=1002)
+        insert_test_worker(conn, "worker-qa-2-xyz", role="qa", status="spawning", pid=1002, project_path=str(tmp_path))
 
         # Stopped recently - should be included
         insert_test_worker(
@@ -375,6 +388,7 @@ class TestGetActiveAgents:
             status="stopped",
             pid=1003,
             stopped_at=datetime.now() - timedelta(minutes=30),
+            project_path=str(tmp_path),
         )
 
         conn.close()
