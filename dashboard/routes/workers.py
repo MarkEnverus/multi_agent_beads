@@ -979,9 +979,7 @@ async def stream_worker_logs(
             )
 
         # Look up log file from mab.db
-        log_path = await asyncio.to_thread(
-            _get_worker_log_file, project_path, worker_id
-        )
+        log_path = await asyncio.to_thread(_get_worker_log_file, project_path, worker_id)
 
         # Fall back to project claude.log if no per-worker log file (legacy workers)
         filter_by_worker_id = False
@@ -1073,9 +1071,7 @@ async def get_worker_recent_logs(
             return []
 
         # Look up log file from mab.db
-        log_path = await asyncio.to_thread(
-            _get_worker_log_file, project_path, worker_id
-        )
+        log_path = await asyncio.to_thread(_get_worker_log_file, project_path, worker_id)
 
         # Fall back to project claude.log if no per-worker log file (legacy workers)
         filter_by_worker_id = False
