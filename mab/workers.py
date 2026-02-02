@@ -532,17 +532,20 @@ class WorkerManager:
         spawner_type: str = "subprocess",
         test_mode: bool = False,
         db_path: Path | None = None,
+        logs_dir: Path | None = None,
     ) -> None:
         """Initialize WorkerManager.
 
         Args:
-            mab_dir: Global .mab directory (for logs, heartbeats).
+            mab_dir: Global .mab directory.
             heartbeat_dir: Directory for heartbeat files.
             health_config: Health monitoring configuration.
             spawner_type: Type of spawner to use ("subprocess" or "tmux").
             test_mode: If True, use placeholder scripts instead of Claude CLI.
             db_path: Path to workers database. If None, uses mab_dir/workers.db.
                     For per-project isolation, pass <project>/.mab/workers.db.
+            logs_dir: Directory for worker log files. If None, uses mab_dir/logs.
+                    For per-project isolation, pass <project>/.mab/logs.
         """
         self.mab_dir = mab_dir
         # Support custom db_path for per-project databases
@@ -559,9 +562,11 @@ class WorkerManager:
         self._restart_lock = asyncio.Lock()  # Prevent race condition in auto_restart
         self._test_mode = test_mode
 
-        # Initialize cross-platform spawner
-        logs_dir = mab_dir / "logs"
-        self._spawner: Spawner = get_spawner(spawner_type, logs_dir=logs_dir, test_mode=test_mode)
+        # Initialize cross-platform spawner with logs directory
+        self._logs_dir = logs_dir or mab_dir / "logs"
+        self._spawner: Spawner = get_spawner(
+            spawner_type, logs_dir=self._logs_dir, test_mode=test_mode
+        )
         self._spawner_type = spawner_type
 
         self._ensure_heartbeat_dir()
@@ -960,13 +965,12 @@ class WorkerManager:
         """
         try:
             # Check the most recent log file for this worker
-            logs_dir = self.mab_dir / "logs"
-            if not logs_dir.exists():
+            if not self._logs_dir.exists():
                 return False
 
             # Find log files for this worker
             log_files = sorted(
-                logs_dir.glob(f"{worker_id}_*.log"),
+                self._logs_dir.glob(f"{worker_id}_*.log"),
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )
@@ -1424,19 +1428,21 @@ def get_project_worker_manager(
     spawner_type: str = "subprocess",
     test_mode: bool = False,
 ) -> WorkerManager:
-    """Get a WorkerManager with per-project database isolation.
+    """Get a WorkerManager with per-project isolation.
 
-    This creates a WorkerManager that stores worker state in a project-specific
-    database (<project>/.mab/workers.db) rather than the global ~/.mab/workers.db.
+    This creates a WorkerManager that stores worker state, logs, and heartbeats
+    in project-specific directories (<project>/.mab/) rather than the global
+    ~/.mab/.
 
-    Per-project databases reduce contention when multiple projects run workers
-    simultaneously, since each project has its own SQLite database with its
-    own file-level locking.
+    Per-project isolation reduces contention when multiple projects run workers
+    simultaneously, since each project has its own SQLite database and log files.
 
     Args:
-        project_path: Path to the project directory. Workers database will be
-                     created at <project_path>/.mab/workers.db.
-        mab_dir: Global .mab directory for logs. Defaults to ~/.mab/.
+        project_path: Path to the project directory. Workers will use:
+                     - <project_path>/.mab/workers.db (database)
+                     - <project_path>/.mab/logs/ (worker logs)
+                     - <project_path>/.mab/heartbeat/ (heartbeat files)
+        mab_dir: Global .mab directory. Defaults to ~/.mab/.
         health_config: Health monitoring configuration.
         spawner_type: Type of spawner to use ("subprocess" or "tmux").
         test_mode: If True, use placeholder scripts instead of Claude CLI.
@@ -1451,15 +1457,17 @@ def get_project_worker_manager(
     project_mab_dir = project_path / ".mab"
     project_db_path = project_mab_dir / "workers.db"
     project_heartbeat_dir = project_mab_dir / "heartbeat"
+    project_logs_dir = project_mab_dir / "logs"
 
     # Ensure project .mab directory exists
     project_mab_dir.mkdir(parents=True, exist_ok=True)
 
     return WorkerManager(
-        mab_dir=mab_dir,  # Global dir for logs
+        mab_dir=mab_dir,
         heartbeat_dir=project_heartbeat_dir,  # Per-project heartbeats
         health_config=health_config,
         spawner_type=spawner_type,
         test_mode=test_mode,
         db_path=project_db_path,  # Per-project database
+        logs_dir=project_logs_dir,  # Per-project logs
     )
