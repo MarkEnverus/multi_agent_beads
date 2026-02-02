@@ -25,6 +25,7 @@ from mab.dashboard_manager import (
 )
 from mab.rpc import DaemonNotRunningError as RPCDaemonNotRunningError
 from mab.rpc import get_default_client
+from mab.templates import get_template
 from mab.towns import (
     PortConflictError,
     TownError,
@@ -322,14 +323,71 @@ heartbeat/
     default="all",
     help="Agent role to start",
 )
+@click.option(
+    "--template",
+    "-t",
+    type=click.Choice(["solo", "pair", "full"]),
+    default=None,
+    help="Create town with template and start (quick start)",
+)
 @click.pass_context
-def start(ctx: click.Context, daemon: bool, workers: int, role: str) -> None:
+def start(
+    ctx: click.Context,
+    daemon: bool,
+    workers: int,
+    role: str,
+    template: str | None,
+) -> None:
     """Start agent workers.
 
     Spawns worker agents that process beads from the queue. Can run as a
     foreground process or as a background daemon.
+
+    \b
+    Quick Start with Templates:
+      mab start --template=solo   # Single dev
+      mab start --template=pair   # Dev + QA (default)
+      mab start --template=full   # All roles
+
+    Using --template auto-creates a town for the current project with the
+    specified template configuration.
     """
     daemon_instance: Daemon = ctx.obj["daemon"]
+
+    # Quick start with template: create town and start
+    if template:
+        town_path: Path = ctx.obj["town_path"]
+        town_name = town_path.name
+
+        # Create town manager
+        manager = TownManager(MAB_HOME)
+
+        # Check if town already exists
+        try:
+            existing = manager.get(town_name)
+            click.echo(f"Town '{town_name}' already exists (template: {existing.template})")
+        except TownNotFoundError:
+            # Create new town with template
+            template_config = get_template(template)
+            if template_config is None:
+                click.secho(f"Error: Invalid template '{template}'", fg="red", err=True)
+                raise SystemExit(1)
+
+            try:
+                new_town = manager.create(
+                    name=town_name,
+                    project_path=str(town_path),
+                    template=template,
+                    description=f"Auto-created with template '{template}'",
+                )
+                click.secho(f"Created town '{town_name}' with template '{template}'", fg="green")
+                click.echo(f"  Workers: {_format_worker_counts(new_town.worker_counts)}")
+                click.echo(f"  Port: {new_town.port}")
+            except TownError as e:
+                click.secho(f"Error creating town: {e}", fg="red", err=True)
+                raise SystemExit(1)
+
+        click.echo("")
 
     try:
         if daemon:
@@ -574,6 +632,73 @@ def spawn(ctx: click.Context, role: str, count: int, project: str | None) -> Non
                 {"role": role, "project_path": project_path},
             )
             click.echo(f"Spawned {role} worker: {result['worker_id']} (PID {result['pid']})")
+
+    except RPCDaemonNotRunningError:
+        click.echo("Error: Daemon is not running. Start it with 'mab start -d'", err=True)
+        raise SystemExit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
+# Worker command group for horizontal scaling
+@cli.group()
+@click.pass_context
+def worker(ctx: click.Context) -> None:
+    """Manage worker agents.
+
+    Commands for scaling workers horizontally within a town.
+    """
+    pass
+
+
+@worker.command("add")
+@click.argument("role", type=click.Choice(VALID_ROLES))
+@click.option(
+    "--count",
+    "-c",
+    type=int,
+    default=1,
+    help="Number of workers to add",
+)
+@click.option(
+    "--project",
+    "-p",
+    type=click.Path(exists=True, file_okay=False, resolve_path=True),
+    default=None,
+    help="Project directory (defaults to current directory)",
+)
+@click.pass_context
+def worker_add(ctx: click.Context, role: str, count: int, project: str | None) -> None:
+    """Add worker(s) of a specific role.
+
+    ROLE is the agent role to add (dev, qa, tech-lead, manager, reviewer).
+
+    This command scales workers horizontally by adding more agents of the
+    specified role to process work in parallel.
+
+    \b
+    Examples:
+      mab worker add dev          # Add 1 dev worker
+      mab worker add qa -c 2      # Add 2 QA workers
+      mab worker add dev -c 3     # Add 3 dev workers for faster processing
+    """
+    project_path = project or str(ctx.obj["town_path"])
+
+    try:
+        client = get_default_client()
+
+        spawned = []
+        for i in range(count):
+            result = client.call(
+                "worker.spawn",
+                {"role": role, "project_path": project_path},
+            )
+            spawned.append(result)
+            click.echo(f"Added {role} worker: {result['worker_id']} (PID {result['pid']})")
+
+        if count > 1:
+            click.secho(f"\nAdded {count} {role} worker(s)", fg="green")
 
     except RPCDaemonNotRunningError:
         click.echo("Error: Daemon is not running. Start it with 'mab start -d'", err=True)
@@ -953,18 +1078,25 @@ def town(ctx: click.Context) -> None:
     help="Project directory path",
 )
 @click.option(
+    "--template",
+    "-t",
+    type=click.Choice(["solo", "pair", "full"]),
+    default="pair",
+    help="Team template (solo: 1 dev, pair: dev+qa, full: all roles)",
+)
+@click.option(
     "--max-workers",
     "-w",
     type=int,
-    default=3,
-    help="Maximum concurrent workers",
+    default=None,
+    help="Maximum concurrent workers (defaults to template total)",
 )
 @click.option(
     "--roles",
     "-r",
     multiple=True,
-    default=["dev", "qa"],
-    help="Default roles to spawn (can be specified multiple times)",
+    default=None,
+    help="Override default roles (can be specified multiple times)",
 )
 @click.option(
     "--description",
@@ -978,35 +1110,53 @@ def town_create(
     name: str,
     port: int | None,
     project: str | None,
-    max_workers: int,
-    roles: tuple[str, ...],
+    template: str,
+    max_workers: int | None,
+    roles: tuple[str, ...] | None,
     description: str,
 ) -> None:
     """Create a new orchestration town.
 
     NAME is the unique identifier for the town (alphanumeric with underscores).
 
+    \b
+    Templates:
+      solo   Single developer, human merges PRs (1 worker)
+      pair   Developer + QA, human merges PRs (2 workers)
+      full   Complete team with all roles (5 workers)
+
     Examples:
 
-        mab town create staging --port 8001
+        mab town create staging --template=pair
 
-        mab town create dev --project /path/to/project --roles dev --roles qa
+        mab town create myproject --template=solo --project /path/to/project
     """
     manager: TownManager = ctx.obj["town_manager"]
+
+    # Get template config for defaults
+    template_config = get_template(template)
+    if template_config is None:
+        click.secho(f"Error: Invalid template '{template}'", fg="red", err=True)
+        raise SystemExit(1)
+
+    # Use template defaults if not overridden
+    effective_max_workers = max_workers or template_config.get_total_workers()
+    effective_roles = list(roles) if roles else None
 
     try:
         new_town = manager.create(
             name=name,
             port=port,
             project_path=project,
-            max_workers=max_workers,
-            default_roles=list(roles),
+            max_workers=effective_max_workers,
+            default_roles=effective_roles,
             description=description,
+            template=template,
         )
 
         click.secho(f"Created town '{name}' on port {new_town.port}", fg="green")
-        click.echo(f"  Max workers: {new_town.max_workers}")
-        click.echo(f"  Default roles: {', '.join(new_town.default_roles)}")
+        click.echo(f"  Template: {new_town.template}")
+        click.echo(f"  Workers: {_format_worker_counts(new_town.worker_counts)}")
         if new_town.project_path:
             click.echo(f"  Project: {new_town.project_path}")
 
@@ -1023,6 +1173,13 @@ def town_create(
     except TownError as e:
         click.secho(f"Error: {e}", fg="red", err=True)
         raise SystemExit(1)
+
+
+def _format_worker_counts(counts: dict[str, int]) -> str:
+    """Format worker counts as a readable string."""
+    if not counts:
+        return "-"
+    return ", ".join(f"{role}: {count}" for role, count in counts.items())
 
 
 @town.command("list")
@@ -1144,7 +1301,7 @@ def town_delete(
 def town_show(ctx: click.Context, name: str) -> None:
     """Show details of a town.
 
-    NAME is the town to show.
+    NAME is the town to show. Displays template, worker counts, and configuration.
     """
     manager: TownManager = ctx.obj["town_manager"]
 
@@ -1159,8 +1316,18 @@ def town_show(ctx: click.Context, name: str) -> None:
     click.echo(f"Town: {click.style(t.name, bold=True)}")
     click.echo(f"  Status: {click.style(t.status.value, fg=status_color)}")
     click.echo(f"  Port: {t.port}")
+
+    # Template information
+    click.echo(f"  Template: {t.template}")
+
+    # Worker counts (from template or custom)
+    effective_roles = t.get_effective_roles()
+    click.echo(f"  Workers: {_format_worker_counts(effective_roles)}")
     click.echo(f"  Max Workers: {t.max_workers}")
-    click.echo(f"  Default Roles: {', '.join(t.default_roles)}")
+
+    # Workflow
+    if t.workflow:
+        click.echo(f"  Workflow: {' -> '.join(t.workflow)}")
 
     if t.project_path:
         click.echo(f"  Project: {t.project_path}")
