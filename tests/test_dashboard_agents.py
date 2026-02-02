@@ -1,6 +1,6 @@
 """Tests for the dashboard agents API endpoints.
 
-Tests the new database-backed implementation that reads from mab.db
+Tests the new database-backed implementation that reads from workers.db
 instead of parsing claude.log.
 """
 
@@ -26,39 +26,31 @@ client = TestClient(app)
 
 
 def create_test_db(db_path: Path) -> sqlite3.Connection:
-    """Create a test database with the mab.db schema."""
+    """Create a test database with the workers.db schema."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
 
-    # Create workers table
+    # Create workers table (workers.db schema from WorkerDatabase)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS workers (
             id TEXT PRIMARY KEY,
-            pid INTEGER,
             role TEXT NOT NULL,
-            status TEXT NOT NULL,
             project_path TEXT NOT NULL,
+            status TEXT NOT NULL,
+            pid INTEGER,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            stopped_at TEXT,
+            crash_count INTEGER DEFAULT 0,
+            last_heartbeat TEXT,
+            exit_code INTEGER,
+            error_message TEXT,
+            town_name TEXT DEFAULT 'default',
             worktree_path TEXT,
             worktree_branch TEXT,
-            log_file TEXT,
-            started_at TIMESTAMP NOT NULL,
-            stopped_at TIMESTAMP,
-            exit_code INTEGER,
-            error_message TEXT
-        )
-    """)
-
-    # Create worker_events table
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS worker_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            worker_id TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            bead_id TEXT,
-            message TEXT,
-            timestamp TIMESTAMP NOT NULL,
-            FOREIGN KEY (worker_id) REFERENCES workers(id)
+            last_restart_at TEXT,
+            auto_restart_enabled INTEGER DEFAULT 1
         )
     """)
 
@@ -76,20 +68,22 @@ def insert_test_worker(
     stopped_at: datetime | None = None,
 ) -> None:
     """Insert a test worker record."""
+    now = datetime.now()
     if started_at is None:
-        started_at = datetime.now()
+        started_at = now
 
     conn.execute(
         """
-        INSERT INTO workers (id, pid, role, status, project_path, started_at, stopped_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO workers (id, role, project_path, status, pid, created_at, started_at, stopped_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             worker_id,
-            pid,
             role,
-            status,
             "/test/project",
+            status,
+            pid,
+            now.isoformat(),
             started_at.isoformat(),
             stopped_at.isoformat() if stopped_at else None,
         ),
@@ -105,18 +99,12 @@ def insert_test_event(
     message: str | None = None,
     timestamp: datetime | None = None,
 ) -> None:
-    """Insert a test worker event."""
-    if timestamp is None:
-        timestamp = datetime.now()
+    """Insert a test worker event.
 
-    conn.execute(
-        """
-        INSERT INTO worker_events (worker_id, event_type, bead_id, message, timestamp)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (worker_id, event_type, bead_id, message, timestamp.isoformat()),
-    )
-    conn.commit()
+    Note: workers.db doesn't have worker_events table, so this is a no-op.
+    The worker_events table only exists in mab.db (legacy).
+    """
+    pass  # workers.db doesn't track events
 
 
 class TestAgentsEndpoints:
@@ -124,46 +112,56 @@ class TestAgentsEndpoints:
 
     def test_list_agents_no_database(self, tmp_path: Path) -> None:
         """Test listing agents when database doesn't exist."""
-        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+        # Patch both PROJECT_ROOT and Path.home to prevent fallback to global db
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+        with (
+            patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path),
+            patch("dashboard.routes.agents.Path.home", return_value=fake_home),
+        ):
             response = client.get("/api/agents")
             assert response.status_code == 200
             assert response.json() == []
 
     def test_list_agents_empty_database(self, tmp_path: Path) -> None:
         """Test listing agents with empty database."""
-        db_path = tmp_path / ".mab" / "mab.db"
+        db_path = tmp_path / ".mab" / "workers.db"
         create_test_db(db_path)
 
         with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+            # workers.db exists in tmp_path, so no fallback triggered
             response = client.get("/api/agents")
             assert response.status_code == 200
             assert response.json() == []
 
     def test_list_agents_with_running_workers(self, tmp_path: Path) -> None:
         """Test listing agents with running workers."""
-        db_path = tmp_path / ".mab" / "mab.db"
+        db_path = tmp_path / ".mab" / "workers.db"
         conn = create_test_db(db_path)
 
         # Insert running worker
         insert_test_worker(conn, "worker-dev-abc123", role="dev", status="running", pid=1001)
-        insert_test_event(conn, "worker-dev-abc123", "claim", "mab-task1", "Test task title")
+        # Note: workers.db doesn't track bead claims (no worker_events table)
 
         conn.close()
 
         with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+            # workers.db exists in tmp_path so no fallback triggered
             response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
             assert len(data) == 1
             assert data[0]["pid"] == 1001
             assert data[0]["role"] == "developer"
-            assert data[0]["current_bead"] == "mab-task1"
-            assert data[0]["current_bead_title"] == "Test task title"
-            assert data[0]["status"] == "working"
+            # workers.db doesn't track bead claims, so current_bead is None
+            assert data[0]["current_bead"] is None
+            assert data[0]["current_bead_title"] is None
+            # Without a current bead, status is "idle" not "working"
+            assert data[0]["status"] == "idle"
 
     def test_list_agents_excludes_old_stopped_workers(self, tmp_path: Path) -> None:
         """Test that workers stopped more than 1 hour ago are excluded."""
-        db_path = tmp_path / ".mab" / "mab.db"
+        db_path = tmp_path / ".mab" / "workers.db"
         conn = create_test_db(db_path)
 
         # Worker stopped 2 hours ago - should be excluded
@@ -198,7 +196,7 @@ class TestAgentsEndpoints:
 
     def test_list_agents_includes_spawning_workers(self, tmp_path: Path) -> None:
         """Test that spawning workers are included."""
-        db_path = tmp_path / ".mab" / "mab.db"
+        db_path = tmp_path / ".mab" / "workers.db"
         conn = create_test_db(db_path)
 
         insert_test_worker(conn, "worker-spawning", status="spawning")
@@ -213,7 +211,7 @@ class TestAgentsEndpoints:
 
     def test_list_agents_by_role(self, tmp_path: Path) -> None:
         """Test filtering agents by role."""
-        db_path = tmp_path / ".mab" / "mab.db"
+        db_path = tmp_path / ".mab" / "workers.db"
         conn = create_test_db(db_path)
 
         insert_test_worker(conn, "worker-dev-1", role="dev", status="running")
@@ -247,7 +245,7 @@ class TestDatabaseFunctions:
 
     def test_get_workers_from_db_empty(self, tmp_path: Path) -> None:
         """Test getting workers when DB is empty."""
-        db_path = tmp_path / ".mab" / "mab.db"
+        db_path = tmp_path / ".mab" / "workers.db"
         create_test_db(db_path)
 
         with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
@@ -256,7 +254,7 @@ class TestDatabaseFunctions:
 
     def test_get_workers_from_db_with_workers(self, tmp_path: Path) -> None:
         """Test getting workers from database."""
-        db_path = tmp_path / ".mab" / "mab.db"
+        db_path = tmp_path / ".mab" / "workers.db"
         conn = create_test_db(db_path)
 
         insert_test_worker(conn, "worker-1", status="running", pid=1001)
@@ -269,7 +267,13 @@ class TestDatabaseFunctions:
 
     def test_get_workers_from_db_no_database(self, tmp_path: Path) -> None:
         """Test getting workers when database doesn't exist."""
-        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+        # Patch both PROJECT_ROOT and Path.home to prevent fallback to global db
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+        with (
+            patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path),
+            patch("dashboard.routes.agents.Path.home", return_value=fake_home),
+        ):
             workers = _get_workers_from_db()
             assert workers == []
 
@@ -354,12 +358,12 @@ class TestGetActiveAgents:
 
     def test_get_active_agents_full_workflow(self, tmp_path: Path) -> None:
         """Test full workflow of getting active agents from DB."""
-        db_path = tmp_path / ".mab" / "mab.db"
+        db_path = tmp_path / ".mab" / "workers.db"
         conn = create_test_db(db_path)
 
         # Create workers with various states
         insert_test_worker(conn, "worker-dev-1-abc", role="dev", status="running", pid=1001)
-        insert_test_event(conn, "worker-dev-1-abc", "claim", "mab-feature", "Implement feature X")
+        # Note: workers.db doesn't track bead claims (no worker_events table)
 
         insert_test_worker(conn, "worker-qa-2-xyz", role="qa", status="spawning", pid=1002)
 
@@ -382,8 +386,9 @@ class TestGetActiveAgents:
 
             # Find specific agents
             dev1 = next(a for a in agents if "dev-1" in a["worker_id"])
-            assert dev1["status"] == "working"
-            assert dev1["current_bead"] == "mab-feature"
+            # workers.db doesn't track bead claims, so status is "idle" not "working"
+            assert dev1["status"] == "idle"
+            assert dev1["current_bead"] is None
             assert dev1["role"] == "developer"
 
             qa = next(a for a in agents if "qa-2" in a["worker_id"])

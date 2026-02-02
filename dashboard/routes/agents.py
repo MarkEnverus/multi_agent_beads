@@ -6,6 +6,7 @@ All file I/O operations are wrapped with asyncio.to_thread() to avoid blocking t
 import asyncio
 import logging
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -43,11 +44,17 @@ VALID_ROLES = {"developer", "qa", "reviewer", "tech_lead", "manager", "unknown"}
 
 
 def _get_workers_from_db() -> list[dict[str, Any]]:
-    """Get worker state from mab.db.
+    """Get worker state from workers.db.
 
     Returns running/spawning workers and recently stopped workers (last hour).
+    Checks both per-project database (.mab/workers.db) and falls back to
+    global database (~/.mab/workers.db) if project-local doesn't exist.
     """
-    db_path = PROJECT_ROOT / ".mab" / "mab.db"
+    # Try per-project database first
+    db_path = PROJECT_ROOT / ".mab" / "workers.db"
+    if not db_path.exists():
+        # Fall back to global database
+        db_path = Path.home() / ".mab" / "workers.db"
     if not db_path.exists():
         logger.debug("Database does not exist: %s", db_path)
         return []
@@ -60,18 +67,39 @@ def _get_workers_from_db() -> list[dict[str, Any]]:
         # Use REPLACE to normalize the comparison.
         one_hour_ago = conn.execute("SELECT datetime('now', 'localtime', '-1 hour')").fetchone()[0]
 
-        workers = conn.execute(
-            """
-            SELECT w.*,
-                   (SELECT COUNT(*) FROM worker_events e
-                    WHERE e.worker_id = w.id AND e.event_type = 'claim') as beads_claimed
-            FROM workers w
-            WHERE w.status IN ('running', 'spawning')
-               OR REPLACE(w.stopped_at, 'T', ' ') > ?
-            ORDER BY w.started_at DESC
-        """,
-            (one_hour_ago,),
-        ).fetchall()
+        # Check if worker_events table exists (mab.db has it, workers.db doesn't)
+        has_events_table = (
+            conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='worker_events'"
+            ).fetchone()
+            is not None
+        )
+
+        if has_events_table:
+            workers = conn.execute(
+                """
+                SELECT w.*,
+                       (SELECT COUNT(*) FROM worker_events e
+                        WHERE e.worker_id = w.id AND e.event_type = 'claim') as beads_claimed
+                FROM workers w
+                WHERE w.status IN ('running', 'spawning', 'starting')
+                   OR REPLACE(w.stopped_at, 'T', ' ') > ?
+                ORDER BY w.started_at DESC
+            """,
+                (one_hour_ago,),
+            ).fetchall()
+        else:
+            # workers.db schema - no worker_events table
+            workers = conn.execute(
+                """
+                SELECT w.*, 0 as beads_claimed
+                FROM workers w
+                WHERE w.status IN ('running', 'spawning', 'starting')
+                   OR REPLACE(COALESCE(w.stopped_at, ''), 'T', ' ') > ?
+                ORDER BY w.started_at DESC
+            """,
+                (one_hour_ago,),
+            ).fetchall()
 
         result = [dict(w) for w in workers]
         conn.close()
@@ -88,14 +116,32 @@ def _get_current_bead_for_worker(worker_id: str) -> tuple[str | None, str | None
     """Get the current bead for a worker from events.
 
     Returns tuple of (bead_id, bead_title).
+    Note: worker_events table only exists in mab.db (legacy).
+    workers.db (WorkerDatabase) does not track bead claims.
     """
+    # Try mab.db first (has worker_events table)
     db_path = PROJECT_ROOT / ".mab" / "mab.db"
+    if not db_path.exists():
+        # Try global mab.db
+        db_path = Path.home() / ".mab" / "mab.db"
     if not db_path.exists():
         return None, None
 
     try:
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
+
+        # Check if worker_events table exists
+        has_events = (
+            conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='worker_events'"
+            ).fetchone()
+            is not None
+        )
+
+        if not has_events:
+            conn.close()
+            return None, None
 
         # Get the most recent claim event for this worker
         event = conn.execute(
