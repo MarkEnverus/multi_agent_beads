@@ -636,7 +636,9 @@ async def list_workers(
     project_path: str | None = None,
     role: str | None = None,
     active_only: bool = Query(True, description="Only show active or recently stopped workers"),
-    max_age_hours: float = Query(1.0, description="Max age in hours for stopped workers (when active_only=True)"),
+    max_age_hours: float = Query(
+        1.0, description="Max age in hours for stopped workers (when active_only=True)"
+    ),
 ) -> dict[str, Any]:
     """List all workers with optional filtering.
 
