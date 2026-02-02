@@ -1026,20 +1026,32 @@ class WorkerManager:
 
                 # If exit_code is None, use log-based heuristic as fallback
                 if exit_code is None:
-                    logger.debug(
-                        f"Worker {worker.id} exit code unknown, checking logs for clean exit"
+                    # This can happen if:
+                    # 1. Daemon was restarted and lost process handles
+                    # 2. Process was terminated externally
+                    # 3. Process became a zombie and was reaped
+                    has_popen = worker.id in self._active_processes
+                    logger.info(
+                        f"Worker {worker.id} exit code unknown (has_popen={has_popen}), "
+                        f"checking logs for clean exit indicators"
                     )
                     if self._check_log_for_clean_exit(worker.id):
                         logger.info(
                             f"Worker {worker.id} log indicates clean exit, treating as stopped"
                         )
                         exit_code = 0  # Treat as clean exit
+                    else:
+                        logger.info(
+                            f"Worker {worker.id} log check did not find clean exit indicators, "
+                            f"will mark as crashed (this may be a false positive if logs weren't flushed)"
+                        )
 
                 if self._is_clean_exit(exit_code):
                     # Clean exit - worker finished naturally (e.g., no work found)
                     worker.status = WorkerStatus.STOPPED
                     worker.exit_code = exit_code
                     worker.stopped_at = datetime.now().isoformat()
+                    worker.error_message = None  # Clear any previous error
                     logger.info(f"Worker {worker.id} stopped cleanly (exit code {exit_code})")
                 else:
                     # Actual crash - increment crash_count
@@ -1048,9 +1060,27 @@ class WorkerManager:
                     worker.exit_code = exit_code
                     worker.stopped_at = datetime.now().isoformat()
                     crashed_workers.append(worker)
+
+                    # Set descriptive error_message based on what we know
+                    if exit_code is None:
+                        worker.error_message = (
+                            "Process terminated unexpectedly. Exit code could not be determined "
+                            "(process handle lost or daemon restarted). Check worker log file for details."
+                        )
+                    elif exit_code == -9:  # SIGKILL
+                        worker.error_message = (
+                            f"Process killed by SIGKILL (exit code {exit_code}). "
+                            "May indicate out-of-memory or forced termination."
+                        )
+                    else:
+                        worker.error_message = (
+                            f"Process exited with error code {exit_code}. "
+                            "Check worker log file for details."
+                        )
+
                     logger.warning(
                         f"Worker {worker.id} crashed (exit code {exit_code}, "
-                        f"crash #{worker.crash_count})"
+                        f"crash #{worker.crash_count}): {worker.error_message}"
                     )
 
                 self.db.update_worker(worker)

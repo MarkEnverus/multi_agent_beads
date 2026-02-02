@@ -884,6 +884,102 @@ class TestCleanExitDetection:
         # Don't create any logs
         assert manager._check_log_for_clean_exit(worker_id) is False
 
+    @pytest.mark.asyncio
+    async def test_crash_detection_sets_error_message(self, tmp_path: Path) -> None:
+        """Test that crash detection sets descriptive error_message."""
+        import subprocess
+
+        manager = WorkerManager(mab_dir=tmp_path / ".mab", test_mode=True)
+
+        # Spawn a worker
+        worker = await manager.spawn(
+            role="dev",
+            project_path=str(tmp_path),
+        )
+
+        # Stop the real process first
+        await manager.stop(worker.id)
+
+        # Re-insert the worker as RUNNING to simulate the scenario
+        worker.status = WorkerStatus.RUNNING
+        worker.stopped_at = None
+        worker.error_message = None
+        manager.db.update_worker(worker)
+
+        # Create a process that exits with error code 1
+        error_process = subprocess.Popen(
+            ["python3", "-c", "import sys; sys.exit(1)"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        error_process.wait()  # Wait for it to exit
+
+        # Update worker.pid to the error process and track it
+        worker.pid = error_process.pid
+        manager.db.update_worker(worker)
+        manager._active_processes[worker.id] = error_process
+
+        # Health check should detect the crashed process
+        crashed = await manager.health_check()
+
+        # Worker should be in crashed list
+        assert len(crashed) == 1
+        assert crashed[0].id == worker.id
+
+        # Worker should have error_message set
+        updated = manager.db.get_worker(worker.id)
+        assert updated is not None
+        assert updated.status == WorkerStatus.CRASHED
+        assert updated.error_message is not None
+        assert "error code 1" in updated.error_message.lower()
+
+    @pytest.mark.asyncio
+    async def test_clean_exit_clears_error_message(self, tmp_path: Path) -> None:
+        """Test that clean exit clears any previous error_message."""
+        import subprocess
+
+        manager = WorkerManager(mab_dir=tmp_path / ".mab", test_mode=True)
+
+        # Spawn a worker
+        worker = await manager.spawn(
+            role="dev",
+            project_path=str(tmp_path),
+        )
+
+        # Stop the real process first
+        await manager.stop(worker.id)
+
+        # Re-insert the worker as RUNNING with a previous error message
+        worker.status = WorkerStatus.RUNNING
+        worker.stopped_at = None
+        worker.error_message = "Previous error that should be cleared"
+        manager.db.update_worker(worker)
+
+        # Create a process that exits cleanly with code 0
+        clean_process = subprocess.Popen(
+            ["python3", "-c", "import sys; sys.exit(0)"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        clean_process.wait()  # Wait for it to exit
+
+        # Update worker.pid to the clean process and track it
+        worker.pid = clean_process.pid
+        manager.db.update_worker(worker)
+        manager._active_processes[worker.id] = clean_process
+
+        # Health check should detect the stopped process
+        crashed = await manager.health_check()
+
+        # Clean exit should NOT be in crashed list
+        assert len(crashed) == 0
+
+        # Worker should have error_message cleared
+        updated = manager.db.get_worker(worker.id)
+        assert updated is not None
+        assert updated.status == WorkerStatus.STOPPED
+        assert updated.error_message is None
+
 
 class TestAutoRestartAsync:
     """Async tests for auto-restart functionality."""
