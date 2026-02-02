@@ -1061,6 +1061,22 @@ class WorkerManager:
                 self._cached_exit_codes.pop(worker.id, None)
                 self._cleanup_heartbeat(worker.id)
 
+                # Cleanup worktree if one exists
+                if worker.worktree_path:
+                    worktree_path = Path(worker.worktree_path)
+                    if worktree_path.exists():
+                        git_root = get_git_root(Path(worker.project_path))
+                        if git_root:
+                            logger.info(
+                                f"Cleaning up worktree for crashed/stopped worker {worker.id} "
+                                f"at {worktree_path}"
+                            )
+                            remove_worktree(git_root, worktree_path)
+                    # Clear worktree info from worker
+                    worker.worktree_path = None
+                    worker.worktree_branch = None
+                    self.db.update_worker(worker)
+
         return crashed_workers
 
     async def _check_worker_health(self, worker: Worker) -> bool:
