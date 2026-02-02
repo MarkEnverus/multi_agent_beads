@@ -35,6 +35,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from mab import db
+
 logger = logging.getLogger("mab.spawner")
 
 # Role to prompt file mapping
@@ -1042,13 +1044,35 @@ while True:
             # Track the master fd
             self._active_fds[worker_id] = master_fd
 
+            # Record worker in database
+            started_at = datetime.now()
+            try:
+                conn = db.get_db(project)
+                db.insert_worker(
+                    conn,
+                    worker_id=worker_id,
+                    role=role,
+                    status="running",
+                    project_path=str(project),
+                    started_at=started_at,
+                    pid=process.pid,
+                    worktree_path=str(worktree_path) if worktree_path else None,
+                    worktree_branch=worktree_branch,
+                    log_file=str(log_file),
+                )
+                db.insert_event(conn, worker_id, "spawn")
+                conn.close()
+            except Exception as e:
+                # Log but don't fail spawn if DB write fails
+                logger.warning(f"Failed to record worker {worker_id} in database: {e}")
+
             return ProcessInfo(
                 pid=process.pid,
                 worker_id=worker_id,
                 role=role,
                 project_path=str(project),
                 log_file=log_file,
-                started_at=datetime.now().isoformat(),
+                started_at=started_at.isoformat(),
                 master_fd=master_fd,
                 process=process,
                 worktree_path=worktree_path,
@@ -1259,14 +1283,36 @@ while True:
                     )
 
         # Get exit code
+        exit_code: int | None = None
         if process_info.process:
             try:
                 process_info.process.wait(timeout=1.0)
-                return process_info.process.returncode
+                exit_code = process_info.process.returncode
             except subprocess.TimeoutExpired:
-                return None
+                pass
 
-        return None
+        # Update worker status in database
+        try:
+            conn = db.get_db(Path(process_info.project_path))
+            status = "stopped" if exit_code == 0 else "crashed"
+            db.update_worker(
+                conn,
+                worker_id,
+                status=status,
+                stopped_at=datetime.now(),
+                exit_code=exit_code,
+            )
+            db.insert_event(
+                conn,
+                worker_id,
+                "terminate",
+                message=f"Exit code: {exit_code}",
+            )
+            conn.close()
+        except Exception as e:
+            logger.warning(f"Failed to update worker {worker_id} in database: {e}")
+
+        return exit_code
 
 
 class TmuxSpawner(Spawner):
@@ -1450,13 +1496,33 @@ export WORKER_PROJECT="{project}"
             else:
                 pid = 0  # Unknown PID
 
+            # Record worker in database
+            started_at = datetime.now()
+            try:
+                conn = db.get_db(project)
+                db.insert_worker(
+                    conn,
+                    worker_id=worker_id,
+                    role=role,
+                    status="running",
+                    project_path=str(project),
+                    started_at=started_at,
+                    pid=pid if pid > 0 else None,
+                    log_file=str(log_file),
+                )
+                db.insert_event(conn, worker_id, "spawn")
+                conn.close()
+            except Exception as e:
+                # Log but don't fail spawn if DB write fails
+                logger.warning(f"Failed to record worker {worker_id} in database: {e}")
+
             return ProcessInfo(
                 pid=pid,
                 worker_id=worker_id,
                 role=role,
                 project_path=str(project),
                 log_file=log_file,
-                started_at=datetime.now().isoformat(),
+                started_at=started_at.isoformat(),
             )
 
         except subprocess.TimeoutExpired:
@@ -1480,9 +1546,11 @@ export WORKER_PROJECT="{project}"
     ) -> int | None:
         """Terminate a worker's tmux session."""
         session_name = self._session_name(process_info.worker_id)
+        worker_id = process_info.worker_id
 
         logger.info(f"Killing tmux session {session_name}")
 
+        exit_code: int | None = None
         try:
             result = subprocess.run(
                 [self.tmux_path, "kill-session", "-t", session_name],
@@ -1490,10 +1558,33 @@ export WORKER_PROJECT="{project}"
                 text=True,
                 timeout=10,
             )
-            return 0 if result.returncode == 0 else None
+            exit_code = 0 if result.returncode == 0 else None
 
         except (subprocess.TimeoutExpired, OSError):
-            return None
+            pass
+
+        # Update worker status in database
+        try:
+            conn = db.get_db(Path(process_info.project_path))
+            status = "stopped" if exit_code == 0 else "crashed"
+            db.update_worker(
+                conn,
+                worker_id,
+                status=status,
+                stopped_at=datetime.now(),
+                exit_code=exit_code,
+            )
+            db.insert_event(
+                conn,
+                worker_id,
+                "terminate",
+                message=f"Exit code: {exit_code}",
+            )
+            conn.close()
+        except Exception as e:
+            logger.warning(f"Failed to update worker {worker_id} in database: {e}")
+
+        return exit_code
 
 
 def get_spawner(
