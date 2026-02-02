@@ -58,11 +58,10 @@ def _get_workers_from_db() -> list[dict[str, Any]]:
 
         # Note: Python ISO timestamps use 'T' separator while SQLite datetime uses space.
         # Use REPLACE to normalize the comparison.
-        one_hour_ago = conn.execute(
-            "SELECT datetime('now', 'localtime', '-1 hour')"
-        ).fetchone()[0]
+        one_hour_ago = conn.execute("SELECT datetime('now', 'localtime', '-1 hour')").fetchone()[0]
 
-        workers = conn.execute("""
+        workers = conn.execute(
+            """
             SELECT w.*,
                    (SELECT COUNT(*) FROM worker_events e
                     WHERE e.worker_id = w.id AND e.event_type = 'claim') as beads_claimed
@@ -70,7 +69,9 @@ def _get_workers_from_db() -> list[dict[str, Any]]:
             WHERE w.status IN ('running', 'spawning')
                OR REPLACE(w.stopped_at, 'T', ' ') > ?
             ORDER BY w.started_at DESC
-        """, (one_hour_ago,)).fetchall()
+        """,
+            (one_hour_ago,),
+        ).fetchall()
 
         result = [dict(w) for w in workers]
         conn.close()
@@ -97,12 +98,15 @@ def _get_current_bead_for_worker(worker_id: str) -> tuple[str | None, str | None
         conn.row_factory = sqlite3.Row
 
         # Get the most recent claim event for this worker
-        event = conn.execute("""
+        event = conn.execute(
+            """
             SELECT bead_id, message FROM worker_events
             WHERE worker_id = ? AND event_type = 'claim'
             ORDER BY timestamp DESC
             LIMIT 1
-        """, (worker_id,)).fetchone()
+        """,
+            (worker_id,),
+        ).fetchone()
 
         conn.close()
 
@@ -179,16 +183,18 @@ def _get_active_agents() -> list[dict[str, Any]]:
         # Use stopped_at if available, otherwise started_at
         last_activity = worker.get("stopped_at") or worker.get("started_at", "")
 
-        agents.append({
-            "pid": worker.get("pid") or 0,
-            "worker_id": worker_id,
-            "role": role,
-            "instance": _extract_instance_from_worker_id(worker_id),
-            "current_bead": current_bead,
-            "current_bead_title": bead_title,
-            "status": api_status,
-            "last_activity": _format_db_timestamp(last_activity),
-        })
+        agents.append(
+            {
+                "pid": worker.get("pid") or 0,
+                "worker_id": worker_id,
+                "role": role,
+                "instance": _extract_instance_from_worker_id(worker_id),
+                "current_bead": current_bead,
+                "current_bead_title": bead_title,
+                "status": api_status,
+                "last_activity": _format_db_timestamp(last_activity),
+            }
+        )
 
     # Sort by last activity (most recent first)
     agents.sort(key=lambda a: a["last_activity"], reverse=True)
