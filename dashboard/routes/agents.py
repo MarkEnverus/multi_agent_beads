@@ -75,6 +75,9 @@ def _get_workers_from_db() -> list[dict[str, Any]]:
             is not None
         )
 
+        # Filter to current project only
+        project_path = str(PROJECT_ROOT)
+
         if has_events_table:
             workers = conn.execute(
                 """
@@ -82,11 +85,12 @@ def _get_workers_from_db() -> list[dict[str, Any]]:
                        (SELECT COUNT(*) FROM worker_events e
                         WHERE e.worker_id = w.id AND e.event_type = 'claim') as beads_claimed
                 FROM workers w
-                WHERE w.status IN ('running', 'spawning', 'starting')
-                   OR REPLACE(w.stopped_at, 'T', ' ') > ?
+                WHERE w.project_path = ?
+                  AND (w.status IN ('running', 'spawning', 'starting')
+                       OR REPLACE(w.stopped_at, 'T', ' ') > ?)
                 ORDER BY w.started_at DESC
             """,
-                (one_hour_ago,),
+                (project_path, one_hour_ago),
             ).fetchall()
         else:
             # workers.db schema - no worker_events table
@@ -94,11 +98,12 @@ def _get_workers_from_db() -> list[dict[str, Any]]:
                 """
                 SELECT w.*, 0 as beads_claimed
                 FROM workers w
-                WHERE w.status IN ('running', 'spawning', 'starting')
-                   OR REPLACE(COALESCE(w.stopped_at, ''), 'T', ' ') > ?
+                WHERE w.project_path = ?
+                  AND (w.status IN ('running', 'spawning', 'starting')
+                       OR REPLACE(COALESCE(w.stopped_at, ''), 'T', ' ') > ?)
                 ORDER BY w.started_at DESC
             """,
-                (one_hour_ago,),
+                (project_path, one_hour_ago),
             ).fetchall()
 
         result = [dict(w) for w in workers]
