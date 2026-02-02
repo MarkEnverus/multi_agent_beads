@@ -141,7 +141,14 @@ class TestAgentsEndpoints:
         conn = create_test_db(db_path)
 
         # Insert running worker
-        insert_test_worker(conn, "worker-dev-abc123", role="dev", status="running", pid=1001, project_path=str(tmp_path))
+        insert_test_worker(
+            conn,
+            "worker-dev-abc123",
+            role="dev",
+            status="running",
+            pid=1001,
+            project_path=str(tmp_path),
+        )
         # Note: workers.db doesn't track bead claims (no worker_events table)
 
         conn.close()
@@ -217,8 +224,12 @@ class TestAgentsEndpoints:
         db_path = tmp_path / ".mab" / "workers.db"
         conn = create_test_db(db_path)
 
-        insert_test_worker(conn, "worker-dev-1", role="dev", status="running", project_path=str(tmp_path))
-        insert_test_worker(conn, "worker-qa-1", role="qa", status="running", project_path=str(tmp_path))
+        insert_test_worker(
+            conn, "worker-dev-1", role="dev", status="running", project_path=str(tmp_path)
+        )
+        insert_test_worker(
+            conn, "worker-qa-1", role="qa", status="running", project_path=str(tmp_path)
+        )
         conn.close()
 
         with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
@@ -261,7 +272,9 @@ class TestDatabaseFunctions:
         conn = create_test_db(db_path)
 
         insert_test_worker(conn, "worker-1", status="running", pid=1001, project_path=str(tmp_path))
-        insert_test_worker(conn, "worker-2", status="spawning", pid=1002, project_path=str(tmp_path))
+        insert_test_worker(
+            conn, "worker-2", status="spawning", pid=1002, project_path=str(tmp_path)
+        )
         conn.close()
 
         with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
@@ -375,10 +388,24 @@ class TestGetActiveAgents:
         conn = create_test_db(db_path)
 
         # Create workers with various states
-        insert_test_worker(conn, "worker-dev-1-abc", role="dev", status="running", pid=1001, project_path=str(tmp_path))
+        insert_test_worker(
+            conn,
+            "worker-dev-1-abc",
+            role="dev",
+            status="running",
+            pid=1001,
+            project_path=str(tmp_path),
+        )
         # Note: workers.db doesn't track bead claims (no worker_events table)
 
-        insert_test_worker(conn, "worker-qa-2-xyz", role="qa", status="spawning", pid=1002, project_path=str(tmp_path))
+        insert_test_worker(
+            conn,
+            "worker-qa-2-xyz",
+            role="qa",
+            status="spawning",
+            pid=1002,
+            project_path=str(tmp_path),
+        )
 
         # Stopped recently - should be included
         insert_test_worker(
