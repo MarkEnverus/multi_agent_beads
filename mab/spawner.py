@@ -650,8 +650,8 @@ You are a {role} agent in the multi-agent beads system. You operate in a CONTINU
 **STOP! Run these commands NOW before reading further:**
 
 ```bash
-# 1. Define log function (uses WORKER_LOG_FILE env var)
-log() {{ echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$$] $1" >> "$WORKER_LOG_FILE"; }}
+# 1. Define log function (uses WORKER_LOG_FILE and WORKER_ID env vars)
+log() {{ echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$WORKER_ID] $1" >> "$WORKER_LOG_FILE"; }}
 
 # 2. Define bd alias to use main project database (uses BD_ROOT env var)
 # Workers run in isolated git worktrees - you MUST use the main project's beads database

@@ -749,8 +749,9 @@ async def restart_worker(
 
 # Log streaming functionality
 
-# Log line pattern: [TIMESTAMP] [PID] EVENT_TYPE: details
-_LOG_PATTERN = re.compile(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(\d+)\] (.+)")
+# Log line pattern: [TIMESTAMP] [IDENTIFIER] EVENT_TYPE: details
+# IDENTIFIER can be either a PID (digits only) or a worker_id (alphanumeric with hyphens)
+_LOG_PATTERN = re.compile(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[([\w-]+)\] (.+)")
 
 # SSE retry interval in milliseconds
 _SSE_RETRY_MS = 3000
@@ -764,6 +765,7 @@ def _parse_log_line(line: str) -> dict[str, Any] | None:
 
     Returns:
         Parsed log entry dict, or None if line is invalid.
+        Contains 'worker_id' if identifier is alphanumeric, 'pid' if numeric.
     """
     line = line.strip()
     if not line:
@@ -773,12 +775,7 @@ def _parse_log_line(line: str) -> dict[str, Any] | None:
     if not match:
         return None
 
-    timestamp_str, pid_str, content = match.groups()
-
-    try:
-        pid = int(pid_str)
-    except ValueError:
-        return None
+    timestamp_str, identifier, content = match.groups()
 
     # Parse event type and message
     if ":" in content:
@@ -789,13 +786,20 @@ def _parse_log_line(line: str) -> dict[str, Any] | None:
         event = content.strip()
         message = None
 
-    return {
+    result: dict[str, Any] = {
         "timestamp": timestamp_str,
-        "pid": pid,
         "event": event,
         "message": message,
         "raw": line,
     }
+
+    # Determine if identifier is a PID (all digits) or worker_id
+    if identifier.isdigit():
+        result["pid"] = int(identifier)
+    else:
+        result["worker_id"] = identifier
+
+    return result
 
 
 def _format_sse_event(data: dict[str, Any], event_type: str = "message") -> str:
@@ -807,14 +811,14 @@ def _format_sse_event(data: dict[str, Any], event_type: str = "message") -> str:
 
 
 async def _stream_worker_logs(
-    worker_pid: int,
+    worker_id: str,
     log_path: Path,
     tail_lines: int = 50,
 ) -> AsyncIterator[str]:
-    """Stream log entries for a specific worker PID via SSE.
+    """Stream log entries for a specific worker ID via SSE.
 
     Args:
-        worker_pid: The PID of the worker to filter logs for.
+        worker_id: The worker ID to filter logs for.
         log_path: Path to the log file.
         tail_lines: Number of recent lines to include initially.
 
@@ -836,7 +840,7 @@ async def _stream_worker_logs(
 
             for line in recent_lines:
                 entry = _parse_log_line(line)
-                if entry and entry["pid"] == worker_pid:
+                if entry and entry.get("worker_id") == worker_id:
                     yield _format_sse_event(entry)
 
             stat = log_path.stat()
@@ -880,13 +884,13 @@ async def _stream_worker_logs(
 
                 for line in new_content.splitlines():
                     entry = _parse_log_line(line)
-                    if entry and entry["pid"] == worker_pid:
+                    if entry and entry.get("worker_id") == worker_id:
                         yield _format_sse_event(entry)
 
             await asyncio.sleep(0.5)
 
         except asyncio.CancelledError:
-            logger.debug("Worker log stream cancelled for PID %d", worker_pid)
+            logger.debug("Worker log stream cancelled for worker %s", worker_id)
             break
         except Exception as e:
             logger.warning("Error streaming worker logs: %s", e)
@@ -905,7 +909,7 @@ async def stream_worker_logs(
     """Stream live log entries for a specific worker via Server-Sent Events.
 
     Opens a persistent SSE connection that streams log entries filtered
-    by the worker's process ID.
+    by the worker's unique identifier.
 
     Args:
         worker_id: Worker unique identifier
@@ -928,13 +932,6 @@ async def stream_worker_logs(
         if not worker:
             raise HTTPException(status_code=404, detail=f"Worker not found: {worker_id}")
 
-        worker_pid = worker.get("pid")
-        if not worker_pid:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Worker {worker_id} has no PID (may not be running)",
-            )
-
         # Determine log file path based on worker's project
         project_path = worker.get("project_path")
         if project_path:
@@ -943,14 +940,13 @@ async def stream_worker_logs(
             log_path = Path(LOG_FILE)
 
         logger.info(
-            "Starting log stream for worker %s (PID %d) from %s",
+            "Starting log stream for worker %s from %s",
             worker_id,
-            worker_pid,
             log_path,
         )
 
         return StreamingResponse(
-            _stream_worker_logs(worker_pid, log_path, tail_lines=tail),
+            _stream_worker_logs(worker_id, log_path, tail_lines=tail),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -970,7 +966,8 @@ class WorkerLogEntry(BaseModel):
     """Response model for a worker log entry."""
 
     timestamp: str = Field(..., description="Log entry timestamp")
-    pid: int = Field(..., description="Process ID")
+    pid: int | None = Field(None, description="Process ID (for legacy logs)")
+    worker_id: str | None = Field(None, description="Worker unique identifier")
     event: str = Field(..., description="Event type")
     message: str | None = Field(None, description="Event message/details")
 
@@ -982,7 +979,7 @@ async def get_worker_recent_logs(
 ) -> list[dict[str, Any]]:
     """Get recent log entries for a specific worker.
 
-    Returns log entries filtered by the worker's process ID.
+    Returns log entries filtered by the worker's unique identifier.
 
     Args:
         worker_id: Worker unique identifier
@@ -1005,13 +1002,6 @@ async def get_worker_recent_logs(
         if not worker:
             raise HTTPException(status_code=404, detail=f"Worker not found: {worker_id}")
 
-        worker_pid = worker.get("pid")
-        if not worker_pid:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Worker {worker_id} has no PID (may not be running)",
-            )
-
         # Determine log file path
         project_path = worker.get("project_path")
         if project_path:
@@ -1029,7 +1019,7 @@ async def get_worker_recent_logs(
                 lines = log_path.read_text(encoding="utf-8").splitlines()
                 for line in lines:
                     entry = _parse_log_line(line)
-                    if entry and entry["pid"] == worker_pid:
+                    if entry and entry.get("worker_id") == worker_id:
                         entries.append(entry)
             except OSError as e:
                 logger.warning("Failed to read log file %s: %s", log_path, e)

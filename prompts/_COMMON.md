@@ -17,7 +17,8 @@
 ### Log Function
 
 ```bash
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$$] $1" >> claude.log; }
+# Use WORKER_ID if set (for spawned workers), otherwise fall back to $$ (for manual runs)
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [${WORKER_ID:-$$}] $1" >> claude.log; }
 ```
 
 ### Required Log Events
