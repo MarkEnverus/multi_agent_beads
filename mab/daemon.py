@@ -29,6 +29,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from mab.filesystem import warn_if_network_filesystem
 from mab.rpc import RPCError, RPCErrorCode, RPCServer
 from mab.workers import (
     HealthConfig,
@@ -194,8 +195,13 @@ class Daemon:
             self.logger.addHandler(handler)
 
     def _ensure_mab_dir(self) -> None:
-        """Ensure .mab directory exists."""
+        """Ensure .mab directory exists.
+
+        Also checks for network filesystem and logs a warning if detected,
+        since flock() doesn't work reliably on NFS/CIFS.
+        """
         self.mab_dir.mkdir(parents=True, exist_ok=True)
+        warn_if_network_filesystem(self.mab_dir, context="MAB daemon")
 
     def _read_pid(self) -> int | None:
         """Read PID from pid file.

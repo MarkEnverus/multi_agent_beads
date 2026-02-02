@@ -58,6 +58,7 @@ The MAB daemon manages the lifecycle of Claude Code worker agents, providing:
 2. **Project Identification**: Towns are identified by their filesystem path
 3. **Local Logs**: Worker logs stay in `<project>/.mab/logs/` for easy debugging
 4. **Config Inheritance**: Global defaults in `~/.mab/config.yaml` → Project overrides in `<project>/.mab/config.yaml`
+5. **Single-Machine Design**: MAB is designed for single-machine deployments (see [Known Limitations](#known-limitations))
 
 ---
 
@@ -975,6 +976,47 @@ The following diagrams illustrate the hybrid global/local architecture where:
     - Worker status API
     - Town overview
     - Health metrics
+
+---
+
+## Known Limitations
+
+### Single-Machine Deployment Only
+
+MAB is designed for **single-machine deployments** and does not support running multiple daemon instances across different machines against the same `~/.mab` directory.
+
+**Technical Reason:** The daemon uses `fcntl.flock()` for single-instance enforcement:
+
+```python
+fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+```
+
+This POSIX file locking mechanism only works reliably on local filesystems. On network filesystems (NFS, CIFS, SMB, etc.), `flock()` behavior is:
+
+- **NFS**: Advisory locks may not be respected across different machines
+- **CIFS/SMB**: Lock semantics vary by implementation
+- **Other network FS**: Generally unreliable or unsupported
+
+**Impact of Running on Network Filesystem:**
+- Multiple daemons could start on different machines
+- Race conditions in worker state management
+- Corrupted SQLite database (workers.db)
+- Undefined behavior in dashboard operations
+
+**Runtime Detection:** MAB detects network filesystems at startup and logs a warning:
+
+```
+WARNING: MAB daemon: Directory /home/user/.mab appears to be on a network filesystem (nfs4).
+File locking (flock) may not work reliably. Running multiple MAB instances on different
+machines against the same directory could cause undefined behavior and state corruption.
+```
+
+**Recommendations:**
+1. Ensure `~/.mab` is on a local filesystem (ext4, xfs, apfs, etc.)
+2. For multi-machine deployments, run separate daemon instances with separate `~/.mab` directories
+3. If you need distributed coordination, consider using external tools (etcd, consul) or a database-backed solution
+
+**Future Consideration:** A future version could optionally use database-backed locking (e.g., PostgreSQL advisory locks) for multi-machine deployments, but this is not currently planned.
 
 ---
 

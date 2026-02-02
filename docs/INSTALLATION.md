@@ -288,6 +288,27 @@ mab stop --all
 mab start -d
 ```
 
+### Network filesystem warning
+
+If you see this warning:
+
+```
+WARNING: MAB daemon: Directory ~/.mab appears to be on a network filesystem (nfs).
+```
+
+This indicates that `~/.mab` is on a network-mounted filesystem (NFS, CIFS, SMB, etc.). MAB's file locking doesn't work reliably on network filesystems.
+
+**Solutions:**
+
+1. Move `~/.mab` to a local filesystem
+2. Set `MAB_HOME` environment variable to a local path:
+   ```bash
+   export MAB_HOME=/local/path/.mab
+   ```
+3. If you must use network storage, ensure only one machine runs MAB at a time
+
+See [Daemon Architecture - Known Limitations](daemon-architecture.md#known-limitations) for details.
+
 ## Requirements
 
 - Python 3.11 or later
