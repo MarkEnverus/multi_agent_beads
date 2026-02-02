@@ -312,7 +312,7 @@
                         current_bead_title: currentBeadTitle,
                         status: displayStatus,
                         last_activity: (agentInfo ? agentInfo.last_activity : null) || worker.started_at || new Date().toISOString(),
-                        pid: worker.pid || 0,
+                        pid: worker.pid || null,
                         worker_id: worker.id  // Keep worker ID for reference
                     };
                 });
@@ -434,7 +434,7 @@
 
                 {# Footer: PID and last activity #}
                 <div class="flex items-center justify-between text-xs">
-                    <span class="font-mono text-gray-500">PID ${agent.pid}</span>
+                    <span class="font-mono text-gray-500">PID ${agent.pid ?? '-'}</span>
                     <span class="text-gray-500" title="Last activity: ${agent.last_activity}">
                         ${formatTimestamp(agent.last_activity)}
                     </span>
@@ -472,7 +472,7 @@
         event.currentTarget.classList.add('ring-2', 'ring-primary-500');
 
         // Update log viewer title
-        document.getElementById('log-viewer-title').textContent = `Logs: PID ${pid} (${role})`;
+        document.getElementById('log-viewer-title').textContent = `Logs: PID ${pid ?? '-'} (${role})`;
 
         // Clear log viewer
         const viewer = document.getElementById('agent-log-viewer');

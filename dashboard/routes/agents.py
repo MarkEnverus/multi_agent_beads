@@ -29,7 +29,7 @@ class AgentStatus(BaseModel):
     current_bead_title: str | None = Field(None, description="Title of current bead")
     status: str = Field(..., description="Agent status (working, idle, ended)")
     last_activity: str = Field(..., description="ISO timestamp of last activity")
-    pid: int = Field(..., description="Process ID of the agent")
+    pid: int | None = Field(None, description="Process ID of the agent, null if not started")
 
 
 # Valid agent roles - maps DB roles to API roles
@@ -172,10 +172,10 @@ def _get_current_bead_for_worker(worker_id: str) -> tuple[str | None, str | None
 def _map_db_status_to_api(db_status: str, current_bead: str | None) -> str:
     """Map database status to API status.
 
-    DB statuses: spawning, running, stopped, crashed
+    DB statuses: spawning, running, stopped, crashed, failed, stopping
     API statuses: working, idle, ended
     """
-    if db_status in ("stopped", "crashed"):
+    if db_status in ("stopped", "crashed", "failed", "stopping"):
         return "ended"
     if db_status == "spawning":
         return "idle"
@@ -236,7 +236,7 @@ def _get_active_agents() -> list[dict[str, Any]]:
 
         agents.append(
             {
-                "pid": worker.get("pid") or 0,
+                "pid": worker.get("pid") or None,
                 "worker_id": worker_id,
                 "role": role,
                 "instance": _extract_instance_from_worker_id(worker_id),
