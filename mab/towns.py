@@ -16,6 +16,7 @@ Each town provides:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import signal
@@ -25,6 +26,8 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from mab.templates import TEMPLATES, TeamTemplate, get_template
 
 logger = logging.getLogger("mab.towns")
 
@@ -57,6 +60,9 @@ class Town:
         created_at: ISO timestamp of creation.
         started_at: ISO timestamp of last start (if running).
         pid: Dashboard process ID (if running).
+        template: Team template name (solo, pair, full).
+        workflow: JSON array of workflow steps.
+        worker_counts: JSON dict of role -> count for custom configurations.
     """
 
     name: str
@@ -69,6 +75,9 @@ class Town:
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     started_at: str | None = None
     pid: int | None = None
+    template: str = "pair"
+    workflow: list[str] = field(default_factory=list)
+    worker_counts: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -83,16 +92,26 @@ class Town:
             "created_at": self.created_at,
             "started_at": self.started_at,
             "pid": self.pid,
+            "template": self.template,
+            "workflow": self.workflow,
+            "worker_counts": self.worker_counts,
         }
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Town":
         """Create Town from database row."""
-        import json
-
         roles = row["default_roles"]
         if isinstance(roles, str):
             roles = json.loads(roles)
+
+        # Handle optional new columns (may be None in older databases)
+        workflow_data = row["workflow"] if "workflow" in row.keys() else None
+        workflow = json.loads(workflow_data) if workflow_data else []
+
+        worker_counts_data = row["worker_counts"] if "worker_counts" in row.keys() else None
+        worker_counts = json.loads(worker_counts_data) if worker_counts_data else {}
+
+        template = row["template"] if "template" in row.keys() else "pair"
 
         return cls(
             name=row["name"],
@@ -105,7 +124,29 @@ class Town:
             created_at=row["created_at"],
             started_at=row["started_at"],
             pid=row["pid"],
+            template=template or "pair",
+            workflow=workflow,
+            worker_counts=worker_counts,
         )
+
+    def get_template_config(self) -> TeamTemplate | None:
+        """Get the TeamTemplate configuration for this town."""
+        return get_template(self.template)
+
+    def get_effective_roles(self) -> dict[str, int]:
+        """Get the effective role counts for this town.
+
+        Returns worker_counts if set, otherwise falls back to template defaults.
+        """
+        if self.worker_counts:
+            return self.worker_counts
+
+        template = self.get_template_config()
+        if template:
+            return template.roles
+
+        # Fallback to default_roles with count of 1 each
+        return {role: 1 for role in self.default_roles}
 
 
 class TownError(Exception):
@@ -183,7 +224,10 @@ class TownDatabase:
                     description TEXT DEFAULT '',
                     created_at TEXT NOT NULL,
                     started_at TEXT,
-                    pid INTEGER
+                    pid INTEGER,
+                    template TEXT DEFAULT 'pair',
+                    workflow TEXT,
+                    worker_counts TEXT
                 )
             """)
             conn.execute("""
@@ -192,19 +236,41 @@ class TownDatabase:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_towns_status ON towns(status)
             """)
+            # Migration: add new columns if they don't exist
+            self._migrate_schema(conn)
             conn.commit()
+
+    def _migrate_schema(self, conn: sqlite3.Connection) -> None:
+        """Run schema migrations for new columns."""
+        # Check existing columns
+        cursor = conn.execute("PRAGMA table_info(towns)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        # Add template column if missing
+        if "template" not in existing_columns:
+            conn.execute("ALTER TABLE towns ADD COLUMN template TEXT DEFAULT 'pair'")
+            logger.debug("Added 'template' column to towns table")
+
+        # Add workflow column if missing
+        if "workflow" not in existing_columns:
+            conn.execute("ALTER TABLE towns ADD COLUMN workflow TEXT")
+            logger.debug("Added 'workflow' column to towns table")
+
+        # Add worker_counts column if missing
+        if "worker_counts" not in existing_columns:
+            conn.execute("ALTER TABLE towns ADD COLUMN worker_counts TEXT")
+            logger.debug("Added 'worker_counts' column to towns table")
 
     def insert_town(self, town: Town) -> None:
         """Insert a new town record."""
-        import json
-
         with self._get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO towns (
                     name, port, project_path, status, max_workers,
-                    default_roles, description, created_at, started_at, pid
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    default_roles, description, created_at, started_at, pid,
+                    template, workflow, worker_counts
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     town.name,
@@ -217,14 +283,15 @@ class TownDatabase:
                     town.created_at,
                     town.started_at,
                     town.pid,
+                    town.template,
+                    json.dumps(town.workflow) if town.workflow else None,
+                    json.dumps(town.worker_counts) if town.worker_counts else None,
                 ),
             )
             conn.commit()
 
     def update_town(self, town: Town) -> None:
         """Update an existing town record."""
-        import json
-
         with self._get_connection() as conn:
             conn.execute(
                 """
@@ -236,7 +303,10 @@ class TownDatabase:
                     default_roles = ?,
                     description = ?,
                     started_at = ?,
-                    pid = ?
+                    pid = ?,
+                    template = ?,
+                    workflow = ?,
+                    worker_counts = ?
                 WHERE name = ?
             """,
                 (
@@ -248,6 +318,9 @@ class TownDatabase:
                     town.description,
                     town.started_at,
                     town.pid,
+                    town.template,
+                    json.dumps(town.workflow) if town.workflow else None,
+                    json.dumps(town.worker_counts) if town.worker_counts else None,
                     town.name,
                 ),
             )
@@ -377,6 +450,8 @@ class TownManager:
         max_workers: int = 3,
         default_roles: list[str] | None = None,
         description: str = "",
+        template: str = "pair",
+        worker_counts: dict[str, int] | None = None,
     ) -> Town:
         """Create a new town.
 
@@ -387,6 +462,8 @@ class TownManager:
             max_workers: Maximum workers for this town.
             default_roles: Roles to spawn on start.
             description: Human-readable description.
+            template: Team template name (solo, pair, full).
+            worker_counts: Custom role counts (overrides template).
 
         Returns:
             Created Town object.
@@ -394,11 +471,17 @@ class TownManager:
         Raises:
             TownExistsError: If town with name already exists.
             PortConflictError: If port is already in use.
-            TownError: If no ports available or invalid name.
+            TownError: If no ports available or invalid name/template.
         """
         # Validate name
         if not name or not name.replace("_", "").isalnum():
             raise TownError(f"Invalid town name '{name}': must be alphanumeric with underscores")
+
+        # Validate template
+        template_config = get_template(template)
+        if template_config is None:
+            valid_templates = ", ".join(TEMPLATES.keys())
+            raise TownError(f"Invalid template '{template}'. Valid templates: {valid_templates}")
 
         # Check if town exists
         existing = self.db.get_town(name)
@@ -418,18 +501,31 @@ class TownManager:
                     f"Port {port} already in use by town '{existing_by_port.name}'"
                 )
 
+        # Derive roles and workflow from template if not overridden
+        effective_roles = default_roles
+        if effective_roles is None:
+            effective_roles = list(template_config.roles.keys())
+
+        workflow = [step.value for step in template_config.workflow]
+
+        # Use worker_counts if provided, otherwise derive from template
+        effective_worker_counts = worker_counts or template_config.roles.copy()
+
         # Create town
         town = Town(
             name=name,
             port=port,
             project_path=project_path,
             max_workers=max_workers,
-            default_roles=default_roles or ["dev", "qa"],
-            description=description,
+            default_roles=effective_roles,
+            description=description or template_config.description,
+            template=template,
+            workflow=workflow,
+            worker_counts=effective_worker_counts,
         )
 
         self.db.insert_town(town)
-        logger.info(f"Created town '{name}' on port {port}")
+        logger.info(f"Created town '{name}' on port {port} with template '{template}'")
 
         return town
 
