@@ -71,9 +71,7 @@ class TestInitDb:
         db_path = tmp_path / "test.db"
         conn = init_db(db_path)
 
-        cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index'"
-        )
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
         indexes = {row[0] for row in cursor.fetchall()}
 
         assert "idx_workers_status" in indexes

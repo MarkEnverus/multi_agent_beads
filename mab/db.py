@@ -128,9 +128,7 @@ def get_schema_version(conn: sqlite3.Connection) -> int:
         Schema version number, or 0 if not set.
     """
     try:
-        cursor = conn.execute(
-            "SELECT value FROM schema_info WHERE key = ?", ("version",)
-        )
+        cursor = conn.execute("SELECT value FROM schema_info WHERE key = ?", ("version",))
         row = cursor.fetchone()
         return int(row["value"]) if row else 0
     except sqlite3.OperationalError:
