@@ -34,8 +34,10 @@ class AgentStatus(BaseModel):
     pid: int = Field(..., description="Process ID of the agent")
 
 
-# Log line pattern: [TIMESTAMP] [PID] EVENT_TYPE: details
-LOG_PATTERN = re.compile(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(\d+)\] (.+)")
+# Log line pattern: [TIMESTAMP] [ID] EVENT_TYPE: details
+# ID can be either a numeric PID or an alphanumeric worker ID (e.g., "worker-dev-1")
+# Worker IDs fix the tracking bug where PIDs change per bash subshell command
+LOG_PATTERN = re.compile(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[([a-zA-Z0-9_-]+)\] (.+)")
 
 # Valid agent roles
 VALID_ROLES = {"developer", "qa", "reviewer", "tech_lead", "manager", "unknown"}
@@ -66,18 +68,25 @@ def _parse_log_file() -> list[dict[str, Any]]:
 
                 match = LOG_PATTERN.match(line)
                 if match:
-                    timestamp_str, pid_str, content = match.groups()
+                    timestamp_str, id_str, content = match.groups()
+                    # ID can be numeric PID or alphanumeric worker_id
+                    # For backward compatibility, try to parse as int first
                     try:
-                        entries.append(
-                            {
-                                "timestamp": timestamp_str,
-                                "pid": int(pid_str),
-                                "content": content,
-                            }
-                        )
-                    except ValueError as e:
-                        logger.warning("Invalid PID on line %d: %s", line_num, e)
-                        continue
+                        pid = int(id_str)
+                        worker_id = id_str  # Use string version for tracking
+                    except ValueError:
+                        # Alphanumeric worker ID - use 0 as placeholder PID
+                        pid = 0
+                        worker_id = id_str
+
+                    entries.append(
+                        {
+                            "timestamp": timestamp_str,
+                            "pid": pid,  # For backward compatibility
+                            "worker_id": worker_id,  # Primary tracking key
+                            "content": content,
+                        }
+                    )
 
     except PermissionError:
         logger.error("Permission denied reading log file: %s", log_path)
@@ -97,22 +106,27 @@ def _parse_log_file() -> list[dict[str, Any]]:
     return entries
 
 
-def _extract_agents_from_logs(entries: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+def _extract_agents_from_logs(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Extract agent sessions from log entries.
 
-    Returns a dict of PID -> agent info for active sessions.
+    Returns a dict of worker_id -> agent info for active sessions.
+    Uses worker_id for tracking to handle the PID instability bug where
+    each bash command runs in a different subshell with a different PID.
     """
-    agents: dict[int, dict[str, Any]] = {}
+    agents: dict[str, dict[str, Any]] = {}
 
     for entry in entries:
+        # Use worker_id as primary tracking key (handles both PIDs and alphanumeric IDs)
+        worker_id = entry.get("worker_id", str(entry["pid"]))
         pid = entry["pid"]
         content = entry["content"]
         timestamp = entry["timestamp"]
 
         if content == "SESSION_START":
             # New session started
-            agents[pid] = {
-                "pid": pid,
+            agents[worker_id] = {
+                "pid": pid,  # Keep for API compatibility
+                "worker_id": worker_id,  # Primary identifier
                 "status": "idle",
                 "current_bead": None,
                 "current_bead_title": None,
@@ -122,28 +136,28 @@ def _extract_agents_from_logs(entries: list[dict[str, Any]]) -> dict[int, dict[s
             }
         elif content.startswith("SESSION_END:"):
             # Session ended - mark as ended
-            if pid in agents:
-                agents[pid]["status"] = "ended"
-                agents[pid]["last_activity"] = timestamp
+            if worker_id in agents:
+                agents[worker_id]["status"] = "ended"
+                agents[worker_id]["last_activity"] = timestamp
         elif content.startswith("CLAIM:"):
             # Agent claimed a bead
-            if pid in agents:
+            if worker_id in agents:
                 # Parse: CLAIM: bead-id - title
                 parts = content[6:].strip().split(" - ", 1)
                 if parts:
-                    agents[pid]["current_bead"] = parts[0].strip()
+                    agents[worker_id]["current_bead"] = parts[0].strip()
                     if len(parts) > 1:
-                        agents[pid]["current_bead_title"] = parts[1].strip()
-                    agents[pid]["status"] = "working"
-                    agents[pid]["last_activity"] = timestamp
+                        agents[worker_id]["current_bead_title"] = parts[1].strip()
+                    agents[worker_id]["status"] = "working"
+                    agents[worker_id]["last_activity"] = timestamp
         elif content.startswith("CLOSE:"):
             # Bead closed - still active until SESSION_END
-            if pid in agents:
-                agents[pid]["current_bead"] = None
-                agents[pid]["current_bead_title"] = None
-                agents[pid]["status"] = "idle"
-                agents[pid]["last_activity"] = timestamp
-        elif pid in agents:
+            if worker_id in agents:
+                agents[worker_id]["current_bead"] = None
+                agents[worker_id]["current_bead_title"] = None
+                agents[worker_id]["status"] = "idle"
+                agents[worker_id]["last_activity"] = timestamp
+        elif worker_id in agents:
             # Only meaningful work events update the activity timestamp
             # NO_WORK polls should NOT count as activity
             meaningful_prefixes = (
@@ -159,7 +173,7 @@ def _extract_agents_from_logs(entries: list[dict[str, Any]]) -> dict[int, dict[s
                 "ERROR:",
             )
             if content.startswith(meaningful_prefixes):
-                agents[pid]["last_activity"] = timestamp
+                agents[worker_id]["last_activity"] = timestamp
 
     return agents
 
@@ -306,36 +320,43 @@ def _get_active_agents() -> list[dict[str, Any]]:
     entries = _parse_log_file()
     agents = _extract_agents_from_logs(entries)
 
-    # Filter to only active agents (not ended, not stale, and PID still running)
+    # Filter to only active agents (not ended, not stale, and process verification)
     active = []
     for agent in agents.values():
         if agent["status"] == "ended":
             continue
 
+        worker_id = agent.get("worker_id", str(agent["pid"]))
+        pid = agent["pid"]
+
         # Check freshness - skip agents that haven't had activity recently
         if _is_agent_stale(agent["last_activity"], AGENT_STALE_MINUTES):
             logger.debug(
-                "Skipping stale agent PID %d (last activity: %s)",
-                agent["pid"],
+                "Skipping stale agent %s (last activity: %s)",
+                worker_id,
                 agent["last_activity"],
             )
             continue
 
-        # Verify process is actually running - skip phantom agents
-        if not _is_pid_running(agent["pid"]):
-            logger.debug(
-                "Skipping phantom agent PID %d (process not running)",
-                agent["pid"],
-            )
-            continue
+        # PID verification: only for numeric worker_ids (actual PIDs)
+        # For alphanumeric worker_ids, we can't verify the process - rely on staleness
+        is_numeric_pid = pid > 0 and worker_id.isdigit()
+        if is_numeric_pid:
+            # Verify process is actually running - skip phantom agents
+            if not _is_pid_running(pid):
+                logger.debug(
+                    "Skipping phantom agent PID %d (process not running)",
+                    pid,
+                )
+                continue
 
-        # Verify the process is actually a Claude agent, not a recycled PID
-        if not _is_claude_agent_process(agent["pid"]):
-            logger.debug(
-                "Skipping recycled PID %d (not a Claude agent process)",
-                agent["pid"],
-            )
-            continue
+            # Verify the process is actually a Claude agent, not a recycled PID
+            if not _is_claude_agent_process(pid):
+                logger.debug(
+                    "Skipping recycled PID %d (not a Claude agent process)",
+                    pid,
+                )
+                continue
 
         # Infer role from current bead title
         agent["role"] = _infer_role_from_bead_title(agent.get("current_bead_title"))

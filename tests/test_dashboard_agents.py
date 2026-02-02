@@ -171,25 +171,28 @@ invalid line without proper format
     def test_extract_agents_session_lifecycle(self) -> None:
         """Test agent extraction through full session lifecycle."""
         entries = [
-            {"timestamp": "2026-01-24 14:00:00", "pid": 1001, "content": "SESSION_START"},
+            {"timestamp": "2026-01-24 14:00:00", "pid": 1001, "worker_id": "1001", "content": "SESSION_START"},
             {
                 "timestamp": "2026-01-24 14:00:05",
                 "pid": 1001,
+                "worker_id": "1001",
                 "content": "CLAIM: mab-abc - Task one",
             },
             {
                 "timestamp": "2026-01-24 14:01:00",
                 "pid": 1001,
+                "worker_id": "1001",
                 "content": "WORK_START: implementing",
             },
-            {"timestamp": "2026-01-24 14:02:00", "pid": 1001, "content": "CLOSE: mab-abc"},
-            {"timestamp": "2026-01-24 14:02:05", "pid": 1001, "content": "SESSION_END: mab-abc"},
+            {"timestamp": "2026-01-24 14:02:00", "pid": 1001, "worker_id": "1001", "content": "CLOSE: mab-abc"},
+            {"timestamp": "2026-01-24 14:02:05", "pid": 1001, "worker_id": "1001", "content": "SESSION_END: mab-abc"},
         ]
 
         agents = _extract_agents_from_logs(entries)
         assert len(agents) == 1
-        assert agents[1001]["status"] == "ended"
-        assert agents[1001]["current_bead"] is None
+        # Now keyed by worker_id (string)
+        assert agents["1001"]["status"] == "ended"
+        assert agents["1001"]["current_bead"] is None
 
 
 class TestRoleInference:
@@ -282,3 +285,152 @@ class TestPidVerification:
             assert len(data) == 1
             assert data[0]["pid"] == 1
             assert data[0]["current_bead"] == "mab-init"
+
+
+class TestWorkerIdTracking:
+    """Tests for worker ID-based tracking (fixes PID instability bug).
+
+    The bug: Claude Code runs each bash command in a new subshell, so PIDs change
+    between SESSION_START, CLAIM, and SESSION_END. This breaks agent tracking.
+
+    The fix: Use WORKER_ID (or SESSION_ID) for tracking instead of PIDs.
+    """
+
+    def test_pid_changes_break_session_tracking_without_worker_id(self) -> None:
+        """Document the bug: varying PIDs without worker_id cause tracking to fail.
+
+        When PIDs change per command AND there's no worker_id field,
+        _extract_agents_from_logs sees each log entry as a separate session.
+
+        The fix uses worker_id for tracking, so when logs include consistent
+        worker_ids, tracking works correctly even with varying PIDs.
+        """
+        # This is what happens with OLD log format - each command gets a different PID
+        # and no worker_id field (legacy entries)
+        entries = [
+            {
+                "timestamp": "2026-02-02 10:00:00",
+                "pid": 64632,
+                "worker_id": "64632",  # Parsed from log, same as PID string
+                "content": "SESSION_START",
+            },
+            {
+                "timestamp": "2026-02-02 10:00:10",
+                "pid": 67444,
+                "worker_id": "67444",  # Different worker_id because different PID
+                "content": "CLAIM: mab-test - Test task",
+            },
+            {
+                "timestamp": "2026-02-02 10:00:20",
+                "pid": 69988,
+                "worker_id": "69988",  # Yet another worker_id
+                "content": "WORK_START: doing work",
+            },
+            {
+                "timestamp": "2026-02-02 10:00:30",
+                "pid": 73180,
+                "worker_id": "73180",  # Still different
+                "content": "SESSION_END: mab-test",
+            },
+        ]
+
+        agents = _extract_agents_from_logs(entries)
+
+        # With different worker_ids (derived from PIDs), we get 4 separate "agents"
+        # SESSION_START creates agent "64632", status="idle"
+        # CLAIM has worker_id "67444" which doesn't exist - ignored
+        # etc.
+        assert len(agents) == 1, "Only SESSION_START entry creates an agent"
+        assert agents["64632"]["status"] == "idle"  # Never updated to "working"!
+        assert agents["64632"]["current_bead"] is None  # Never sees the CLAIM!
+
+    def test_worker_id_based_tracking(self) -> None:
+        """Test that worker ID-based log format enables correct tracking.
+
+        When logs use a consistent worker ID instead of PIDs, session tracking
+        works correctly even though the underlying PIDs change.
+        """
+        # With fix: worker_id stays consistent across all entries
+        entries_with_worker_id = [
+            {
+                "timestamp": "2026-02-02 10:00:00",
+                "pid": 0,  # Placeholder for non-numeric ID
+                "worker_id": "worker-dev-1",  # Consistent worker ID
+                "content": "SESSION_START",
+            },
+            {
+                "timestamp": "2026-02-02 10:00:10",
+                "pid": 0,
+                "worker_id": "worker-dev-1",  # Same worker ID
+                "content": "CLAIM: mab-test - Test task",
+            },
+            {
+                "timestamp": "2026-02-02 10:00:20",
+                "pid": 0,
+                "worker_id": "worker-dev-1",  # Same worker ID
+                "content": "SESSION_END: mab-test",
+            },
+        ]
+
+        agents = _extract_agents_from_logs(entries_with_worker_id)
+
+        # With consistent worker_id, all events are tracked to same agent
+        assert len(agents) == 1
+        assert "worker-dev-1" in agents
+        agent = agents["worker-dev-1"]
+        assert agent["status"] == "ended"
+        assert agent["worker_id"] == "worker-dev-1"
+
+    def test_parse_log_file_with_worker_id(self, tmp_path: Path) -> None:
+        """Test parsing log entries that use worker IDs instead of PIDs.
+
+        LOG_PATTERN now accepts alphanumeric worker IDs like "worker-dev-1".
+        """
+        log_content = """[2026-02-02 10:00:00] [worker-dev-1] SESSION_START
+[2026-02-02 10:00:10] [worker-dev-1] CLAIM: mab-test - Test task
+[2026-02-02 10:00:30] [worker-dev-1] SESSION_END: mab-test
+"""
+        log_file = tmp_path / "test.log"
+        log_file.write_text(log_content)
+
+        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)):
+            entries = _parse_log_file()
+
+            # Should parse all 3 entries with worker_id field
+            assert len(entries) == 3, "Worker ID format should be parseable"
+            assert entries[0]["worker_id"] == "worker-dev-1"
+            assert entries[0]["pid"] == 0  # Placeholder for non-numeric
+            assert entries[0]["content"] == "SESSION_START"
+            assert entries[1]["worker_id"] == "worker-dev-1"
+            assert entries[2]["worker_id"] == "worker-dev-1"
+
+    def test_full_session_with_worker_id_tracking(self, tmp_path: Path) -> None:
+        """End-to-end test: worker ID tracking through full session lifecycle."""
+        log_content = """[2026-02-02 10:00:00] [worker-dev-1] SESSION_START
+[2026-02-02 10:00:05] [worker-dev-1] CLAIM: mab-abc - Fix tracking bug
+[2026-02-02 10:00:10] [worker-dev-1] WORK_START: investigating
+[2026-02-02 10:00:20] [worker-dev-1] TESTS: running pytest
+[2026-02-02 10:00:25] [worker-dev-1] CLOSE: mab-abc - PR merged
+[2026-02-02 10:00:30] [worker-dev-1] SESSION_END: mab-abc
+"""
+        log_file = tmp_path / "test.log"
+        log_file.write_text(log_content)
+
+        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)):
+            entries = _parse_log_file()
+
+            # Should have 6 entries, all with same worker_id
+            assert len(entries) == 6
+            for entry in entries:
+                assert entry["worker_id"] == "worker-dev-1"
+
+            # Extract agents using worker_id-aware function
+            agents = _extract_agents_from_logs(entries)
+
+            # Single agent tracked through full lifecycle
+            assert len(agents) == 1
+            agent = agents["worker-dev-1"]
+            assert agent["status"] == "ended"
+            assert agent["worker_id"] == "worker-dev-1"
+            # CLOSE should have cleared the current_bead
+            assert agent["current_bead"] is None
