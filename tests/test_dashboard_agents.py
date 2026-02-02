@@ -1,114 +1,239 @@
-"""Tests for the dashboard agents API endpoints."""
+"""Tests for the dashboard agents API endpoints.
 
+Tests the new database-backed implementation that reads from mab.db
+instead of parsing claude.log.
+"""
+
+import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from dashboard.app import app
 from dashboard.routes.agents import (
-    _extract_agents_from_logs,
-    _format_iso_timestamp,
-    _infer_role_from_bead_title,
-    _is_pid_running,
-    _parse_log_file,
+    ROLE_MAP,
+    VALID_ROLES,
+    _extract_instance_from_worker_id,
+    _format_db_timestamp,
+    _get_active_agents,
+    _get_workers_from_db,
+    _map_db_status_to_api,
 )
 
 client = TestClient(app)
 
 
+def create_test_db(db_path: Path) -> sqlite3.Connection:
+    """Create a test database with the mab.db schema."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+
+    # Create workers table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS workers (
+            id TEXT PRIMARY KEY,
+            pid INTEGER,
+            role TEXT NOT NULL,
+            status TEXT NOT NULL,
+            project_path TEXT NOT NULL,
+            worktree_path TEXT,
+            worktree_branch TEXT,
+            log_file TEXT,
+            started_at TIMESTAMP NOT NULL,
+            stopped_at TIMESTAMP,
+            exit_code INTEGER,
+            error_message TEXT
+        )
+    """)
+
+    # Create worker_events table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS worker_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            worker_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            bead_id TEXT,
+            message TEXT,
+            timestamp TIMESTAMP NOT NULL,
+            FOREIGN KEY (worker_id) REFERENCES workers(id)
+        )
+    """)
+
+    conn.commit()
+    return conn
+
+
+def insert_test_worker(
+    conn: sqlite3.Connection,
+    worker_id: str,
+    role: str = "dev",
+    status: str = "running",
+    pid: int = 1000,
+    started_at: datetime | None = None,
+    stopped_at: datetime | None = None,
+) -> None:
+    """Insert a test worker record."""
+    if started_at is None:
+        started_at = datetime.now()
+
+    conn.execute(
+        """
+        INSERT INTO workers (id, pid, role, status, project_path, started_at, stopped_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            worker_id,
+            pid,
+            role,
+            status,
+            "/test/project",
+            started_at.isoformat(),
+            stopped_at.isoformat() if stopped_at else None,
+        ),
+    )
+    conn.commit()
+
+
+def insert_test_event(
+    conn: sqlite3.Connection,
+    worker_id: str,
+    event_type: str,
+    bead_id: str | None = None,
+    message: str | None = None,
+    timestamp: datetime | None = None,
+) -> None:
+    """Insert a test worker event."""
+    if timestamp is None:
+        timestamp = datetime.now()
+
+    conn.execute(
+        """
+        INSERT INTO worker_events (worker_id, event_type, bead_id, message, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (worker_id, event_type, bead_id, message, timestamp.isoformat()),
+    )
+    conn.commit()
+
+
 class TestAgentsEndpoints:
     """Tests for /api/agents endpoints."""
 
-    def test_list_agents_empty_log(self) -> None:
-        """Test listing agents when log file is empty or missing."""
-        with patch("dashboard.routes.agents.LOG_FILE", "/nonexistent/path"):
+    def test_list_agents_no_database(self, tmp_path: Path) -> None:
+        """Test listing agents when database doesn't exist."""
+        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
             response = client.get("/api/agents")
             assert response.status_code == 200
             assert response.json() == []
 
-    def test_list_agents_with_active_sessions(self, tmp_path: Path) -> None:
-        """Test listing agents with active sessions in log."""
-        log_content = """[2026-01-24 14:00:00] [1001] SESSION_START
-[2026-01-24 14:00:05] [1001] CLAIM: mab-abc - Test feature implementation
-[2026-01-24 14:01:00] [1001] WORK_START: implementing feature
-"""
-        log_file = tmp_path / "test.log"
-        log_file.write_text(log_content)
+    def test_list_agents_empty_database(self, tmp_path: Path) -> None:
+        """Test listing agents with empty database."""
+        db_path = tmp_path / ".mab" / "mab.db"
+        create_test_db(db_path)
 
-        # Disable staleness check and mock PID/process checks for test
-        with (
-            patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
-            patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999),
-            patch("dashboard.routes.agents._is_pid_running", return_value=True),
-            patch("dashboard.routes.agents._is_claude_agent_process", return_value=True),
-        ):
+        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+            response = client.get("/api/agents")
+            assert response.status_code == 200
+            assert response.json() == []
+
+    def test_list_agents_with_running_workers(self, tmp_path: Path) -> None:
+        """Test listing agents with running workers."""
+        db_path = tmp_path / ".mab" / "mab.db"
+        conn = create_test_db(db_path)
+
+        # Insert running worker
+        insert_test_worker(conn, "worker-dev-abc123", role="dev", status="running", pid=1001)
+        insert_test_event(conn, "worker-dev-abc123", "claim", "mab-task1", "Test task title")
+
+        conn.close()
+
+        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
             response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
             assert len(data) == 1
             assert data[0]["pid"] == 1001
-            assert data[0]["current_bead"] == "mab-abc"
-            assert data[0]["current_bead_title"] == "Test feature implementation"
+            assert data[0]["role"] == "developer"
+            assert data[0]["current_bead"] == "mab-task1"
+            assert data[0]["current_bead_title"] == "Test task title"
             assert data[0]["status"] == "working"
 
-    def test_list_agents_excludes_ended_sessions(self, tmp_path: Path) -> None:
-        """Test that ended sessions are excluded from listing."""
-        log_content = """[2026-01-24 14:00:00] [1001] SESSION_START
-[2026-01-24 14:00:05] [1001] CLAIM: mab-abc - Test task
-[2026-01-24 14:01:00] [1001] SESSION_END: mab-abc
-[2026-01-24 14:02:00] [1002] SESSION_START
-[2026-01-24 14:02:05] [1002] CLAIM: mab-def - Another task
-"""
-        log_file = tmp_path / "test.log"
-        log_file.write_text(log_content)
+    def test_list_agents_excludes_old_stopped_workers(self, tmp_path: Path) -> None:
+        """Test that workers stopped more than 1 hour ago are excluded."""
+        db_path = tmp_path / ".mab" / "mab.db"
+        conn = create_test_db(db_path)
 
-        # Disable staleness check and mock PID/process checks for test
-        with (
-            patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
-            patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999),
-            patch("dashboard.routes.agents._is_pid_running", return_value=True),
-            patch("dashboard.routes.agents._is_claude_agent_process", return_value=True),
-        ):
+        # Worker stopped 2 hours ago - should be excluded
+        old_stop = datetime.now() - timedelta(hours=2)
+        insert_test_worker(
+            conn,
+            "worker-old",
+            status="stopped",
+            started_at=datetime.now() - timedelta(hours=3),
+            stopped_at=old_stop,
+        )
+
+        # Worker stopped 30 minutes ago - should be included
+        recent_stop = datetime.now() - timedelta(minutes=30)
+        insert_test_worker(
+            conn,
+            "worker-recent",
+            status="stopped",
+            started_at=datetime.now() - timedelta(hours=1),
+            stopped_at=recent_stop,
+        )
+
+        conn.close()
+
+        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
             response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
-            # Only the second agent should be active
+            # Only recent worker should be included
             assert len(data) == 1
-            assert data[0]["pid"] == 1002
-            assert data[0]["current_bead"] == "mab-def"
+            assert "worker-recent" in data[0]["worker_id"]
 
-    def test_list_agents_by_role(self, tmp_path: Path) -> None:
-        """Test filtering agents by role."""
-        log_content = """[2026-01-24 14:00:00] [1001] SESSION_START
-[2026-01-24 14:00:05] [1001] CLAIM: mab-abc - QA: Test coverage
-[2026-01-24 14:02:00] [1002] SESSION_START
-[2026-01-24 14:02:05] [1002] CLAIM: mab-def - Dashboard feature
-"""
-        log_file = tmp_path / "test.log"
-        log_file.write_text(log_content)
+    def test_list_agents_includes_spawning_workers(self, tmp_path: Path) -> None:
+        """Test that spawning workers are included."""
+        db_path = tmp_path / ".mab" / "mab.db"
+        conn = create_test_db(db_path)
 
-        # Disable staleness check and mock PID/process checks for test
-        with (
-            patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
-            patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999),
-            patch("dashboard.routes.agents._is_pid_running", return_value=True),
-            patch("dashboard.routes.agents._is_claude_agent_process", return_value=True),
-        ):
-            # Filter by qa role
-            response = client.get("/api/agents/qa")
+        insert_test_worker(conn, "worker-spawning", status="spawning")
+        conn.close()
+
+        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+            response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
             assert len(data) == 1
-            assert data[0]["role"] == "qa"
+            assert data[0]["status"] == "idle"
 
-            # Filter by developer role
+    def test_list_agents_by_role(self, tmp_path: Path) -> None:
+        """Test filtering agents by role."""
+        db_path = tmp_path / ".mab" / "mab.db"
+        conn = create_test_db(db_path)
+
+        insert_test_worker(conn, "worker-dev-1", role="dev", status="running")
+        insert_test_worker(conn, "worker-qa-1", role="qa", status="running")
+        conn.close()
+
+        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+            # Filter by developer
             response = client.get("/api/agents/developer")
             assert response.status_code == 200
             data = response.json()
             assert len(data) == 1
             assert data[0]["role"] == "developer"
+
+            # Filter by qa
+            response = client.get("/api/agents/qa")
+            assert response.status_code == 200
+            data = response.json()
+            assert len(data) == 1
+            assert data[0]["role"] == "qa"
 
     def test_list_agents_invalid_role(self) -> None:
         """Test that invalid role returns 400 error."""
@@ -116,336 +241,154 @@ class TestAgentsEndpoints:
         assert response.status_code == 400
         assert "Invalid role" in response.json()["detail"]
 
-    def test_list_agents_filters_stale_agents(self, tmp_path: Path) -> None:
-        """Test that stale agents (no recent activity) are filtered out."""
-        # Use very old timestamps that will definitely be stale
-        log_content = """[2020-01-01 14:00:00] [1001] SESSION_START
-[2020-01-01 14:00:05] [1001] CLAIM: mab-old - Old stale task
-"""
-        log_file = tmp_path / "test.log"
-        log_file.write_text(log_content)
 
-        # With default staleness threshold (30 min), these old agents should be filtered
-        with (
-            patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
-            patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 30),
-        ):
-            response = client.get("/api/agents")
-            assert response.status_code == 200
-            data = response.json()
-            # Agent with old timestamp should be filtered out
-            assert len(data) == 0
+class TestDatabaseFunctions:
+    """Tests for database query functions."""
 
+    def test_get_workers_from_db_empty(self, tmp_path: Path) -> None:
+        """Test getting workers when DB is empty."""
+        db_path = tmp_path / ".mab" / "mab.db"
+        create_test_db(db_path)
 
-class TestLogParsing:
-    """Tests for log parsing functions."""
+        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+            workers = _get_workers_from_db()
+            assert workers == []
 
-    def test_parse_log_file_valid_entries(self, tmp_path: Path) -> None:
-        """Test parsing valid log entries."""
-        log_content = """[2026-01-24 14:00:00] [1001] SESSION_START
-[2026-01-24 14:00:05] [1001] CLAIM: mab-abc - Test task
-"""
-        log_file = tmp_path / "test.log"
-        log_file.write_text(log_content)
+    def test_get_workers_from_db_with_workers(self, tmp_path: Path) -> None:
+        """Test getting workers from database."""
+        db_path = tmp_path / ".mab" / "mab.db"
+        conn = create_test_db(db_path)
 
-        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)):
-            entries = _parse_log_file()
-            assert len(entries) == 2
-            assert entries[0]["timestamp"] == "2026-01-24 14:00:00"
-            assert entries[0]["pid"] == 1001
-            assert entries[0]["content"] == "SESSION_START"
+        insert_test_worker(conn, "worker-1", status="running", pid=1001)
+        insert_test_worker(conn, "worker-2", status="spawning", pid=1002)
+        conn.close()
 
-    def test_parse_log_file_skips_invalid_lines(self, tmp_path: Path) -> None:
-        """Test that invalid log lines are skipped."""
-        log_content = """[2026-01-24 14:00:00] [1001] SESSION_START
-invalid line without proper format
-[2026-01-24 14:00:05] [1001] CLAIM: mab-abc - Test
-"""
-        log_file = tmp_path / "test.log"
-        log_file.write_text(log_content)
+        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+            workers = _get_workers_from_db()
+            assert len(workers) == 2
 
-        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)):
-            entries = _parse_log_file()
-            assert len(entries) == 2
-
-    def test_extract_agents_session_lifecycle(self) -> None:
-        """Test agent extraction through full session lifecycle."""
-        entries = [
-            {
-                "timestamp": "2026-01-24 14:00:00",
-                "pid": 1001,
-                "worker_id": "1001",
-                "content": "SESSION_START",
-            },
-            {
-                "timestamp": "2026-01-24 14:00:05",
-                "pid": 1001,
-                "worker_id": "1001",
-                "content": "CLAIM: mab-abc - Task one",
-            },
-            {
-                "timestamp": "2026-01-24 14:01:00",
-                "pid": 1001,
-                "worker_id": "1001",
-                "content": "WORK_START: implementing",
-            },
-            {
-                "timestamp": "2026-01-24 14:02:00",
-                "pid": 1001,
-                "worker_id": "1001",
-                "content": "CLOSE: mab-abc",
-            },
-            {
-                "timestamp": "2026-01-24 14:02:05",
-                "pid": 1001,
-                "worker_id": "1001",
-                "content": "SESSION_END: mab-abc",
-            },
-        ]
-
-        agents = _extract_agents_from_logs(entries)
-        assert len(agents) == 1
-        # Now keyed by worker_id (string)
-        assert agents["1001"]["status"] == "ended"
-        assert agents["1001"]["current_bead"] is None
+    def test_get_workers_from_db_no_database(self, tmp_path: Path) -> None:
+        """Test getting workers when database doesn't exist."""
+        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+            workers = _get_workers_from_db()
+            assert workers == []
 
 
-class TestRoleInference:
-    """Tests for role inference from bead titles."""
+class TestStatusMapping:
+    """Tests for status mapping functions."""
 
-    @pytest.mark.parametrize(
-        "title,expected_role",
-        [
-            ("QA: Test coverage", "qa"),
-            ("Test verification task", "qa"),
-            ("Verify acceptance criteria", "qa"),
-            ("PR review for feature", "reviewer"),
-            ("Code review task", "reviewer"),
-            ("Architecture design", "tech_lead"),
-            ("Tech lead decision", "tech_lead"),
-            ("Epic: Big project", "manager"),
-            ("Prioritize backlog", "manager"),
-            ("Implement feature X", "developer"),
-            ("Dashboard: Add button", "developer"),
-            (None, "unknown"),
-            ("", "unknown"),
-        ],
-    )
-    def test_infer_role_from_title(self, title: str | None, expected_role: str) -> None:
-        """Test role inference from various bead titles."""
-        assert _infer_role_from_bead_title(title) == expected_role
+    def test_map_db_status_running_with_bead(self) -> None:
+        """Test running status with current bead -> working."""
+        assert _map_db_status_to_api("running", "mab-task") == "working"
+
+    def test_map_db_status_running_no_bead(self) -> None:
+        """Test running status without bead -> idle."""
+        assert _map_db_status_to_api("running", None) == "idle"
+
+    def test_map_db_status_spawning(self) -> None:
+        """Test spawning status -> idle."""
+        assert _map_db_status_to_api("spawning", None) == "idle"
+        assert _map_db_status_to_api("spawning", "mab-task") == "idle"
+
+    def test_map_db_status_stopped(self) -> None:
+        """Test stopped status -> ended."""
+        assert _map_db_status_to_api("stopped", None) == "ended"
+        assert _map_db_status_to_api("stopped", "mab-task") == "ended"
+
+    def test_map_db_status_crashed(self) -> None:
+        """Test crashed status -> ended."""
+        assert _map_db_status_to_api("crashed", None) == "ended"
+
+
+class TestRoleMapping:
+    """Tests for role mapping."""
+
+    def test_role_map_values(self) -> None:
+        """Test that role map contains expected mappings."""
+        assert ROLE_MAP["dev"] == "developer"
+        assert ROLE_MAP["qa"] == "qa"
+        assert ROLE_MAP["tech_lead"] == "tech_lead"
+        assert ROLE_MAP["manager"] == "manager"
+        assert ROLE_MAP["reviewer"] == "reviewer"
+
+    def test_valid_roles(self) -> None:
+        """Test valid roles set."""
+        expected_roles = {"developer", "qa", "reviewer", "tech_lead", "manager", "unknown"}
+        assert VALID_ROLES == expected_roles
+
+
+class TestInstanceExtraction:
+    """Tests for extracting instance numbers from worker IDs."""
+
+    def test_extract_instance_with_number(self) -> None:
+        """Test extracting instance from ID with number."""
+        assert _extract_instance_from_worker_id("worker-dev-1-abc123") == 1
+        assert _extract_instance_from_worker_id("worker-qa-5-xyz") == 5
+
+    def test_extract_instance_no_number(self) -> None:
+        """Test default instance when no number in ID."""
+        assert _extract_instance_from_worker_id("worker-dev-abc123") == 1
+        assert _extract_instance_from_worker_id("some-worker-id") == 1
 
 
 class TestTimestampFormatting:
     """Tests for timestamp formatting."""
 
-    def test_format_valid_timestamp(self) -> None:
-        """Test formatting valid timestamp to ISO."""
-        result = _format_iso_timestamp("2026-01-24 14:30:00")
-        assert result == "2026-01-24T14:30:00Z"
+    def test_format_iso_timestamp(self) -> None:
+        """Test formatting ISO timestamp."""
+        assert _format_db_timestamp("2026-01-24T14:30:00") == "2026-01-24T14:30:00Z"
+        assert _format_db_timestamp("2026-01-24T14:30:00Z") == "2026-01-24T14:30:00Z"
 
-    def test_format_invalid_timestamp(self) -> None:
-        """Test that invalid timestamp is returned as-is."""
-        result = _format_iso_timestamp("invalid")
-        assert result == "invalid"
+    def test_format_space_separated_timestamp(self) -> None:
+        """Test formatting space-separated timestamp."""
+        assert _format_db_timestamp("2026-01-24 14:30:00") == "2026-01-24T14:30:00Z"
 
-
-class TestPidVerification:
-    """Tests for PID running verification."""
-
-    def test_is_pid_running_current_process(self) -> None:
-        """Test that current process PID is detected as running."""
-        import os
-
-        current_pid = os.getpid()
-        assert _is_pid_running(current_pid) is True
-
-    def test_is_pid_running_nonexistent_pid(self) -> None:
-        """Test that obviously invalid PID is detected as not running."""
-        # PID 99999999 is extremely unlikely to exist
-        assert _is_pid_running(99999999) is False
-
-    def test_is_pid_running_invalid_pids(self) -> None:
-        """Test that invalid PIDs (zero or negative) are detected as not running."""
-        assert _is_pid_running(0) is False
-        assert _is_pid_running(-1) is False
-        assert _is_pid_running(-999) is False
-
-    def test_list_agents_filters_phantom_agents(self, tmp_path: Path) -> None:
-        """Test that agents with non-running PIDs are filtered out."""
-        # Use a PID that definitely doesn't exist
-        fake_pid = 99999999
-        log_content = f"""[2026-01-29 14:00:00] [1] SESSION_START
-[2026-01-29 14:00:05] [1] CLAIM: mab-init - Init process (always running)
-[2026-01-29 14:00:00] [{fake_pid}] SESSION_START
-[2026-01-29 14:00:05] [{fake_pid}] CLAIM: mab-phantom - Phantom agent task
-"""
-        log_file = tmp_path / "test.log"
-        log_file.write_text(log_content)
-
-        # Disable staleness check and mock PID/process checks for PID 1
-        with (
-            patch("dashboard.routes.agents.LOG_FILE", str(log_file)),
-            patch("dashboard.routes.agents.AGENT_STALE_MINUTES", 999999),
-            patch("dashboard.routes.agents._is_pid_running") as mock_pid_check,
-            patch("dashboard.routes.agents._is_claude_agent_process", return_value=True),
-        ):
-            # PID 1 is running, fake_pid is not
-            mock_pid_check.side_effect = lambda pid: pid == 1
-
-            response = client.get("/api/agents")
-            assert response.status_code == 200
-            data = response.json()
-            # Only PID 1 should be returned (phantom agent filtered out)
-            assert len(data) == 1
-            assert data[0]["pid"] == 1
-            assert data[0]["current_bead"] == "mab-init"
+    def test_format_empty_timestamp(self) -> None:
+        """Test formatting empty/None timestamp."""
+        assert _format_db_timestamp(None) == ""
+        assert _format_db_timestamp("") == ""
 
 
-class TestWorkerIdTracking:
-    """Tests for worker ID-based tracking (fixes PID instability bug).
+class TestGetActiveAgents:
+    """Integration tests for _get_active_agents function."""
 
-    The bug: Claude Code runs each bash command in a new subshell, so PIDs change
-    between SESSION_START, CLAIM, and SESSION_END. This breaks agent tracking.
+    def test_get_active_agents_full_workflow(self, tmp_path: Path) -> None:
+        """Test full workflow of getting active agents from DB."""
+        db_path = tmp_path / ".mab" / "mab.db"
+        conn = create_test_db(db_path)
 
-    The fix: Use WORKER_ID (or SESSION_ID) for tracking instead of PIDs.
-    """
+        # Create workers with various states
+        insert_test_worker(conn, "worker-dev-1-abc", role="dev", status="running", pid=1001)
+        insert_test_event(conn, "worker-dev-1-abc", "claim", "mab-feature", "Implement feature X")
 
-    def test_pid_changes_break_session_tracking_without_worker_id(self) -> None:
-        """Document the bug: varying PIDs without worker_id cause tracking to fail.
+        insert_test_worker(conn, "worker-qa-2-xyz", role="qa", status="spawning", pid=1002)
 
-        When PIDs change per command AND there's no worker_id field,
-        _extract_agents_from_logs sees each log entry as a separate session.
+        # Stopped recently - should be included
+        insert_test_worker(
+            conn,
+            "worker-dev-3-def",
+            role="dev",
+            status="stopped",
+            pid=1003,
+            stopped_at=datetime.now() - timedelta(minutes=30),
+        )
 
-        The fix uses worker_id for tracking, so when logs include consistent
-        worker_ids, tracking works correctly even with varying PIDs.
-        """
-        # This is what happens with OLD log format - each command gets a different PID
-        # and no worker_id field (legacy entries)
-        entries = [
-            {
-                "timestamp": "2026-02-02 10:00:00",
-                "pid": 64632,
-                "worker_id": "64632",  # Parsed from log, same as PID string
-                "content": "SESSION_START",
-            },
-            {
-                "timestamp": "2026-02-02 10:00:10",
-                "pid": 67444,
-                "worker_id": "67444",  # Different worker_id because different PID
-                "content": "CLAIM: mab-test - Test task",
-            },
-            {
-                "timestamp": "2026-02-02 10:00:20",
-                "pid": 69988,
-                "worker_id": "69988",  # Yet another worker_id
-                "content": "WORK_START: doing work",
-            },
-            {
-                "timestamp": "2026-02-02 10:00:30",
-                "pid": 73180,
-                "worker_id": "73180",  # Still different
-                "content": "SESSION_END: mab-test",
-            },
-        ]
+        conn.close()
 
-        agents = _extract_agents_from_logs(entries)
+        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+            agents = _get_active_agents()
 
-        # With different worker_ids (derived from PIDs), we get 4 separate "agents"
-        # SESSION_START creates agent "64632", status="idle"
-        # CLAIM has worker_id "67444" which doesn't exist - ignored
-        # etc.
-        assert len(agents) == 1, "Only SESSION_START entry creates an agent"
-        assert agents["64632"]["status"] == "idle"  # Never updated to "working"!
-        assert agents["64632"]["current_bead"] is None  # Never sees the CLAIM!
+            assert len(agents) == 3
 
-    def test_worker_id_based_tracking(self) -> None:
-        """Test that worker ID-based log format enables correct tracking.
+            # Find specific agents
+            dev1 = next(a for a in agents if "dev-1" in a["worker_id"])
+            assert dev1["status"] == "working"
+            assert dev1["current_bead"] == "mab-feature"
+            assert dev1["role"] == "developer"
 
-        When logs use a consistent worker ID instead of PIDs, session tracking
-        works correctly even though the underlying PIDs change.
-        """
-        # With fix: worker_id stays consistent across all entries
-        entries_with_worker_id = [
-            {
-                "timestamp": "2026-02-02 10:00:00",
-                "pid": 0,  # Placeholder for non-numeric ID
-                "worker_id": "worker-dev-1",  # Consistent worker ID
-                "content": "SESSION_START",
-            },
-            {
-                "timestamp": "2026-02-02 10:00:10",
-                "pid": 0,
-                "worker_id": "worker-dev-1",  # Same worker ID
-                "content": "CLAIM: mab-test - Test task",
-            },
-            {
-                "timestamp": "2026-02-02 10:00:20",
-                "pid": 0,
-                "worker_id": "worker-dev-1",  # Same worker ID
-                "content": "SESSION_END: mab-test",
-            },
-        ]
+            qa = next(a for a in agents if "qa-2" in a["worker_id"])
+            assert qa["status"] == "idle"
+            assert qa["role"] == "qa"
 
-        agents = _extract_agents_from_logs(entries_with_worker_id)
-
-        # With consistent worker_id, all events are tracked to same agent
-        assert len(agents) == 1
-        assert "worker-dev-1" in agents
-        agent = agents["worker-dev-1"]
-        assert agent["status"] == "ended"
-        assert agent["worker_id"] == "worker-dev-1"
-
-    def test_parse_log_file_with_worker_id(self, tmp_path: Path) -> None:
-        """Test parsing log entries that use worker IDs instead of PIDs.
-
-        LOG_PATTERN now accepts alphanumeric worker IDs like "worker-dev-1".
-        """
-        log_content = """[2026-02-02 10:00:00] [worker-dev-1] SESSION_START
-[2026-02-02 10:00:10] [worker-dev-1] CLAIM: mab-test - Test task
-[2026-02-02 10:00:30] [worker-dev-1] SESSION_END: mab-test
-"""
-        log_file = tmp_path / "test.log"
-        log_file.write_text(log_content)
-
-        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)):
-            entries = _parse_log_file()
-
-            # Should parse all 3 entries with worker_id field
-            assert len(entries) == 3, "Worker ID format should be parseable"
-            assert entries[0]["worker_id"] == "worker-dev-1"
-            assert entries[0]["pid"] == 0  # Placeholder for non-numeric
-            assert entries[0]["content"] == "SESSION_START"
-            assert entries[1]["worker_id"] == "worker-dev-1"
-            assert entries[2]["worker_id"] == "worker-dev-1"
-
-    def test_full_session_with_worker_id_tracking(self, tmp_path: Path) -> None:
-        """End-to-end test: worker ID tracking through full session lifecycle."""
-        log_content = """[2026-02-02 10:00:00] [worker-dev-1] SESSION_START
-[2026-02-02 10:00:05] [worker-dev-1] CLAIM: mab-abc - Fix tracking bug
-[2026-02-02 10:00:10] [worker-dev-1] WORK_START: investigating
-[2026-02-02 10:00:20] [worker-dev-1] TESTS: running pytest
-[2026-02-02 10:00:25] [worker-dev-1] CLOSE: mab-abc - PR merged
-[2026-02-02 10:00:30] [worker-dev-1] SESSION_END: mab-abc
-"""
-        log_file = tmp_path / "test.log"
-        log_file.write_text(log_content)
-
-        with patch("dashboard.routes.agents.LOG_FILE", str(log_file)):
-            entries = _parse_log_file()
-
-            # Should have 6 entries, all with same worker_id
-            assert len(entries) == 6
-            for entry in entries:
-                assert entry["worker_id"] == "worker-dev-1"
-
-            # Extract agents using worker_id-aware function
-            agents = _extract_agents_from_logs(entries)
-
-            # Single agent tracked through full lifecycle
-            assert len(agents) == 1
-            agent = agents["worker-dev-1"]
-            assert agent["status"] == "ended"
-            assert agent["worker_id"] == "worker-dev-1"
-            # CLOSE should have cleared the current_bead
-            assert agent["current_bead"] is None
+            stopped = next(a for a in agents if "dev-3" in a["worker_id"])
+            assert stopped["status"] == "ended"
