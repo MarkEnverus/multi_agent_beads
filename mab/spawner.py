@@ -837,6 +837,10 @@ class SubprocessSpawner(Spawner):
         # Build environment
         env = os.environ.copy()
         env["WORKER_ID"] = worker_id
+        # SESSION_ID is used by PROMPT.md's log function: ${SESSION_ID:-$$}
+        # Without this, log entries would use different PIDs per subshell command,
+        # breaking agent tracking in the dashboard
+        env["SESSION_ID"] = worker_id
         env["WORKER_ROLE"] = role
         env["WORKER_PROJECT"] = str(project)
         env["WORKER_WORKING_DIR"] = str(working_dir)
@@ -1368,8 +1372,11 @@ class TmuxSpawner(Spawner):
         session_name = self._session_name(worker_id)
 
         # Build environment exports
+        # SESSION_ID is used by PROMPT.md's log function: ${SESSION_ID:-$$}
+        # Without this, log entries would use different PIDs per subshell command
         env_exports = f"""
 export WORKER_ID="{worker_id}"
+export SESSION_ID="{worker_id}"
 export WORKER_ROLE="{role}"
 export WORKER_PROJECT="{project}"
 """
