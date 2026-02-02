@@ -589,11 +589,54 @@ async def get_project_status(project_path: str) -> dict[str, Any]:
     }
 
 
+def _is_worker_recent(worker: dict[str, Any], max_age_hours: float = 1.0) -> bool:
+    """Check if a worker is recent (active or stopped within max_age_hours).
+
+    Args:
+        worker: Worker dict from RPC response.
+        max_age_hours: Maximum age in hours for stopped workers to be considered recent.
+
+    Returns:
+        True if worker is running/spawning/starting or stopped within max_age_hours.
+    """
+    from datetime import datetime, timedelta
+
+    status = worker.get("status", "")
+
+    # Always show active workers
+    if status in ("running", "spawning", "starting"):
+        return True
+
+    # For stopped/crashed workers, check how recently they stopped
+    stopped_at = worker.get("stopped_at")
+    if not stopped_at:
+        # No stop time recorded - use started_at as fallback
+        stopped_at = worker.get("started_at")
+
+    if not stopped_at:
+        return False
+
+    try:
+        # Parse timestamp (handle both 'T' and space separators)
+        stopped_at = stopped_at.replace("T", " ").rstrip("Z")
+        if "." in stopped_at:
+            stopped_time = datetime.strptime(stopped_at, "%Y-%m-%d %H:%M:%S.%f")
+        else:
+            stopped_time = datetime.strptime(stopped_at, "%Y-%m-%d %H:%M:%S")
+
+        cutoff = datetime.now() - timedelta(hours=max_age_hours)
+        return stopped_time > cutoff
+    except (ValueError, TypeError):
+        return False
+
+
 @router.get("", response_model=WorkerListResponse)
 async def list_workers(
     status: str | None = None,
     project_path: str | None = None,
     role: str | None = None,
+    active_only: bool = Query(True, description="Only show active or recently stopped workers"),
+    max_age_hours: float = Query(1.0, description="Max age in hours for stopped workers (when active_only=True)"),
 ) -> dict[str, Any]:
     """List all workers with optional filtering.
 
@@ -601,6 +644,8 @@ async def list_workers(
         status: Filter by worker status (running, stopped, crashed)
         project_path: Filter by project path
         role: Filter by worker role
+        active_only: Only show active or recently stopped workers (default True)
+        max_age_hours: Max age in hours for stopped workers when active_only=True
     """
     try:
         client = _get_rpc_client()
@@ -615,7 +660,12 @@ async def list_workers(
         # Run blocking RPC call in thread pool to avoid blocking event loop
         result = await asyncio.to_thread(client.call, "worker.list", params, DASHBOARD_RPC_TIMEOUT)
         workers = result.get("workers", [])
-        logger.debug("Listed %d workers", len(workers))
+
+        # Filter to only recent workers unless active_only=False
+        if active_only:
+            workers = [w for w in workers if _is_worker_recent(w, max_age_hours)]
+
+        logger.debug("Listed %d workers (active_only=%s)", len(workers), active_only)
         return {"workers": workers, "total": len(workers)}
     except Exception as e:
         _handle_rpc_error(e, "list_workers")
