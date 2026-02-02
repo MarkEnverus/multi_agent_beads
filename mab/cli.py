@@ -1347,9 +1347,7 @@ def cleanup_worktrees(
     # List existing worktrees
     worktrees = list_worktrees(project)
     # Filter to just those in .worktrees/
-    worker_worktrees = [
-        w for w in worktrees if WORKTREES_DIR in w.get("path", "")
-    ]
+    worker_worktrees = [w for w in worktrees if WORKTREES_DIR in w.get("path", "")]
 
     if not worker_worktrees:
         click.echo("No worker worktrees found - nothing to clean up")
