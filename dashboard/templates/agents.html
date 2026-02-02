@@ -238,23 +238,44 @@
         setInterval(refreshAgents, 5000);
     });
 
-    // Fetch and display agents (using workers API for consistency with admin page)
+    // Fetch and display agents (using workers API merged with agents API for claimed beads)
     async function refreshAgents() {
         const roleFilter = document.getElementById('filter-role').value;
-        let url = '/api/workers';
+        let workersUrl = '/api/workers';
+        let agentsUrl = '/api/agents';
         const params = new URLSearchParams();
         if (roleFilter) {
             params.append('role', roleFilter);
         }
         if (params.toString()) {
-            url += '?' + params.toString();
+            workersUrl += '?' + params.toString();
         }
 
         try {
-            const response = await fetch(url);
-            if (response.ok) {
-                const data = await response.json();
-                // Transform worker data to agent format for UI compatibility
+            // Fetch both workers and agents data in parallel
+            const [workersResponse, agentsResponse] = await Promise.all([
+                fetch(workersUrl),
+                fetch(agentsUrl).catch(() => ({ ok: false, status: 500 }))  // Agent API may fail if log file missing
+            ]);
+
+            // Build a PID -> agent lookup for claimed beads
+            let agentsByPid = {};
+            if (agentsResponse.ok) {
+                try {
+                    const agentsData = await agentsResponse.json();
+                    agentsData.forEach(agent => {
+                        if (agent.pid) {
+                            agentsByPid[agent.pid] = agent;
+                        }
+                    });
+                } catch (e) {
+                    console.warn('Failed to parse agents data:', e);
+                }
+            }
+
+            if (workersResponse.ok) {
+                const data = await workersResponse.json();
+                // Transform worker data to agent format, merging claimed bead info from agents API
                 agents = (data.workers || []).map(worker => {
                     // Map worker status to display status - preserve actual status
                     let displayStatus;
@@ -271,13 +292,26 @@
                         default:
                             displayStatus = 'idle';
                     }
+
+                    // Look up claimed bead info from agents API by PID
+                    const agentInfo = worker.pid ? agentsByPid[worker.pid] : null;
+                    const currentBead = agentInfo ? agentInfo.current_bead : null;
+                    const currentBeadTitle = agentInfo ? agentInfo.current_bead_title : null;
+
+                    // If agent is working on a bead, show as working
+                    if (currentBead && displayStatus === 'working') {
+                        displayStatus = 'working';
+                    } else if (currentBead) {
+                        displayStatus = 'working';
+                    }
+
                     return {
-                        role: worker.role || 'unknown',
+                        role: worker.role || (agentInfo ? agentInfo.role : 'unknown'),
                         instance: 1,
-                        current_bead: null,  // Workers API doesn't track current bead
-                        current_bead_title: null,
+                        current_bead: currentBead,
+                        current_bead_title: currentBeadTitle,
                         status: displayStatus,
-                        last_activity: worker.started_at || new Date().toISOString(),
+                        last_activity: (agentInfo ? agentInfo.last_activity : null) || worker.started_at || new Date().toISOString(),
                         pid: worker.pid || 0,
                         worker_id: worker.id  // Keep worker ID for reference
                     };
@@ -285,7 +319,7 @@
                 renderAgents(agents);
                 updateStats(agents);
                 document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
-            } else if (response.status === 503) {
+            } else if (workersResponse.status === 503) {
                 // Daemon not running - show empty state
                 agents = [];
                 renderAgents(agents);
