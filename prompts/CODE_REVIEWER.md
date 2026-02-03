@@ -375,14 +375,18 @@ gh pr merge <pr-number> --squash --delete-branch
 log "PR_MERGED: #<pr-number>"
 ```
 
-### 9. Close Bead
+### 9. Complete Work (Template-Based)
 
-After merging the PR:
+After merging the PR, use the template-based handoff to complete work:
 
 ```bash
-bd close <bead-id> --reason="PR #<number> merged after QA approval"
-log "CLOSE: <bead-id> - PR merged"
+BEAD=<bead-id>
+handoff  # Uses NEXT_HANDOFF from environment (should be "done")
 ```
+
+The handoff function will close the bead with appropriate logging.
+
+**Note**: For the `full` template, NEXT_HANDOFF is set to "done" for Code Reviewer.
 
 ### 10. Sync and Exit
 
