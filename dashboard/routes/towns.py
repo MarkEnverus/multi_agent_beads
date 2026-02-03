@@ -247,3 +247,229 @@ async def create_town(request: CreateTownRequest) -> dict[str, Any]:
             status_code=400,
             detail=str(e),
         )
+
+
+class UpdateTownRequest(BaseModel):
+    """Request body for updating a town."""
+
+    description: str | None = Field(default=None, description="Human-readable description")
+    max_workers: int | None = Field(default=None, description="Maximum concurrent workers")
+    project_path: str | None = Field(default=None, description="Path to project directory")
+
+
+@router.patch("/{town_name}")
+async def update_town(town_name: str, request: UpdateTownRequest) -> dict[str, Any]:
+    """Update an existing town's configuration.
+
+    Args:
+        town_name: Name of the town to update.
+        request: Fields to update.
+
+    Returns:
+        Updated town details.
+
+    Raises:
+        HTTPException: 404 if town not found.
+    """
+    manager = _get_town_manager()
+
+    try:
+        town = manager.update(
+            name=town_name,
+            description=request.description,
+            max_workers=request.max_workers,
+            project_path=request.project_path,
+        )
+
+        logger.info(f"Updated town '{town_name}'")
+
+        return {
+            "success": True,
+            "town": town.to_dict(),
+            "message": f"Town '{town_name}' updated successfully",
+        }
+
+    except TownNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Town '{town_name}' not found",
+        )
+    except TownError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
+
+
+@router.delete("/{town_name}")
+async def delete_town(town_name: str, force: bool = False) -> dict[str, Any]:
+    """Delete a town.
+
+    Args:
+        town_name: Name of the town to delete.
+        force: If True, delete even if town is running.
+
+    Returns:
+        Success message.
+
+    Raises:
+        HTTPException: 404 if not found, 400 if running and force=False.
+    """
+    manager = _get_town_manager()
+
+    try:
+        manager.delete(name=town_name, force=force)
+
+        logger.info(f"Deleted town '{town_name}'")
+
+        return {
+            "success": True,
+            "message": f"Town '{town_name}' deleted successfully",
+        }
+
+    except TownNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Town '{town_name}' not found",
+        )
+    except TownError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
+
+
+@router.post("/{town_name}/start")
+async def start_town(town_name: str) -> dict[str, Any]:
+    """Start a town's dashboard server.
+
+    Launches the dashboard server for the specified town on its configured port.
+
+    Args:
+        town_name: Name of the town to start.
+
+    Returns:
+        Town status after starting.
+
+    Raises:
+        HTTPException: 404 if not found, 400 if already running.
+    """
+    import subprocess
+    import sys
+
+    manager = _get_town_manager()
+
+    try:
+        town = manager.get(town_name)
+
+        if town.status == TownStatus.RUNNING:
+            return {
+                "success": False,
+                "message": f"Town '{town_name}' is already running on port {town.port}",
+                "town": town.to_dict(),
+            }
+
+        # Start dashboard in background
+        env = {
+            **dict(__import__("os").environ),
+            "DASHBOARD_PORT": str(town.port),
+            "DASHBOARD_TOWN": town_name,
+        }
+
+        if town.project_path:
+            env["DASHBOARD_PROJECT_ROOT"] = town.project_path
+
+        process = subprocess.Popen(
+            [sys.executable, "-m", "dashboard.app"],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+        # Update town status
+        town = manager.set_status(town_name, TownStatus.RUNNING, pid=process.pid)
+
+        logger.info(f"Started town '{town_name}' on port {town.port} (PID {process.pid})")
+
+        return {
+            "success": True,
+            "message": f"Town '{town_name}' started on port {town.port}",
+            "town": town.to_dict(),
+            "pid": process.pid,
+        }
+
+    except TownNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Town '{town_name}' not found",
+        )
+    except TownError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.exception(f"Failed to start town '{town_name}': {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start town: {e}",
+        )
+
+
+@router.post("/{town_name}/stop")
+async def stop_town(town_name: str) -> dict[str, Any]:
+    """Stop a town's dashboard server.
+
+    Gracefully stops the dashboard server for the specified town.
+
+    Args:
+        town_name: Name of the town to stop.
+
+    Returns:
+        Town status after stopping.
+
+    Raises:
+        HTTPException: 404 if not found, 400 if not running.
+    """
+    import os
+    import signal
+
+    manager = _get_town_manager()
+
+    try:
+        town = manager.get(town_name)
+
+        if town.status != TownStatus.RUNNING:
+            return {
+                "success": False,
+                "message": f"Town '{town_name}' is not running",
+                "town": town.to_dict(),
+            }
+
+        if town.pid:
+            try:
+                os.kill(town.pid, signal.SIGTERM)
+                logger.info(f"Sent SIGTERM to town '{town_name}' (PID {town.pid})")
+            except (OSError, ProcessLookupError) as e:
+                logger.warning(f"Could not send signal to PID {town.pid}: {e}")
+
+        # Update town status
+        town = manager.set_status(town_name, TownStatus.STOPPED)
+
+        return {
+            "success": True,
+            "message": f"Town '{town_name}' stopped",
+            "town": town.to_dict(),
+        }
+
+    except TownNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Town '{town_name}' not found",
+        )
+    except TownError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
