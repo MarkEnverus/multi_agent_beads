@@ -4,6 +4,7 @@ Provides endpoints for listing and managing orchestration towns.
 """
 
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,50 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/towns", tags=["towns"])
+
+
+def _get_active_worker_counts(town_name: str) -> dict[str, int]:
+    """Get counts of currently active workers per role.
+
+    Args:
+        town_name: Name of the town to filter workers by.
+
+    Returns:
+        Dictionary mapping role names to active worker counts.
+    """
+    counts: dict[str, int] = {}
+
+    # Try project-local database first, then global
+    db_paths = [
+        Path.cwd() / ".mab" / "workers.db",
+        MAB_HOME / "workers.db" if MAB_HOME else None,
+    ]
+
+    for db_path in db_paths:
+        if db_path and db_path.exists():
+            try:
+                conn = sqlite3.connect(str(db_path))
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    """
+                    SELECT role, COUNT(*) as count
+                    FROM workers
+                    WHERE status IN ('running', 'spawning')
+                    AND (town = ? OR town IS NULL)
+                    GROUP BY role
+                    """,
+                    (town_name,),
+                )
+                for row in cursor.fetchall():
+                    role = row["role"]
+                    counts[role] = counts.get(role, 0) + row["count"]
+                conn.close()
+                break
+            except (sqlite3.Error, OSError) as e:
+                logger.debug("Could not read workers from %s: %s", db_path, e)
+                continue
+
+    return counts
 
 
 def _get_town_manager() -> Any:
@@ -58,24 +103,39 @@ async def list_towns() -> dict[str, Any]:
 
 @router.get("/current")
 async def get_current_town() -> dict[str, Any]:
-    """Get the current town configuration.
+    """Get the current town configuration with template and worker info.
 
     Returns:
-        Current town details or default if not found.
+        Current town details including:
+        - town: Full town configuration
+        - name: Town name
+        - template: Team template name (solo, pair, full)
+        - workflow: List of workflow steps
+        - worker_counts: Configured worker counts per role
+        - active_workers: Currently running workers per role
     """
     manager = _get_town_manager()
+    active_workers = _get_active_worker_counts(TOWN_NAME)
 
     try:
         town = manager.get(TOWN_NAME)
         return {
             "town": town.to_dict(),
             "name": TOWN_NAME,
+            "template": town.template,
+            "workflow": town.workflow,
+            "worker_counts": town.get_effective_roles(),
+            "active_workers": active_workers,
         }
     except TownNotFoundError:
         # Return default info if town not in database
         return {
             "town": None,
             "name": TOWN_NAME,
+            "template": "pair",
+            "workflow": ["dev", "qa", "human_merge"],
+            "worker_counts": {"dev": 1, "qa": 1},
+            "active_workers": active_workers,
             "message": f"Town '{TOWN_NAME}' not found in database (using defaults)",
         }
 
