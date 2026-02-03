@@ -99,6 +99,18 @@
 
                     <!-- Town Switcher and Status -->
                     <div class="flex items-center space-x-4">
+                        <!-- Template Badge and Worker Counts -->
+                        <div id="town-info" class="flex items-center space-x-3">
+                            <!-- Template Badge -->
+                            <span id="template-badge" class="template-badge template-badge-pair" title="Team Template">
+                                PAIR
+                            </span>
+                            <!-- Worker Counts -->
+                            <div id="worker-counts" class="flex items-center space-x-2 text-xs">
+                                <!-- Worker counts populated by JavaScript -->
+                            </div>
+                        </div>
+
                         <!-- Town Selector Dropdown -->
                         <div class="relative" id="town-switcher">
                             <button type="button"
@@ -201,6 +213,23 @@
     <script>
         // Town switcher functionality
         let townsData = [];
+        let currentTownData = null;
+
+        // Role display names
+        const ROLE_LABELS = {
+            'dev': 'Dev',
+            'qa': 'QA',
+            'manager': 'Mgr',
+            'tech_lead': 'TL',
+            'reviewer': 'Rev'
+        };
+
+        // Template badge CSS classes
+        const TEMPLATE_CLASSES = {
+            'solo': 'template-badge-solo',
+            'pair': 'template-badge-pair',
+            'full': 'template-badge-full'
+        };
 
         // Toggle dropdown visibility
         function toggleTownDropdown() {
@@ -216,6 +245,84 @@
                 dropdown.classList.add('hidden');
             }
         });
+
+        // Update template badge and worker counts display
+        function updateTownInfo(data) {
+            const badge = document.getElementById('template-badge');
+            const countsEl = document.getElementById('worker-counts');
+
+            if (!badge || !countsEl) return;
+
+            // Update template badge
+            const template = data.template || 'pair';
+            badge.textContent = template.toUpperCase();
+            badge.className = 'template-badge ' + (TEMPLATE_CLASSES[template] || 'template-badge-pair');
+            badge.title = `Team Template: ${template}`;
+
+            // Build worker counts display
+            const workerCounts = data.worker_counts || {};
+            const activeWorkers = data.active_workers || {};
+
+            // Get all roles from both configured and active
+            const allRoles = new Set([...Object.keys(workerCounts), ...Object.keys(activeWorkers)]);
+
+            if (allRoles.size === 0) {
+                countsEl.innerHTML = '<span class="text-gray-500">No workers configured</span>';
+                return;
+            }
+
+            // Sort roles in workflow order if available
+            const workflowOrder = ['manager', 'tech_lead', 'dev', 'qa', 'reviewer'];
+            const sortedRoles = [...allRoles].sort((a, b) => {
+                const aIdx = workflowOrder.indexOf(a);
+                const bIdx = workflowOrder.indexOf(b);
+                if (aIdx === -1 && bIdx === -1) return a.localeCompare(b);
+                if (aIdx === -1) return 1;
+                if (bIdx === -1) return -1;
+                return aIdx - bIdx;
+            });
+
+            countsEl.innerHTML = sortedRoles.map(role => {
+                const configured = workerCounts[role] || 0;
+                const active = activeWorkers[role] || 0;
+                const label = ROLE_LABELS[role] || role.charAt(0).toUpperCase() + role.slice(1);
+
+                // Color based on whether workers are running
+                const activeClass = active > 0 ? 'text-green-400' : 'text-gray-500';
+                const statusDot = active > 0
+                    ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-green-500 mr-1"></span>'
+                    : '';
+
+                return `
+                    <span class="worker-count-item flex items-center" title="${label}: ${active}/${configured} active">
+                        ${statusDot}
+                        <span class="text-gray-400">${label}:</span>
+                        <span class="${activeClass} font-medium ml-0.5">${active}</span>
+                        <span class="text-gray-600">/${configured}</span>
+                    </span>
+                `;
+            }).join('');
+        }
+
+        // Fetch current town details (template, worker counts)
+        async function loadCurrentTownInfo() {
+            try {
+                const response = await fetch('/api/towns/current');
+                if (!response.ok) {
+                    throw new Error('Failed to fetch current town info');
+                }
+                currentTownData = await response.json();
+                updateTownInfo(currentTownData);
+            } catch (error) {
+                console.error('Failed to load current town info:', error);
+                // Show default values on error
+                updateTownInfo({
+                    template: 'pair',
+                    worker_counts: { dev: 1, qa: 1 },
+                    active_workers: {}
+                });
+            }
+        }
 
         // Fetch towns and populate dropdown
         async function loadTowns() {
@@ -286,9 +393,16 @@
             window.location.href = newUrl;
         }
 
+        // Periodically refresh worker counts (every 10 seconds)
+        function startWorkerCountRefresh() {
+            setInterval(loadCurrentTownInfo, 10000);
+        }
+
         // Load towns on page load
         document.addEventListener('DOMContentLoaded', function() {
             loadTowns();
+            loadCurrentTownInfo();
+            startWorkerCountRefresh();
         });
     </script>
 
