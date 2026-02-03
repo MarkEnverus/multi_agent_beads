@@ -137,8 +137,8 @@
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
                 </div>
-                {# Agent cards will be rendered here #}
-                <div id="agents-list" class="hidden grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+                {# Agent cards will be rendered here grouped by role #}
+                <div id="agents-list" class="hidden space-y-6"></div>
                 {# Empty state #}
                 <div id="agents-empty" class="hidden text-center py-12">
                     <svg class="mx-auto h-12 w-12 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -349,7 +349,23 @@
         document.getElementById('stat-developers').textContent = developers;
     }
 
-    // Render agent cards
+    // Track which roles are currently spawning
+    const spawningRoles = new Set();
+
+    // All available roles for display
+    const allRoles = ['dev', 'qa', 'reviewer', 'tech_lead', 'manager'];
+
+    // Role display names
+    const roleDisplayNames = {
+        dev: 'Developers',
+        qa: 'QA',
+        reviewer: 'Reviewers',
+        tech_lead: 'Tech Leads',
+        manager: 'Managers',
+        unknown: 'Unknown'
+    };
+
+    // Render agent cards grouped by role
     function renderAgents(agentList) {
         const loading = document.getElementById('agents-loading');
         const list = document.getElementById('agents-list');
@@ -365,18 +381,121 @@
             filteredAgents = agentList.filter(a => a.status === statusFilter);
         }
 
-        if (filteredAgents.length === 0) {
-            list.classList.add('hidden');
-            empty.classList.remove('hidden');
-            count.textContent = '0 agents';
-            return;
-        }
+        // Group agents by role
+        const agentsByRole = {};
+        filteredAgents.forEach(agent => {
+            const role = agent.role || 'unknown';
+            if (!agentsByRole[role]) {
+                agentsByRole[role] = [];
+            }
+            agentsByRole[role].push(agent);
+        });
 
-        empty.classList.add('hidden');
-        list.classList.remove('hidden');
+        // Update count
         count.textContent = filteredAgents.length + ' agent' + (filteredAgents.length !== 1 ? 's' : '');
 
-        list.innerHTML = filteredAgents.map(agent => renderAgentCard(agent)).join('');
+        // Render role sections (show all roles, even empty ones)
+        const roleFilter = document.getElementById('filter-role').value;
+        const rolesToShow = roleFilter ? [roleFilter] : allRoles;
+
+        let html = '';
+        rolesToShow.forEach(role => {
+            const roleAgents = agentsByRole[role] || [];
+            html += renderRoleSection(role, roleAgents);
+        });
+
+        // Show list if we have sections to render
+        if (rolesToShow.length > 0) {
+            empty.classList.add('hidden');
+            list.classList.remove('hidden');
+            list.innerHTML = html;
+        } else {
+            list.classList.add('hidden');
+            empty.classList.remove('hidden');
+        }
+    }
+
+    // Render a role section with header and agent cards
+    function renderRoleSection(role, agents) {
+        const config = roleConfig[role] || roleConfig.unknown;
+        const displayName = roleDisplayNames[role] || role.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+        const isSpawning = spawningRoles.has(role);
+
+        return `
+            <div class="role-section ${config.bg} bg-opacity-30 rounded-lg border ${config.border} border-opacity-50">
+                <div class="px-4 py-3 border-b ${config.border} border-opacity-30 flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                        <svg class="h-5 w-5 ${config.text}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            ${config.icon}
+                        </svg>
+                        <span class="font-medium ${config.text}">${displayName}</span>
+                        <span class="text-sm text-gray-400">(${agents.length})</span>
+                    </div>
+                    <button
+                        onclick="addWorker('${role}')"
+                        ${isSpawning ? 'disabled' : ''}
+                        class="px-3 py-1.5 text-sm ${config.bg} ${config.text} border ${config.border} rounded-md hover:opacity-80 transition-colors flex items-center space-x-1 ${isSpawning ? 'opacity-50 cursor-not-allowed' : ''}"
+                    >
+                        ${isSpawning ? `
+                            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <span>Adding...</span>
+                        ` : `
+                            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                            </svg>
+                            <span>+ Add ${displayName.replace(/s$/, '')}</span>
+                        `}
+                    </button>
+                </div>
+                <div class="p-4">
+                    ${agents.length > 0 ? `
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            ${agents.map(agent => renderAgentCard(agent)).join('')}
+                        </div>
+                    ` : `
+                        <div class="text-center py-6 text-gray-500 text-sm">
+                            No ${displayName.toLowerCase()} active
+                        </div>
+                    `}
+                </div>
+            </div>
+        `;
+    }
+
+    // Add a new worker via the API
+    async function addWorker(role) {
+        if (spawningRoles.has(role)) return;
+
+        spawningRoles.add(role);
+        renderAgents(agents); // Re-render to show loading state
+
+        try {
+            const response = await fetch('/api/workers/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ role: role, count: 1 })
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                showToast(`Added ${data.spawned} ${role} worker(s)`, 'success');
+                // Refresh agents list after short delay to let worker initialize
+                setTimeout(refreshAgents, 1000);
+            } else {
+                const errorMsg = data.errors?.join(', ') || data.detail || 'Failed to add worker';
+                showToast(errorMsg, 'error');
+            }
+        } catch (error) {
+            console.error('Failed to add worker:', error);
+            showToast('Failed to add worker: ' + error.message, 'error');
+        } finally {
+            spawningRoles.delete(role);
+            renderAgents(agents); // Re-render to remove loading state
+        }
     }
 
     // Status configuration for visual overrides (crashed/stopped override role colors)
