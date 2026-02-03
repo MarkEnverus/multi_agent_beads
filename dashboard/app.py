@@ -238,6 +238,23 @@ async def help_page(request: Request) -> HTMLResponse:
     )
 
 
+@app.get("/towns", response_class=HTMLResponse)
+async def towns_page(request: Request) -> HTMLResponse:
+    """Render the town management page.
+
+    Provides CRUD operations for orchestration towns, including:
+    - Create new towns with template selection
+    - View all towns with status indicators
+    - Start/stop town dashboard servers
+    - Edit town configuration
+    - Delete towns
+    """
+    return templates.TemplateResponse(
+        "towns.html",
+        {"request": request},
+    )
+
+
 @app.get("/partials/kanban", response_class=HTMLResponse)
 async def kanban_partial(
     request: Request,

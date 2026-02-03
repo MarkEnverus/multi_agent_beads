@@ -92,6 +92,7 @@
                             <a href="/agents" class="text-gray-300 hover:bg-gray-700 hover:text-white rounded-md px-3 py-2 text-sm font-medium">Agents</a>
                             <a href="/beads" class="text-gray-300 hover:bg-gray-700 hover:text-white rounded-md px-3 py-2 text-sm font-medium">Beads</a>
                             <a href="/logs" class="text-gray-300 hover:bg-gray-700 hover:text-white rounded-md px-3 py-2 text-sm font-medium">Logs</a>
+                            <a href="/towns" class="text-gray-300 hover:bg-gray-700 hover:text-white rounded-md px-3 py-2 text-sm font-medium">Towns</a>
                             <a href="/help" class="text-gray-300 hover:bg-gray-700 hover:text-white rounded-md px-3 py-2 text-sm font-medium">Help</a>
                             <a href="/docs" class="text-gray-300 hover:bg-gray-700 hover:text-white rounded-md px-3 py-2 text-sm font-medium" target="_blank">API Docs</a>
                         </div>
@@ -176,6 +177,7 @@
                     <a href="/agents" class="text-gray-300 hover:bg-gray-700 hover:text-white block rounded-md px-3 py-2 text-base font-medium">Agents</a>
                     <a href="/beads" class="text-gray-300 hover:bg-gray-700 hover:text-white block rounded-md px-3 py-2 text-base font-medium">Beads</a>
                     <a href="/logs" class="text-gray-300 hover:bg-gray-700 hover:text-white block rounded-md px-3 py-2 text-base font-medium">Logs</a>
+                    <a href="/towns" class="text-gray-300 hover:bg-gray-700 hover:text-white block rounded-md px-3 py-2 text-base font-medium">Towns</a>
                     <a href="/help" class="text-gray-300 hover:bg-gray-700 hover:text-white block rounded-md px-3 py-2 text-base font-medium">Help</a>
                     <a href="/docs" class="text-gray-300 hover:bg-gray-700 hover:text-white block rounded-md px-3 py-2 text-base font-medium" target="_blank">API Docs</a>
                 </div>
@@ -350,27 +352,53 @@
 
                 townList.innerHTML = townsData.map(town => {
                     const isCurrentTown = town.name === data.current_town;
-                    const statusColor = town.status === 'running' ? 'bg-green-500' : 'bg-gray-500';
+                    const isRunning = town.status === 'running';
+                    const statusColor = isRunning ? 'bg-green-500' : 'bg-gray-500';
 
                     return `
-                        <button
-                            class="w-full px-4 py-2 text-left hover:bg-gray-700 flex items-center justify-between group ${isCurrentTown ? 'bg-gray-700' : ''}"
-                            onclick="switchToTown('${town.name}', ${town.port})"
-                            ${isCurrentTown ? 'disabled' : ''}>
-                            <div class="flex items-center space-x-3">
+                        <div class="flex items-center justify-between px-4 py-2 hover:bg-gray-700 ${isCurrentTown ? 'bg-gray-700' : ''}">
+                            <button
+                                class="flex-1 text-left flex items-center space-x-3"
+                                onclick="switchToTown('${town.name}', ${town.port})"
+                                ${!isRunning ? 'disabled title="Town is stopped"' : ''}>
                                 <span class="h-2 w-2 rounded-full ${statusColor}"></span>
                                 <div>
                                     <span class="text-sm text-gray-200 ${isCurrentTown ? 'font-semibold' : ''}">${town.name}</span>
-                                    ${town.description ? `<p class="text-xs text-gray-500">${town.description}</p>` : ''}
+                                    <span class="text-xs text-gray-500 ml-1">:${town.port}</span>
+                                    ${isCurrentTown ? '<span class="ml-1 text-xs text-primary-400">(current)</span>' : ''}
                                 </div>
+                            </button>
+                            <div class="flex items-center space-x-1 ml-2">
+                                ${isRunning ? `
+                                    <button onclick="event.stopPropagation(); quickStopTown('${town.name}')"
+                                            class="p-1 text-gray-500 hover:text-red-400 hover:bg-gray-600 rounded transition-colors"
+                                            title="Stop town">
+                                        <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                                        </svg>
+                                    </button>
+                                ` : `
+                                    <button onclick="event.stopPropagation(); quickStartTown('${town.name}')"
+                                            class="p-1 text-gray-500 hover:text-green-400 hover:bg-gray-600 rounded transition-colors"
+                                            title="Start town">
+                                        <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                    </button>
+                                `}
                             </div>
-                            <div class="text-xs text-gray-500 group-hover:text-gray-400">
-                                :${town.port}
-                                ${isCurrentTown ? '<span class="ml-1 text-primary-400">(current)</span>' : ''}
-                            </div>
-                        </button>
+                        </div>
                     `;
                 }).join('');
+
+                // Add "Manage Towns" link at the bottom
+                townList.innerHTML += `
+                    <a href="/towns" class="block px-4 py-2 text-sm text-primary-400 hover:bg-gray-700 border-t border-gray-700">
+                        Manage Towns...
+                    </a>
+                `;
             } catch (error) {
                 console.error('Failed to load towns:', error);
                 document.getElementById('current-town-name').textContent = 'default';
@@ -396,6 +424,44 @@
         // Periodically refresh worker counts (every 10 seconds)
         function startWorkerCountRefresh() {
             setInterval(loadCurrentTownInfo, 10000);
+        }
+
+        // Quick start town from dropdown
+        async function quickStartTown(townName) {
+            try {
+                const response = await fetch(`/api/towns/${townName}/start`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    // Refresh towns list after starting
+                    loadTowns();
+                } else {
+                    console.error('Failed to start town:', data.message);
+                }
+            } catch (error) {
+                console.error('Failed to start town:', error);
+            }
+        }
+
+        // Quick stop town from dropdown
+        async function quickStopTown(townName) {
+            try {
+                const response = await fetch(`/api/towns/${townName}/stop`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    // Refresh towns list after stopping
+                    loadTowns();
+                } else {
+                    console.error('Failed to stop town:', data.message);
+                }
+            } catch (error) {
+                console.error('Failed to stop town:', error);
+            }
         }
 
         // Load towns on page load
