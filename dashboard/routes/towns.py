@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from dashboard.config import TOWN_NAME
+from dashboard.config import PROJECT_ROOT, TOWN_NAME
 
 # Try to import town management - gracefully handle if mab package not installed
 try:
@@ -54,8 +54,9 @@ def _get_active_worker_counts(town_name: str) -> dict[str, int]:
     counts: dict[str, int] = {}
 
     # Try project-local database first, then global
+    # Use PROJECT_ROOT (configured project directory) not Path.cwd() to match agents.py
     db_paths = [
-        Path.cwd() / ".mab" / "workers.db",
+        PROJECT_ROOT / ".mab" / "workers.db",
         MAB_HOME / "workers.db" if MAB_HOME else None,
     ]
 
