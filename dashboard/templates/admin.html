@@ -163,6 +163,70 @@
     </div>
 </div>
 
+{# Create New Town Section #}
+<div class="mb-6">
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+        <h3 class="text-lg font-semibold text-white mb-4">Create New Town</h3>
+        <form id="create-town-form" class="space-y-4" onsubmit="createTown(event)">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label for="town-name" class="block text-sm font-medium text-gray-400 mb-1">Name</label>
+                    <input type="text" id="town-name" required pattern="[a-zA-Z0-9_]+"
+                           class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="myproject">
+                    <p class="mt-1 text-xs text-gray-500">Alphanumeric and underscores only</p>
+                </div>
+                <div>
+                    <label for="town-project-path" class="block text-sm font-medium text-gray-400 mb-1">Project Path</label>
+                    <input type="text" id="town-project-path"
+                           class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="/path/to/project">
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-2">Template</label>
+                <div class="space-y-2">
+                    <label class="flex items-start p-3 bg-gray-700/50 border border-gray-600 rounded-md cursor-pointer hover:bg-gray-700 transition-colors">
+                        <input type="radio" name="town-template" value="solo" class="mt-0.5 h-4 w-4 text-primary-600 bg-gray-700 border-gray-600 focus:ring-primary-500">
+                        <div class="ml-3">
+                            <span class="text-white font-medium">SOLO</span>
+                            <span class="text-gray-400 ml-2">- Dev only, human does rest</span>
+                            <span class="text-gray-500 ml-2">(1 worker)</span>
+                        </div>
+                    </label>
+                    <label class="flex items-start p-3 bg-gray-700/50 border border-primary-500 rounded-md cursor-pointer hover:bg-gray-700 transition-colors">
+                        <input type="radio" name="town-template" value="pair" checked class="mt-0.5 h-4 w-4 text-primary-600 bg-gray-700 border-gray-600 focus:ring-primary-500">
+                        <div class="ml-3">
+                            <span class="text-white font-medium">PAIR</span>
+                            <span class="text-gray-400 ml-2">- Dev + QA, human reviews</span>
+                            <span class="text-gray-500 ml-2">(2 workers)</span>
+                        </div>
+                    </label>
+                    <label class="flex items-start p-3 bg-gray-700/50 border border-gray-600 rounded-md cursor-pointer hover:bg-gray-700 transition-colors">
+                        <input type="radio" name="town-template" value="full" class="mt-0.5 h-4 w-4 text-primary-600 bg-gray-700 border-gray-600 focus:ring-primary-500">
+                        <div class="ml-3">
+                            <span class="text-white font-medium">FULL</span>
+                            <span class="text-gray-400 ml-2">- Complete automation</span>
+                            <span class="text-gray-500 ml-2">(5 workers)</span>
+                        </div>
+                    </label>
+                </div>
+            </div>
+
+            <div class="flex justify-end">
+                <button type="submit" id="create-town-btn"
+                        class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors flex items-center space-x-2">
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    </svg>
+                    <span>Create Town</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
 {# Health and Stats Grid #}
 <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
@@ -1530,5 +1594,97 @@
             <span>Create Bead</span>
         `;
     }
+
+    // Create Town functionality
+    async function createTown(event) {
+        event.preventDefault();
+
+        const name = document.getElementById('town-name').value.trim();
+        const projectPath = document.getElementById('town-project-path').value.trim();
+        const templateRadio = document.querySelector('input[name="town-template"]:checked');
+        const template = templateRadio ? templateRadio.value : 'pair';
+
+        if (!name) {
+            showToast('Town name is required', 'error');
+            return;
+        }
+
+        // Validate name format
+        if (!/^[a-zA-Z0-9_]+$/.test(name)) {
+            showToast('Name must be alphanumeric with underscores only', 'error');
+            return;
+        }
+
+        const btn = document.getElementById('create-town-btn');
+        btn.disabled = true;
+        btn.innerHTML = `
+            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Creating...</span>
+        `;
+
+        try {
+            const response = await fetch('/api/towns', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: name,
+                    template: template,
+                    project_path: projectPath || null
+                })
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                showToast(`Town '${name}' created on port ${data.port}`, 'success');
+                // Reset form
+                document.getElementById('create-town-form').reset();
+                document.getElementById('town-name').value = '';
+                document.getElementById('town-project-path').value = '';
+                // Re-select pair as default
+                document.querySelector('input[name="town-template"][value="pair"]').checked = true;
+                updateTemplateStyles();
+            } else {
+                showToast(data.detail || 'Failed to create town', 'error');
+            }
+        } catch (error) {
+            console.error('Failed to create town:', error);
+            showToast('Failed to create town: Network error', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = `
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                <span>Create Town</span>
+            `;
+        }
+    }
+
+    // Update template radio button styles
+    function updateTemplateStyles() {
+        const labels = document.querySelectorAll('input[name="town-template"]');
+        labels.forEach(radio => {
+            const label = radio.closest('label');
+            if (radio.checked) {
+                label.classList.remove('border-gray-600');
+                label.classList.add('border-primary-500');
+            } else {
+                label.classList.remove('border-primary-500');
+                label.classList.add('border-gray-600');
+            }
+        });
+    }
+
+    // Add event listeners for template radio buttons
+    document.addEventListener('DOMContentLoaded', function() {
+        const templateRadios = document.querySelectorAll('input[name="town-template"]');
+        templateRadios.forEach(radio => {
+            radio.addEventListener('change', updateTemplateStyles);
+        });
+    });
 </script>
 {% endblock %}

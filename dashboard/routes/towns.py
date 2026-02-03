@@ -9,12 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from dashboard.config import TOWN_NAME
 
 # Try to import town management - gracefully handle if mab package not installed
 try:
-    from mab.towns import TownManager, TownNotFoundError, TownStatus
+    from mab.towns import TownError, TownExistsError, TownManager, TownNotFoundError, TownStatus
 
     MAB_HOME = Path.home() / ".mab"
     TOWNS_AVAILABLE = True
@@ -22,8 +23,19 @@ except ImportError:
     TOWNS_AVAILABLE = False
     TownManager = None  # type: ignore
     TownNotFoundError = Exception  # type: ignore
+    TownExistsError = Exception  # type: ignore
+    TownError = Exception  # type: ignore
     TownStatus = None  # type: ignore
     MAB_HOME = None  # type: ignore
+
+
+class CreateTownRequest(BaseModel):
+    """Request body for creating a new town."""
+
+    name: str = Field(..., description="Unique town name (alphanumeric + underscores)")
+    template: str = Field(default="pair", description="Team template (solo, pair, full)")
+    project_path: str | None = Field(default=None, description="Path to project directory")
+
 
 logger = logging.getLogger(__name__)
 
@@ -188,3 +200,50 @@ async def towns_status_summary() -> dict[str, Any]:
             for t in towns
         ],
     }
+
+
+@router.post("")
+async def create_town(request: CreateTownRequest) -> dict[str, Any]:
+    """Create a new town with the specified template.
+
+    Args:
+        request: Town creation parameters including name, template, and project_path.
+
+    Returns:
+        Created town details including assigned port.
+
+    Raises:
+        HTTPException: 400 if invalid name/template, 409 if town exists.
+    """
+    manager = _get_town_manager()
+
+    try:
+        town = manager.create(
+            name=request.name,
+            template=request.template,
+            project_path=request.project_path,
+        )
+
+        logger.info(
+            f"Created town '{town.name}' with template '{town.template}' on port {town.port}"
+        )
+
+        return {
+            "success": True,
+            "town": town.to_dict(),
+            "id": town.name,
+            "port": town.port,
+            "template": town.template,
+            "message": f"Town '{town.name}' created successfully on port {town.port}",
+        }
+
+    except TownExistsError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Town '{request.name}' already exists",
+        )
+    except TownError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
