@@ -1461,8 +1461,7 @@ def town_workflow(
                 target_town = manager.get(town_name_guess)
             except TownNotFoundError:
                 click.secho(
-                    "Error: No town found for current project. "
-                    "Use --town-name to specify a town.",
+                    "Error: No town found for current project. Use --town-name to specify a town.",
                     fg="red",
                     err=True,
                 )
