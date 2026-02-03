@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import json as json_module
 import logging
 import os
 import pty
@@ -854,6 +855,35 @@ class SubprocessSpawner(Spawner):
         # BD_ROOT points to main project - workers use this to find the live beads database
         # This is the fallback when .beads symlink doesn't exist or is broken
         env["BD_ROOT"] = str(project)
+
+        # Inject workflow configuration from town if available
+        # This enables agents to know their handoff chain
+        try:
+            from mab.towns import TownManager, get_next_handoff
+
+            town_manager = TownManager(Path.home() / ".mab")
+            # Try to find town by project path
+            towns = town_manager.list_towns(project_path=str(project))
+            if towns:
+                town = towns[0]  # Use first matching town
+                env["TOWN_TEMPLATE"] = town.template
+                if town.workflow:
+                    env["TOWN_WORKFLOW"] = json_module.dumps(town.workflow)
+                    next_handoff = get_next_handoff(role, town.workflow)
+                    if next_handoff:
+                        env["NEXT_HANDOFF"] = next_handoff
+                    else:
+                        env["NEXT_HANDOFF"] = ""  # Role not in workflow or last step
+                else:
+                    env["TOWN_WORKFLOW"] = "[]"
+                    env["NEXT_HANDOFF"] = ""
+                logger.debug(
+                    f"Injected workflow config for {worker_id}: "
+                    f"template={town.template}, next_handoff={env.get('NEXT_HANDOFF', '')}"
+                )
+        except Exception as e:
+            # Don't fail spawn if town lookup fails
+            logger.debug(f"Could not inject workflow config for {worker_id}: {e}")
 
         if worktree_path:
             env["WORKER_WORKTREE"] = str(worktree_path)

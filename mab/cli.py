@@ -1399,6 +1399,105 @@ def town_update(
         raise SystemExit(1)
 
 
+@town.command("workflow")
+@click.option(
+    "--current",
+    "-c",
+    type=str,
+    required=True,
+    help="Current role in the workflow (e.g., dev, qa)",
+)
+@click.option(
+    "--next",
+    "show_next",
+    is_flag=True,
+    default=False,
+    help="Show only the next handoff target",
+)
+@click.option(
+    "--town-name",
+    "-t",
+    type=str,
+    default=None,
+    help="Town name (auto-detected from current directory if not specified)",
+)
+@click.pass_context
+def town_workflow(
+    ctx: click.Context,
+    current: str,
+    show_next: bool,
+    town_name: str | None,
+) -> None:
+    """Query workflow handoff information for a town.
+
+    Returns the next step in the workflow for a given role. This is used by
+    agents to know where to hand off work after completing their tasks.
+
+    \b
+    Examples:
+      mab town workflow --current=dev --next      # Returns next handoff for dev
+      mab town workflow --current=qa --next       # Returns next handoff for qa
+      mab town workflow --current=dev -t mytown   # Query specific town
+    """
+    from mab.towns import get_next_handoff
+
+    manager: TownManager = ctx.obj["town_manager"]
+
+    # Determine which town to query
+    if town_name:
+        try:
+            target_town = manager.get(town_name)
+        except TownNotFoundError:
+            click.secho(f"Error: Town '{town_name}' not found", fg="red", err=True)
+            raise SystemExit(1)
+    else:
+        # Try to find town by current project path
+        project_path = str(ctx.obj.get("town_path", Path.cwd()))
+        towns = manager.list_towns(project_path=project_path)
+        if not towns:
+            # Fallback: try to find by directory name
+            town_name_guess = Path(project_path).name
+            try:
+                target_town = manager.get(town_name_guess)
+            except TownNotFoundError:
+                click.secho(
+                    "Error: No town found for current project. Use --town-name to specify a town.",
+                    fg="red",
+                    err=True,
+                )
+                raise SystemExit(1)
+        else:
+            target_town = towns[0]
+
+    # Get workflow info
+    if not target_town.workflow:
+        click.secho(f"Error: Town '{target_town.name}' has no workflow defined", fg="red", err=True)
+        raise SystemExit(1)
+
+    next_handoff = get_next_handoff(current, target_town.workflow)
+
+    if show_next:
+        # Simple output for scripting: just the next step
+        if next_handoff:
+            click.echo(next_handoff)
+        else:
+            # Empty output if role not in workflow or at the end
+            click.echo("")
+    else:
+        # Detailed output
+        click.echo(f"Town: {target_town.name}")
+        click.echo(f"Template: {target_town.template}")
+        click.echo(f"Workflow: {' -> '.join(target_town.workflow)}")
+        click.echo(f"Current role: {current}")
+        if next_handoff:
+            click.echo(f"Next handoff: {click.style(next_handoff, fg='green', bold=True)}")
+        else:
+            if current not in target_town.workflow:
+                click.secho(f"Note: Role '{current}' is not in this workflow", fg="yellow")
+            else:
+                click.secho("Note: This is the final step in the workflow", fg="yellow")
+
+
 @cli.command("fix-worktrees")
 @click.option(
     "--project",
