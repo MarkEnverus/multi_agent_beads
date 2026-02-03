@@ -308,14 +308,18 @@ EOF
 log "PR_APPROVED: #<pr-number>"
 ```
 
-### 9. Update Bead Status
+### 9. Hand Off (Template-Based)
 
-After approving, mark ready for review/merge:
+After approving the PR, use the template-based handoff:
 
 ```bash
-bd update <bead-id> --status=ready_for_review
-log "HANDOFF: <bead-id> -> Code Reviewer"
+BEAD=<bead-id>
+handoff  # Uses NEXT_HANDOFF from environment
 ```
+
+The handoff target depends on the workflow template:
+- **pair**: Work complete, closes bead (no code reviewer)
+- **full**: Routes to Code Reviewer for merge
 
 ### 10. Return to Main Branch
 
@@ -397,7 +401,11 @@ Beads in `ready_for_qa` status have open PRs. Use `gh pr checkout` to test them.
 
 After testing:
 
-1. **If passed** - Approve PR, set status to `ready_for_review`
+1. **If passed** - Approve PR, then use template-based handoff:
+   ```bash
+   BEAD=<bead-id>
+   handoff  # Routes based on NEXT_HANDOFF
+   ```
 2. **If failed** - Request changes on PR, set status back to `in_progress`
 
 ### Communication

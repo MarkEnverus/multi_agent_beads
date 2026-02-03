@@ -170,21 +170,24 @@ log "CI: PASSED"
 log "CI: FAILED - <reason>"
 ```
 
-### 10. Hand Off to QA
+### 10. Hand Off (Template-Based)
 
-**IMPORTANT**: Developers do NOT merge PRs. After CI passes, hand off to QA for testing.
+**IMPORTANT**: Developers do NOT merge PRs. After CI passes, use the handoff function which routes based on the workflow template.
 
 ```bash
-# Update bead to ready_for_qa status
-bd update <bead-id> --status=ready_for_qa
-log "HANDOFF: <bead-id> -> QA for PR #<number>"
+# Set bead ID for handoff function
+BEAD=<bead-id>
+
+# Use template-based handoff (reads NEXT_HANDOFF from environment)
+handoff
 ```
 
-QA will:
-1. Checkout your PR branch
-2. Run tests on your changes
-3. Approve the PR if tests pass
-4. Code Reviewer will then merge
+The handoff function will:
+- **solo template**: Close the bead (developer merges own work)
+- **pair template**: Hand to QA for testing
+- **full template**: Hand to QA for testing, then Code Reviewer merges
+
+**Note**: NEXT_HANDOFF is set by the spawner based on the workflow template.
 
 ### 11. Wait for Review (Optional)
 
@@ -233,17 +236,17 @@ Developers receive work from:
 
 ### Handing Off Work
 
-After creating PR and CI passes:
+After creating PR and CI passes, use the template-based handoff:
 
-1. **To QA** - Update bead to `ready_for_qa` status
-2. QA tests the PR branch and approves if tests pass
-3. Code Reviewer merges after QA approval
-
-**Handoff Command:**
 ```bash
-bd update <bead-id> --status=ready_for_qa
-log "HANDOFF: <bead-id> -> QA"
+BEAD=<bead-id>
+handoff  # Uses NEXT_HANDOFF from environment
 ```
+
+The handoff target depends on the workflow template:
+- **solo**: Work complete, closes bead
+- **pair**: Routes to QA for testing
+- **full**: Routes to QA for testing (then to Code Reviewer)
 
 ### Creating Follow-up Beads
 

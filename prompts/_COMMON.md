@@ -66,6 +66,60 @@ grep "<bead-id>" claude.log
 
 ---
 
+## Template-Based Handoffs
+
+The spawner sets `NEXT_HANDOFF` environment variable based on the workflow template (solo, pair, full). Agents use this for consistent handoffs regardless of template.
+
+### Available Values
+
+| Value         | Description                                      |
+| ------------- | ------------------------------------------------ |
+| `qa`          | Hand off to QA agent for testing                 |
+| `reviewer`    | Hand off to Code Reviewer for merge              |
+| `human_merge` | Ready for human to review and merge              |
+| `done`        | Work complete, close the bead                    |
+
+### Handoff Function
+
+```bash
+# Read from environment (set by spawner based on template)
+# NEXT_HANDOFF="qa", "reviewer", "human_merge", or "done"
+
+# Handoff helper - use instead of hardcoded role transitions
+handoff() {
+  case $NEXT_HANDOFF in
+    qa)
+      bd update $BEAD --status=ready_for_qa
+      log "HANDOFF: $BEAD -> QA"
+      ;;
+    reviewer)
+      bd update $BEAD --status=ready_for_review
+      log "HANDOFF: $BEAD -> Code Reviewer"
+      ;;
+    human_merge)
+      log "HANDOFF: $BEAD -> Ready for human merge"
+      ;;
+    done)
+      bd close $BEAD --reason="Work complete"
+      log "CLOSE: $BEAD - Work complete"
+      ;;
+    *)
+      log "ERROR: Unknown NEXT_HANDOFF value: $NEXT_HANDOFF"
+      ;;
+  esac
+}
+```
+
+### Template Workflows
+
+| Template | Developer → | QA → | Code Reviewer → |
+| -------- | ----------- | ---- | --------------- |
+| `solo`   | done        | -    | -               |
+| `pair`   | qa          | done | -               |
+| `full`   | qa          | reviewer | done        |
+
+---
+
 ## Beads Protocol
 
 ### Status Flow
