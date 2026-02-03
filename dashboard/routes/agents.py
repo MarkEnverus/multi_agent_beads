@@ -5,6 +5,7 @@ All file I/O operations are wrapped with asyncio.to_thread() to avoid blocking t
 
 import asyncio
 import logging
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -117,56 +118,106 @@ def _get_workers_from_db() -> list[dict[str, Any]]:
         return []
 
 
-def _get_current_bead_for_worker(worker_id: str) -> tuple[str | None, str | None]:
-    """Get the current bead for a worker from events.
+def _parse_claim_from_log(log_file: str | None) -> tuple[str | None, str | None]:
+    """Parse the most recent CLAIM line from a worker's log file.
 
-    Returns tuple of (bead_id, bead_title).
-    Note: worker_events table only exists in mab.db (legacy).
-    workers.db (WorkerDatabase) does not track bead claims.
+    Workers log claims as: CLAIM: <bead-id> - <title>
+    This function reads the log file and extracts the most recent claim.
+
+    Args:
+        log_file: Path to the worker's log file.
+
+    Returns:
+        Tuple of (bead_id, bead_title), or (None, None) if no claim found.
+    """
+    if not log_file:
+        return None, None
+
+    log_path = Path(log_file)
+    if not log_path.exists():
+        return None, None
+
+    try:
+        # Read the log file and find CLAIM lines
+        # Pattern: [timestamp] [worker_id] CLAIM: <bead-id> - <title>
+        claim_pattern = re.compile(r"CLAIM:\s*(\S+)\s*-\s*(.+)$")
+
+        # Read from the end to find the most recent claim
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+
+        # Search from most recent to oldest
+        for line in reversed(lines):
+            match = claim_pattern.search(line)
+            if match:
+                bead_id = match.group(1)
+                title = match.group(2).strip()
+                return bead_id, title
+
+        return None, None
+    except (OSError, IOError) as e:
+        logger.debug("Could not read log file %s: %s", log_file, e)
+        return None, None
+
+
+def _get_current_bead_for_worker(
+    worker_id: str, log_file: str | None = None
+) -> tuple[str | None, str | None]:
+    """Get the current bead for a worker.
+
+    First tries to find claims in the worker_events table (mab.db).
+    Falls back to parsing the worker's log file for CLAIM entries.
+
+    Args:
+        worker_id: The worker's unique identifier.
+        log_file: Optional path to the worker's log file for fallback parsing.
+
+    Returns:
+        Tuple of (bead_id, bead_title), or (None, None) if no claim found.
     """
     # Try mab.db first (has worker_events table)
     db_path = PROJECT_ROOT / ".mab" / "mab.db"
     if not db_path.exists():
         # Try global mab.db
         db_path = Path.home() / ".mab" / "mab.db"
-    if not db_path.exists():
-        return None, None
 
-    try:
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
+    if db_path.exists():
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
 
-        # Check if worker_events table exists
-        has_events = (
-            conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='worker_events'"
-            ).fetchone()
-            is not None
-        )
+            # Check if worker_events table exists
+            has_events = (
+                conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='worker_events'"
+                ).fetchone()
+                is not None
+            )
 
-        if not has_events:
-            conn.close()
-            return None, None
+            if has_events:
+                # Get the most recent claim event for this worker
+                event = conn.execute(
+                    """
+                    SELECT bead_id, message FROM worker_events
+                    WHERE worker_id = ? AND event_type = 'claim'
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """,
+                    (worker_id,),
+                ).fetchone()
 
-        # Get the most recent claim event for this worker
-        event = conn.execute(
-            """
-            SELECT bead_id, message FROM worker_events
-            WHERE worker_id = ? AND event_type = 'claim'
-            ORDER BY timestamp DESC
-            LIMIT 1
-        """,
-            (worker_id,),
-        ).fetchone()
+                conn.close()
 
-        conn.close()
+                if event:
+                    return event["bead_id"], event["message"]
+            else:
+                conn.close()
 
-        if event:
-            return event["bead_id"], event["message"]
-        return None, None
+        except sqlite3.Error:
+            pass
 
-    except sqlite3.Error:
-        return None, None
+    # Fall back to parsing the worker's log file
+    return _parse_claim_from_log(log_file)
 
 
 def _map_db_status_to_api(db_status: str, current_bead: str | None) -> str:
@@ -220,7 +271,8 @@ def _get_active_agents() -> list[dict[str, Any]]:
     agents = []
     for worker in workers:
         worker_id = worker["id"]
-        current_bead, bead_title = _get_current_bead_for_worker(worker_id)
+        log_file = worker.get("log_file")
+        current_bead, bead_title = _get_current_bead_for_worker(worker_id, log_file)
 
         # Map DB role to API role
         db_role = worker.get("role", "unknown")
