@@ -36,6 +36,7 @@ class CreateTownRequest(BaseModel):
     template: str = Field(default="pair", description="Team template (solo, pair, full)")
     project_path: str | None = Field(default=None, description="Path to project directory")
 
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/towns", tags=["towns"])
@@ -223,7 +224,9 @@ async def create_town(request: CreateTownRequest) -> dict[str, Any]:
             project_path=request.project_path,
         )
 
-        logger.info(f"Created town '{town.name}' with template '{town.template}' on port {town.port}")
+        logger.info(
+            f"Created town '{town.name}' with template '{town.template}' on port {town.port}"
+        )
 
         return {
             "success": True,
