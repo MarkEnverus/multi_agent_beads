@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from dashboard.config import PROJECT_ROOT
 from mab.daemon import (
     MAB_HOME,
     Daemon,
@@ -40,6 +41,13 @@ class WorkerSpawnRequest(BaseModel):
     role: str = Field(..., description="Worker role (dev, qa, reviewer, tech-lead, manager)")
     project_path: str = Field(..., description="Project path for the worker")
     auto_restart: bool = Field(default=True, description="Enable auto-restart on crash")
+
+
+class WorkerAddRequest(BaseModel):
+    """Simplified request model for adding workers via the UI."""
+
+    role: str = Field(..., description="Worker role (dev, qa, reviewer, tech_lead, manager)")
+    count: int = Field(default=1, ge=1, le=5, description="Number of workers to spawn")
 
 
 class WorkerStopRequest(BaseModel):
@@ -733,6 +741,76 @@ async def spawn_worker(request: WorkerSpawnRequest) -> dict[str, Any]:
         return result
     except Exception as e:
         _handle_rpc_error(e, f"spawn_worker({request.role})")
+        raise
+
+
+class WorkerAddResponse(BaseModel):
+    """Response model for the simplified add workers endpoint."""
+
+    success: bool = Field(..., description="Whether all workers were spawned successfully")
+    spawned: int = Field(..., description="Number of workers successfully spawned")
+    workers: list[WorkerResponse] = Field(
+        default_factory=list, description="List of spawned workers"
+    )
+    errors: list[str] = Field(default_factory=list, description="Error messages for failed spawns")
+
+
+@router.post("/add", response_model=WorkerAddResponse)
+async def add_workers(request: WorkerAddRequest) -> dict[str, Any]:
+    """Add workers with a simplified API for the UI.
+
+    This endpoint uses the current project path automatically and allows
+    spawning multiple workers of the same role at once.
+
+    Args:
+        request: WorkerAddRequest with role and count
+
+    Returns:
+        WorkerAddResponse with success status and spawned workers.
+    """
+    project_path = str(PROJECT_ROOT)
+    workers_spawned: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    try:
+        client = _get_rpc_client()
+
+        for i in range(request.count):
+            try:
+                result: dict[str, Any] = await asyncio.to_thread(
+                    client.call,
+                    "worker.spawn",
+                    {
+                        "role": request.role,
+                        "project_path": project_path,
+                        "auto_restart": True,
+                    },
+                    60.0,
+                )
+                # Transform worker_id to id for response model compatibility
+                if "worker_id" in result and "id" not in result:
+                    result["id"] = result.pop("worker_id")
+                workers_spawned.append(result)
+                logger.info(
+                    "Added worker %d/%d: %s (role=%s)",
+                    i + 1,
+                    request.count,
+                    result.get("id"),
+                    request.role,
+                )
+            except Exception as e:
+                error_msg = f"Failed to spawn worker {i + 1}: {str(e)}"
+                errors.append(error_msg)
+                logger.error(error_msg)
+
+        return {
+            "success": len(errors) == 0,
+            "spawned": len(workers_spawned),
+            "workers": workers_spawned,
+            "errors": errors,
+        }
+    except Exception as e:
+        _handle_rpc_error(e, f"add_workers({request.role}, count={request.count})")
         raise
 
 
