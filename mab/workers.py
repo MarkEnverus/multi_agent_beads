@@ -983,18 +983,23 @@ class WorkerManager:
             recent_log = log_files[0]
             content = recent_log.read_text(encoding="utf-8", errors="replace")
 
-            # Only check the last 20 lines for clean exit indicators
+            # Check the last 50 lines for clean exit indicators
             # This prevents false positives when a worker logged a pattern earlier
-            # but then crashed later in the session
+            # but then crashed later in the session, while still catching clean exits
+            # that might have some trailing output
             lines = content.splitlines()
-            last_lines = lines[-20:] if len(lines) > 20 else lines
+            last_lines = lines[-50:] if len(lines) > 50 else lines
             last_content = "\n".join(last_lines)
 
             # Look for clean exit indicators
+            # IMPORTANT: Do NOT include "SESSION ENDED" - the spawner writes that
+            # marker in its finally block regardless of whether the exit was clean
+            # or a crash. Only patterns logged by the worker itself are reliable.
             clean_exit_patterns = [
-                "SESSION_END",
-                "SESSION ENDED",
-                "NO_WORK",
+                "SESSION_END:",  # Worker-logged session end (with colon to be specific)
+                "SESSION_END",  # Worker-logged session end
+                "NO_WORK: poll 10/10",  # Completed all idle polls
+                "max idle polls reached",  # Clean exit after polling
                 "Exiting cleanly",
                 "no work available",
             ]
