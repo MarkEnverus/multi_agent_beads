@@ -1640,8 +1640,7 @@ def _parse_duration(duration_str: str) -> int:
     match = re.match(r"^(\d+)([smhdw])$", duration_str.lower())
     if not match:
         raise ValueError(
-            f"Invalid duration format: {duration_str}. "
-            "Use format like '7d', '24h', '2w', '30m'."
+            f"Invalid duration format: {duration_str}. Use format like '7d', '24h', '2w', '30m'."
         )
 
     value = int(match.group(1))
@@ -1780,9 +1779,7 @@ def cleanup(
 
     # Collect workers to remove
     workers_to_remove: list[tuple[Path, str, str, str, str | None]] = []
-    cutoff_time = (
-        datetime.now() - timedelta(seconds=max_age_seconds) if max_age_seconds else None
-    )
+    cutoff_time = datetime.now() - timedelta(seconds=max_age_seconds) if max_age_seconds else None
 
     for db_path in databases_to_check:
         try:

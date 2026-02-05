@@ -1209,7 +1209,8 @@ class CleanupRequest(BaseModel):
         description="Remove workers older than specified seconds (e.g., 604800 for 7 days)",
     )
     status: str | None = Field(
-        default=None, description="Remove workers with specific status only (stopped/crashed/failed)"
+        default=None,
+        description="Remove workers with specific status only (stopped/crashed/failed)",
     )
 
 
