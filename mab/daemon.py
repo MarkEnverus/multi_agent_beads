@@ -20,6 +20,7 @@ import fcntl
 import json
 import logging
 import os
+import shutil
 import signal
 import sys
 import time
@@ -31,7 +32,7 @@ from typing import Any
 
 from mab.filesystem import warn_if_network_filesystem
 from mab.rpc import RPCError, RPCErrorCode, RPCServer
-from mab.spawner import cleanup_stale_worktrees, get_git_root
+from mab.spawner import ROLE_TO_LABEL, cleanup_stale_worktrees, get_git_root
 from mab.workers import (
     HealthConfig,
     WorkerDatabase,
@@ -176,6 +177,13 @@ class Daemon:
         # Active worker tracking by role to prevent duplicate spawns
         # Structure: {project_path: {role: set of worker_ids}}
         self._active_workers_by_role: dict[str, dict[str, set[str]]] = {}
+
+        # Dispatch loop state
+        self._dispatch_task: asyncio.Task[None] | None = None
+        self._dispatch_enabled: bool = False
+        self._dispatch_roles: list[str] = []
+        self._dispatch_project_path: str | None = None
+        self._dispatch_interval_seconds: float = 5.0
 
         # Set up logging
         self._setup_logging()
@@ -487,11 +495,25 @@ class Daemon:
         self._health_check_task = asyncio.create_task(self._health_check_loop())
         self.logger.info("Health check loop started")
 
+        # Start dispatch loop if pre-configured
+        if self._dispatch_enabled and self._dispatch_project_path:
+            self._dispatch_task = asyncio.create_task(self._worker_dispatch_loop())
+            self.logger.info("Dispatch loop started")
+
         try:
             # Main loop - check shutdown flag periodically
             while not self._shutting_down:
                 await asyncio.sleep(1)
         finally:
+            # Cancel dispatch task
+            if self._dispatch_task is not None:
+                self._dispatch_task.cancel()
+                try:
+                    await self._dispatch_task
+                except asyncio.CancelledError:
+                    pass
+                self.logger.info("Dispatch loop stopped")
+
             # Cancel health check task
             if self._health_check_task is not None:
                 self._health_check_task.cancel()
@@ -775,6 +797,175 @@ class Daemon:
                     f"Unregistered active worker {worker_id} for role {role} in {project_path}"
                 )
 
+    async def _worker_dispatch_loop(self) -> None:
+        """Poll for available beads and dispatch single-task workers.
+
+        For each configured role, checks `bd ready -l <label> --json` for
+        available work. If work is found and no worker is currently active
+        for that role, spawns a single-task worker with the bead_id.
+
+        This is the main integration point connecting the beads task queue
+        to the worker spawning system.
+        """
+        project_path = self._dispatch_project_path
+        if not project_path:
+            self.logger.error("Dispatch loop has no project_path configured")
+            return
+
+        self.logger.info(
+            f"Dispatch loop started: project={project_path}, "
+            f"roles={self._dispatch_roles}, interval={self._dispatch_interval_seconds}s"
+        )
+
+        while not self._shutting_down and self._dispatch_enabled:
+            try:
+                for role in self._dispatch_roles:
+                    if self._shutting_down or not self._dispatch_enabled:
+                        break
+                    await self._dispatch_for_role(role, project_path)
+
+                await asyncio.sleep(self._dispatch_interval_seconds)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"Dispatch loop error: {e}")
+                await asyncio.sleep(self._dispatch_interval_seconds)
+
+        self.logger.info("Dispatch loop stopped")
+
+    async def _dispatch_for_role(self, role: str, project_path: str) -> None:
+        """Check for available work and dispatch a worker for a single role.
+
+        Args:
+            role: Worker role (e.g., 'dev', 'qa', 'tech_lead').
+            project_path: Path to the project directory.
+        """
+        # Skip if there's already an active worker for this role
+        if self._has_active_worker(role, project_path):
+            return
+
+        # Check for available beads
+        beads = await self._run_bd_ready(role, project_path)
+        if not beads:
+            return
+
+        # Pick the first bead (bd ready sorts by priority)
+        bead = beads[0]
+        bead_id = bead["id"]
+        bead_title = bead.get("title", "")
+
+        self.logger.info(
+            f"Dispatch: found work for {role}: {bead_id} - {bead_title}"
+        )
+
+        # Spawn a single-task worker for this bead
+        try:
+            manager = self._get_project_manager(project_path)
+            worker = await manager.spawn(
+                role=role,
+                project_path=project_path,
+                auto_restart=False,  # Single-task workers don't restart
+                bead_id=bead_id,
+            )
+
+            self._register_active_worker(worker.id, role, project_path)
+            self.logger.info(
+                f"Dispatch: spawned {role} worker {worker.id} "
+                f"(PID {worker.pid}) for bead {bead_id}"
+            )
+
+        except WorkerSpawnError as e:
+            self.logger.error(f"Dispatch: failed to spawn {role} worker for {bead_id}: {e}")
+
+    async def _run_bd_ready(self, role: str, project_path: str) -> list[dict[str, Any]]:
+        """Run `bd ready --json` and return available beads for a role.
+
+        Args:
+            role: Worker role to filter by label.
+            project_path: Project path for the beads database.
+
+        Returns:
+            List of bead dicts from JSON output, or empty list on error.
+        """
+        bd_path = shutil.which("bd")
+        if not bd_path:
+            self.logger.error("Dispatch: 'bd' command not found on PATH")
+            return []
+
+        db_path = Path(project_path) / ".beads" / "beads.db"
+        if not db_path.exists():
+            self.logger.warning(f"Dispatch: beads database not found at {db_path}")
+            return []
+
+        cmd = [bd_path, "--db", str(db_path), "ready", "--json"]
+
+        label = ROLE_TO_LABEL.get(role)
+        if label:
+            cmd.extend(["-l", label])
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+
+            if proc.returncode != 0:
+                err_msg = stderr.decode().strip() if stderr else "unknown error"
+                self.logger.warning(f"Dispatch: bd ready failed for {role}: {err_msg}")
+                return []
+
+            output = stdout.decode().strip()
+            if not output:
+                return []
+
+            beads = json.loads(output)
+            return beads if isinstance(beads, list) else []
+
+        except asyncio.TimeoutError:
+            self.logger.warning(f"Dispatch: bd ready timed out for {role}")
+            return []
+        except json.JSONDecodeError as e:
+            self.logger.warning(f"Dispatch: bd ready returned invalid JSON for {role}: {e}")
+            return []
+        except Exception as e:
+            self.logger.warning(f"Dispatch: bd ready error for {role}: {e}")
+            return []
+
+    def start_dispatch(
+        self,
+        project_path: str,
+        roles: list[str] | None = None,
+        interval_seconds: float = 5.0,
+    ) -> None:
+        """Configure and enable the worker dispatch loop.
+
+        Args:
+            project_path: Path to the project with a .beads/ directory.
+            roles: Roles to dispatch for. Defaults to all roles in ROLE_TO_LABEL.
+            interval_seconds: Seconds between polling cycles.
+        """
+        self._dispatch_project_path = project_path
+        self._dispatch_roles = roles or list(ROLE_TO_LABEL.keys())
+        self._dispatch_interval_seconds = interval_seconds
+        self._dispatch_enabled = True
+
+        # If event loop is running, start the task immediately
+        if self._event_loop is not None and self._dispatch_task is None:
+            self._dispatch_task = asyncio.ensure_future(
+                self._worker_dispatch_loop()
+            )
+            self.logger.info("Dispatch loop task created")
+
+    def stop_dispatch(self) -> None:
+        """Disable the worker dispatch loop."""
+        self._dispatch_enabled = False
+        if self._dispatch_task is not None and not self._dispatch_task.done():
+            self._dispatch_task.cancel()
+        self.logger.info("Dispatch loop disabled")
+
     def _register_rpc_handlers(self) -> None:
         """Register RPC method handlers."""
         if self._rpc_server is None:
@@ -792,6 +983,11 @@ class Daemon:
 
         # Health monitoring methods
         self._rpc_server.register("health.status", self._handle_health_status)
+
+        # Dispatch control methods
+        self._rpc_server.register("dispatch.start", self._handle_dispatch_start)
+        self._rpc_server.register("dispatch.stop", self._handle_dispatch_stop)
+        self._rpc_server.register("dispatch.status", self._handle_dispatch_status)
 
     async def _handle_status(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle daemon.status RPC request.
@@ -915,14 +1111,20 @@ class Daemon:
             f"db={'global' if use_global_db else 'per-project'}"
         )
 
+        bead_id = params.get("bead_id")
+
         try:
             worker = await manager.spawn(
                 role=role,
                 project_path=project_path,
                 auto_restart=params.get("auto_restart", True),
+                bead_id=bead_id,
             )
 
-            self.logger.info(f"Worker spawned: {worker.id} (PID {worker.pid})")
+            self.logger.info(
+                f"Worker spawned: {worker.id} (PID {worker.pid})"
+                + (f" bead={bead_id}" if bead_id else "")
+            )
 
             # Register worker as active for its role
             self._register_active_worker(worker.id, role, project_path)
@@ -1097,6 +1299,57 @@ class Daemon:
             "total_restarts": total_restarts,
             "workers_at_max_restarts": total_at_max,
             "config": self.health_config.to_dict(),
+        }
+
+    async def _handle_dispatch_start(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle dispatch.start RPC request.
+
+        Starts the worker dispatch loop for a project.
+        """
+        project_path = params.get("project_path")
+        if not project_path:
+            raise RPCError(
+                RPCErrorCode.INVALID_PARAMS,
+                "Missing required parameter: project_path",
+            )
+
+        roles = params.get("roles")
+        interval = params.get("interval_seconds", 5.0)
+
+        self.start_dispatch(
+            project_path=project_path,
+            roles=roles,
+            interval_seconds=interval,
+        )
+
+        return {
+            "success": True,
+            "project_path": project_path,
+            "roles": self._dispatch_roles,
+            "interval_seconds": self._dispatch_interval_seconds,
+        }
+
+    async def _handle_dispatch_stop(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle dispatch.stop RPC request.
+
+        Stops the worker dispatch loop.
+        """
+        self.stop_dispatch()
+        return {"success": True}
+
+    async def _handle_dispatch_status(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle dispatch.status RPC request.
+
+        Returns current dispatch loop status.
+        """
+        return {
+            "enabled": self._dispatch_enabled,
+            "project_path": self._dispatch_project_path,
+            "roles": self._dispatch_roles,
+            "interval_seconds": self._dispatch_interval_seconds,
+            "task_running": (
+                self._dispatch_task is not None and not self._dispatch_task.done()
+            ),
         }
 
     def _cleanup(self) -> None:
