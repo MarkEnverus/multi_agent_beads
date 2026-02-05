@@ -333,6 +333,17 @@
                 <option value="tech_lead">Tech Lead</option>
                 <option value="manager">Manager</option>
             </select>
+            <button
+                id="cleanup-btn"
+                onclick="openCleanupModal()"
+                class="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors flex items-center space-x-1.5"
+                title="Clean up old workers"
+            >
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                <span>Cleanup</span>
+            </button>
         </div>
     </div>
     <div id="workers-list" class="divide-y divide-gray-700">
@@ -439,6 +450,89 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                         </svg>
                         <span>Create Bead</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{# Cleanup Workers Modal #}
+<div id="cleanup-modal" class="fixed inset-0 z-50 hidden">
+    <div class="fixed inset-0 bg-gray-900/80" onclick="closeCleanupModal()"></div>
+    <div class="fixed inset-0 flex items-center justify-center p-4">
+        <div class="relative bg-gray-800 rounded-lg shadow-xl border border-gray-700 w-full max-w-md">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+                <h3 class="text-lg font-semibold text-white">Cleanup Old Workers</h3>
+                <button onclick="closeCleanupModal()"
+                        class="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors">
+                    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <form id="cleanup-form" onsubmit="submitCleanup(event)" class="px-6 py-4 space-y-4">
+                <p class="text-sm text-gray-400">Remove stopped, crashed, or failed workers from the database. Running workers are never removed.</p>
+
+                {# Cleanup options #}
+                <div class="space-y-3">
+                    <label class="flex items-start p-3 bg-gray-700/50 border border-gray-600 rounded-md cursor-pointer hover:bg-gray-700 transition-colors">
+                        <input type="radio" name="cleanup-option" value="all" class="mt-0.5 h-4 w-4 text-primary-600 bg-gray-700 border-gray-600 focus:ring-primary-500">
+                        <div class="ml-3">
+                            <span class="text-white font-medium">All non-running</span>
+                            <p class="text-gray-400 text-sm">Remove all stopped, crashed, and failed workers</p>
+                        </div>
+                    </label>
+                    <label class="flex items-start p-3 bg-gray-700/50 border border-primary-500 rounded-md cursor-pointer hover:bg-gray-700 transition-colors">
+                        <input type="radio" name="cleanup-option" value="older-than" checked class="mt-0.5 h-4 w-4 text-primary-600 bg-gray-700 border-gray-600 focus:ring-primary-500">
+                        <div class="ml-3 w-full">
+                            <span class="text-white font-medium">Older than</span>
+                            <div class="flex items-center space-x-2 mt-1">
+                                <input type="number" id="cleanup-days" value="7" min="1" max="365"
+                                       class="w-20 bg-gray-600 border border-gray-500 text-white rounded px-2 py-1 text-sm">
+                                <span class="text-gray-400 text-sm">days</span>
+                            </div>
+                        </div>
+                    </label>
+                    <label class="flex items-start p-3 bg-gray-700/50 border border-gray-600 rounded-md cursor-pointer hover:bg-gray-700 transition-colors">
+                        <input type="radio" name="cleanup-option" value="status" class="mt-0.5 h-4 w-4 text-primary-600 bg-gray-700 border-gray-600 focus:ring-primary-500">
+                        <div class="ml-3 w-full">
+                            <span class="text-white font-medium">By status</span>
+                            <select id="cleanup-status"
+                                    class="mt-1 w-full bg-gray-600 border border-gray-500 text-white rounded px-2 py-1 text-sm">
+                                <option value="stopped">Stopped</option>
+                                <option value="crashed">Crashed</option>
+                                <option value="failed">Failed</option>
+                            </select>
+                        </div>
+                    </label>
+                </div>
+
+                {# Preview checkbox #}
+                <div class="flex items-center space-x-2">
+                    <input type="checkbox" id="cleanup-preview" checked
+                           class="h-4 w-4 text-primary-600 bg-gray-700 border-gray-600 rounded focus:ring-primary-500">
+                    <label for="cleanup-preview" class="text-sm text-gray-400">Preview first (dry run)</label>
+                </div>
+
+                {# Results area (hidden initially) #}
+                <div id="cleanup-results" class="hidden mt-4 p-3 bg-gray-900 rounded-md">
+                    <p id="cleanup-results-text" class="text-sm text-gray-300"></p>
+                    <div id="cleanup-results-list" class="mt-2 max-h-40 overflow-y-auto text-xs font-mono text-gray-400"></div>
+                </div>
+
+                {# Form actions #}
+                <div class="flex items-center justify-end space-x-3 pt-4 border-t border-gray-700">
+                    <button type="button" onclick="closeCleanupModal()"
+                            class="px-4 py-2 text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded-md transition-colors">
+                        Cancel
+                    </button>
+                    <button type="submit" id="cleanup-submit"
+                            class="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors flex items-center space-x-2">
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        <span>Cleanup</span>
                     </button>
                 </div>
             </form>
@@ -1685,6 +1779,136 @@
         templateRadios.forEach(radio => {
             radio.addEventListener('change', updateTemplateStyles);
         });
+
+        // Add event listeners for cleanup radio buttons
+        const cleanupRadios = document.querySelectorAll('input[name="cleanup-option"]');
+        cleanupRadios.forEach(radio => {
+            radio.addEventListener('change', updateCleanupStyles);
+        });
     });
+
+    // Cleanup Workers functionality
+    function openCleanupModal() {
+        // Reset form
+        document.getElementById('cleanup-form').reset();
+        document.getElementById('cleanup-preview').checked = true;
+        document.getElementById('cleanup-days').value = '7';
+        document.getElementById('cleanup-results').classList.add('hidden');
+        // Select "older than" by default
+        document.querySelector('input[name="cleanup-option"][value="older-than"]').checked = true;
+        updateCleanupStyles();
+        // Show modal
+        document.getElementById('cleanup-modal').classList.remove('hidden');
+    }
+
+    function closeCleanupModal() {
+        document.getElementById('cleanup-modal').classList.add('hidden');
+    }
+
+    function updateCleanupStyles() {
+        const radios = document.querySelectorAll('input[name="cleanup-option"]');
+        radios.forEach(radio => {
+            const label = radio.closest('label');
+            if (radio.checked) {
+                label.classList.remove('border-gray-600');
+                label.classList.add('border-primary-500');
+            } else {
+                label.classList.remove('border-primary-500');
+                label.classList.add('border-gray-600');
+            }
+        });
+    }
+
+    async function submitCleanup(event) {
+        event.preventDefault();
+
+        const submitBtn = document.getElementById('cleanup-submit');
+        const resultsDiv = document.getElementById('cleanup-results');
+        const resultsText = document.getElementById('cleanup-results-text');
+        const resultsList = document.getElementById('cleanup-results-list');
+        const isDryRun = document.getElementById('cleanup-preview').checked;
+
+        // Build request body
+        const selectedOption = document.querySelector('input[name="cleanup-option"]:checked').value;
+        const requestBody = {};
+
+        if (selectedOption === 'all') {
+            requestBody.all_non_running = true;
+        } else if (selectedOption === 'older-than') {
+            const days = parseInt(document.getElementById('cleanup-days').value, 10);
+            requestBody.older_than_seconds = days * 86400; // Convert days to seconds
+        } else if (selectedOption === 'status') {
+            requestBody.status = document.getElementById('cleanup-status').value;
+        }
+
+        // Show loading state
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `
+            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>${isDryRun ? 'Previewing...' : 'Cleaning up...'}</span>
+        `;
+
+        try {
+            const response = await fetch(`/api/workers/cleanup?dry_run=${isDryRun}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                // Show results
+                resultsDiv.classList.remove('hidden');
+
+                if (data.workers_found.length === 0) {
+                    resultsText.textContent = 'No workers found matching criteria.';
+                    resultsList.innerHTML = '';
+                } else if (isDryRun) {
+                    resultsText.textContent = `Found ${data.workers_found.length} worker(s) to remove:`;
+                    resultsList.innerHTML = data.workers_found.map(w =>
+                        `<div class="py-1">${w.id} (${w.role}) [${w.status}]</div>`
+                    ).join('');
+
+                    // Update button to show "Confirm Cleanup"
+                    document.getElementById('cleanup-preview').checked = false;
+                    submitBtn.innerHTML = `
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span>Confirm Cleanup</span>
+                    `;
+                } else {
+                    resultsText.textContent = `Removed ${data.removed_count} worker(s).`;
+                    resultsList.innerHTML = '';
+                    showToast(`Removed ${data.removed_count} worker(s)`, 'success');
+
+                    // Close modal after a short delay
+                    setTimeout(() => {
+                        closeCleanupModal();
+                        refreshWorkers();
+                    }, 1500);
+                }
+            } else {
+                showToast(data.detail || 'Cleanup failed', 'error');
+            }
+        } catch (error) {
+            console.error('Cleanup failed:', error);
+            showToast('Cleanup failed: Network error', 'error');
+        } finally {
+            submitBtn.disabled = false;
+            if (document.getElementById('cleanup-preview').checked) {
+                submitBtn.innerHTML = `
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    <span>Preview</span>
+                `;
+            }
+        }
+    }
 </script>
 {% endblock %}

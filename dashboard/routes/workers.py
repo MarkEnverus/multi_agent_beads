@@ -1198,6 +1198,32 @@ class WorkerLogEntry(BaseModel):
     message: str | None = Field(None, description="Event message/details")
 
 
+class CleanupRequest(BaseModel):
+    """Request model for cleaning up old workers."""
+
+    all_non_running: bool = Field(
+        default=False, description="Remove all non-running workers (stopped, crashed, failed)"
+    )
+    older_than_seconds: int | None = Field(
+        default=None,
+        description="Remove workers older than specified seconds (e.g., 604800 for 7 days)",
+    )
+    status: str | None = Field(
+        default=None, description="Remove workers with specific status only (stopped/crashed/failed)"
+    )
+
+
+class CleanupResponse(BaseModel):
+    """Response model for cleanup operation."""
+
+    success: bool = Field(..., description="Whether the operation succeeded")
+    removed_count: int = Field(..., description="Number of workers removed")
+    dry_run: bool = Field(default=False, description="Whether this was a dry run")
+    workers_found: list[dict[str, Any]] = Field(
+        default_factory=list, description="Workers that were/would be removed"
+    )
+
+
 @router.get("/{worker_id}/logs/recent", response_model=list[WorkerLogEntry])
 async def get_worker_recent_logs(
     worker_id: str,
@@ -1296,3 +1322,179 @@ async def get_worker_recent_logs(
             status_code=500,
             detail=f"Failed to read log file: {e}",
         )
+
+
+@router.post("/cleanup", response_model=CleanupResponse)
+async def cleanup_workers(
+    request: CleanupRequest,
+    dry_run: bool = Query(False, description="Preview what would be removed without deleting"),
+) -> dict[str, Any]:
+    """Clean up old workers from the database.
+
+    Removes stopped, crashed, or failed workers. Running workers are never removed.
+
+    Args:
+        request: CleanupRequest with filtering options
+        dry_run: If True, only preview what would be removed
+
+    Returns:
+        CleanupResponse with results of the operation.
+    """
+    from datetime import datetime, timedelta
+    from pathlib import Path
+
+    from mab.workers import WorkerDatabase, WorkerStatus
+
+    # Validate options
+    if not request.all_non_running and not request.older_than_seconds and not request.status:
+        raise HTTPException(
+            status_code=400,
+            detail="Must specify all_non_running, older_than_seconds, or status",
+        )
+
+    # Determine which statuses to clean up
+    if request.status:
+        try:
+            target_statuses = [WorkerStatus(request.status)]
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status: {request.status}. Use stopped, crashed, or failed.",
+            )
+    elif request.all_non_running:
+        target_statuses = [
+            WorkerStatus.STOPPED,
+            WorkerStatus.CRASHED,
+            WorkerStatus.FAILED,
+        ]
+    else:
+        # If only older_than_seconds specified, default to all non-running statuses
+        target_statuses = [
+            WorkerStatus.STOPPED,
+            WorkerStatus.CRASHED,
+            WorkerStatus.FAILED,
+        ]
+
+    # Calculate cutoff time
+    cutoff_time = (
+        datetime.now() - timedelta(seconds=request.older_than_seconds)
+        if request.older_than_seconds
+        else None
+    )
+
+    # Find database locations
+    databases_to_check: list[Path] = []
+
+    # Check project-specific database
+    project_db = PROJECT_ROOT / ".mab" / "workers.db"
+    if project_db.exists():
+        databases_to_check.append(project_db)
+
+    # Check global database
+    global_db = MAB_HOME / "workers.db"
+    if global_db.exists():
+        databases_to_check.append(global_db)
+
+    if not databases_to_check:
+        return {
+            "success": True,
+            "removed_count": 0,
+            "dry_run": dry_run,
+            "workers_found": [],
+        }
+
+    # Collect workers to remove
+    workers_to_remove: list[tuple[Path, str, dict[str, Any]]] = []
+
+    def collect_workers() -> None:
+        for db_path in databases_to_check:
+            try:
+                db = WorkerDatabase(db_path)
+                for target_status in target_statuses:
+                    workers = db.list_workers(status=target_status)
+                    for worker in workers:
+                        # Skip running workers (should never happen but be safe)
+                        if worker.status == WorkerStatus.RUNNING:
+                            continue
+
+                        # Check age if older_than_seconds specified
+                        if cutoff_time:
+                            timestamp_str = worker.stopped_at or worker.created_at
+                            try:
+                                worker_time = datetime.fromisoformat(
+                                    timestamp_str.replace("Z", "+00:00")
+                                )
+                                if worker_time.tzinfo:
+                                    worker_time = worker_time.replace(tzinfo=None)
+                                if worker_time > cutoff_time:
+                                    continue  # Worker is too recent
+                            except (ValueError, TypeError):
+                                continue
+
+                        workers_to_remove.append(
+                            (
+                                db_path,
+                                worker.id,
+                                {
+                                    "id": worker.id,
+                                    "role": worker.role,
+                                    "status": worker.status.value,
+                                    "stopped_at": worker.stopped_at,
+                                    "created_at": worker.created_at,
+                                },
+                            )
+                        )
+            except Exception as e:
+                logger.warning("Could not read database %s: %s", db_path, e)
+
+    # Run collection in thread pool
+    await asyncio.to_thread(collect_workers)
+
+    if not workers_to_remove:
+        return {
+            "success": True,
+            "removed_count": 0,
+            "dry_run": dry_run,
+            "workers_found": [],
+        }
+
+    # Extract worker info for response
+    workers_found = [info for _, _, info in workers_to_remove]
+
+    if dry_run:
+        return {
+            "success": True,
+            "removed_count": 0,
+            "dry_run": True,
+            "workers_found": workers_found,
+        }
+
+    # Actually remove workers
+    removed_count = 0
+    errors = 0
+
+    def do_cleanup() -> tuple[int, int]:
+        nonlocal removed_count, errors
+        for db_path, worker_id, _ in workers_to_remove:
+            try:
+                db = WorkerDatabase(db_path)
+                if db.delete_worker(worker_id):
+                    removed_count += 1
+                else:
+                    errors += 1
+            except Exception as e:
+                logger.error("Error removing %s: %s", worker_id, e)
+                errors += 1
+        return removed_count, errors
+
+    removed_count, errors = await asyncio.to_thread(do_cleanup)
+
+    if errors > 0:
+        logger.warning("Cleanup completed with %d errors", errors)
+
+    return {
+        "success": errors == 0,
+        "removed_count": removed_count,
+        "dry_run": False,
+        "workers_found": workers_found,
+    }
