@@ -28,6 +28,7 @@ from mab.rpc import get_default_client
 from mab.templates import get_template
 from mab.towns import (
     PortConflictError,
+    Town,
     TownError,
     TownExistsError,
     TownManager,
@@ -587,6 +588,66 @@ def restart(ctx: click.Context, daemon: bool) -> None:
 VALID_ROLES = ("dev", "qa", "tech-lead", "manager", "reviewer")
 
 
+def _normalize_role_name(role: str) -> str:
+    """Normalize role name for comparison with templates.
+
+    CLI uses hyphen (tech-lead) but templates use underscore (tech_lead).
+    """
+    return role.replace("-", "_")
+
+
+def _get_town_for_project(project_path: str) -> Town | None:
+    """Find the town associated with a project path.
+
+    Args:
+        project_path: Path to the project directory.
+
+    Returns:
+        Town if found, None otherwise.
+    """
+    manager = TownManager(MAB_HOME)
+
+    # First try to find by exact project path
+    towns = manager.list_towns(project_path=project_path)
+    if towns:
+        return towns[0]
+
+    # Fallback: try to find by directory name
+    project_name = Path(project_path).name
+    try:
+        return manager.get(project_name)
+    except TownNotFoundError:
+        return None
+
+
+def _validate_role_for_town(role: str, town: Town) -> tuple[bool, str]:
+    """Validate that a role is allowed by the town's template.
+
+    Args:
+        role: The role to validate (e.g., "dev", "tech-lead").
+        town: The town to validate against.
+
+    Returns:
+        Tuple of (is_valid, error_message). If valid, error_message is empty.
+    """
+    normalized_role = _normalize_role_name(role)
+    effective_roles = town.get_effective_roles()
+
+    if normalized_role in effective_roles:
+        return True, ""
+
+    # Build helpful error message
+    allowed_roles = list(effective_roles.keys())
+    # Convert back to CLI format for display (underscore to hyphen)
+    allowed_roles_display = [r.replace("_", "-") for r in allowed_roles]
+
+    return False, (
+        f"Role '{role}' is not allowed for town '{town.name}' "
+        f"(template: {town.template}). "
+        f"Allowed roles: {', '.join(allowed_roles_display)}"
+    )
+
+
 @cli.command()
 @click.option(
     "--role",
@@ -622,6 +683,14 @@ def spawn(ctx: click.Context, role: str, count: int, project: str | None) -> Non
       mab spawn --role qa -c 2      # Spawn 2 QA workers
     """
     project_path = project or str(ctx.obj["town_path"])
+
+    # Validate role against town template
+    town = _get_town_for_project(project_path)
+    if town is not None:
+        is_valid, error_msg = _validate_role_for_town(role, town)
+        if not is_valid:
+            click.secho(f"Error: {error_msg}", fg="red", err=True)
+            raise SystemExit(1)
 
     try:
         client = get_default_client()
@@ -684,6 +753,14 @@ def worker_add(ctx: click.Context, role: str, count: int, project: str | None) -
       mab worker add dev -c 3     # Add 3 dev workers for faster processing
     """
     project_path = project or str(ctx.obj["town_path"])
+
+    # Validate role against town template
+    town = _get_town_for_project(project_path)
+    if town is not None:
+        is_valid, error_msg = _validate_role_for_town(role, town)
+        if not is_valid:
+            click.secho(f"Error: {error_msg}", fg="red", err=True)
+            raise SystemExit(1)
 
     try:
         client = get_default_client()

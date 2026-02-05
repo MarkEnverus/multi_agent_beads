@@ -4,7 +4,13 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-from mab.cli import cli
+from mab.cli import (
+    _get_town_for_project,
+    _normalize_role_name,
+    _validate_role_for_town,
+    cli,
+)
+from mab.towns import Town
 from mab.version import __version__
 
 
@@ -357,3 +363,266 @@ class TestMabLogsCommand:
             result = self.runner.invoke(cli, ["logs"])
             # Should either show empty or daemon not running message
             assert result.exit_code == 0 or result.exit_code == 1
+
+
+class TestRoleNormalization:
+    """Tests for role name normalization."""
+
+    def test_normalize_role_name_with_hyphen(self) -> None:
+        """Test normalizing role names with hyphens."""
+        assert _normalize_role_name("tech-lead") == "tech_lead"
+
+    def test_normalize_role_name_without_hyphen(self) -> None:
+        """Test normalizing role names without hyphens."""
+        assert _normalize_role_name("dev") == "dev"
+        assert _normalize_role_name("qa") == "qa"
+        assert _normalize_role_name("manager") == "manager"
+        assert _normalize_role_name("reviewer") == "reviewer"
+
+    def test_normalize_multiple_hyphens(self) -> None:
+        """Test normalizing role names with multiple hyphens."""
+        assert _normalize_role_name("tech-lead-senior") == "tech_lead_senior"
+
+
+class TestRoleValidation:
+    """Tests for role validation against town templates."""
+
+    def test_validate_dev_role_pair_template(self) -> None:
+        """Test dev role is valid for pair template."""
+        town = Town(
+            name="test-town",
+            port=8000,
+            template="pair",
+            worker_counts={"dev": 1, "qa": 1},
+        )
+        is_valid, error_msg = _validate_role_for_town("dev", town)
+        assert is_valid is True
+        assert error_msg == ""
+
+    def test_validate_qa_role_pair_template(self) -> None:
+        """Test qa role is valid for pair template."""
+        town = Town(
+            name="test-town",
+            port=8000,
+            template="pair",
+            worker_counts={"dev": 1, "qa": 1},
+        )
+        is_valid, error_msg = _validate_role_for_town("qa", town)
+        assert is_valid is True
+        assert error_msg == ""
+
+    def test_validate_manager_role_pair_template_fails(self) -> None:
+        """Test manager role is NOT valid for pair template."""
+        town = Town(
+            name="test-town",
+            port=8000,
+            template="pair",
+            worker_counts={"dev": 1, "qa": 1},
+        )
+        is_valid, error_msg = _validate_role_for_town("manager", town)
+        assert is_valid is False
+        assert "manager" in error_msg
+        assert "pair" in error_msg
+        assert "dev" in error_msg
+        assert "qa" in error_msg
+
+    def test_validate_tech_lead_role_pair_template_fails(self) -> None:
+        """Test tech-lead role is NOT valid for pair template."""
+        town = Town(
+            name="test-town",
+            port=8000,
+            template="pair",
+            worker_counts={"dev": 1, "qa": 1},
+        )
+        is_valid, error_msg = _validate_role_for_town("tech-lead", town)
+        assert is_valid is False
+        assert "tech-lead" in error_msg
+        assert "pair" in error_msg
+
+    def test_validate_reviewer_role_pair_template_fails(self) -> None:
+        """Test reviewer role is NOT valid for pair template."""
+        town = Town(
+            name="test-town",
+            port=8000,
+            template="pair",
+            worker_counts={"dev": 1, "qa": 1},
+        )
+        is_valid, error_msg = _validate_role_for_town("reviewer", town)
+        assert is_valid is False
+        assert "reviewer" in error_msg
+
+    def test_validate_dev_role_solo_template(self) -> None:
+        """Test dev role is valid for solo template."""
+        town = Town(
+            name="test-town",
+            port=8000,
+            template="solo",
+            worker_counts={"dev": 1},
+        )
+        is_valid, error_msg = _validate_role_for_town("dev", town)
+        assert is_valid is True
+        assert error_msg == ""
+
+    def test_validate_qa_role_solo_template_fails(self) -> None:
+        """Test qa role is NOT valid for solo template."""
+        town = Town(
+            name="test-town",
+            port=8000,
+            template="solo",
+            worker_counts={"dev": 1},
+        )
+        is_valid, error_msg = _validate_role_for_town("qa", town)
+        assert is_valid is False
+        assert "qa" in error_msg
+        assert "solo" in error_msg
+
+    def test_validate_all_roles_full_template(self) -> None:
+        """Test all roles are valid for full template."""
+        town = Town(
+            name="test-town",
+            port=8000,
+            template="full",
+            worker_counts={
+                "manager": 1,
+                "tech_lead": 1,
+                "dev": 1,
+                "qa": 1,
+                "reviewer": 1,
+            },
+        )
+        for role in ["dev", "qa", "manager", "reviewer", "tech-lead"]:
+            is_valid, error_msg = _validate_role_for_town(role, town)
+            assert is_valid is True, f"Role {role} should be valid for full template"
+            assert error_msg == ""
+
+    def test_validate_role_uses_effective_roles(self) -> None:
+        """Test validation uses town's get_effective_roles method."""
+        # Town with custom worker_counts (should override template)
+        town = Town(
+            name="test-town",
+            port=8000,
+            template="pair",  # pair template normally has only dev and qa
+            worker_counts={"dev": 2, "reviewer": 1},  # Custom override adds reviewer
+        )
+        # Reviewer should be valid because worker_counts includes it
+        is_valid, error_msg = _validate_role_for_town("reviewer", town)
+        assert is_valid is True
+
+        # QA should NOT be valid because worker_counts doesn't include it
+        is_valid, error_msg = _validate_role_for_town("qa", town)
+        assert is_valid is False
+
+
+class TestGetTownForProject:
+    """Tests for getting town by project path."""
+
+    def test_get_town_for_nonexistent_project_returns_none(self) -> None:
+        """Test getting town for non-existent project returns None."""
+        # Using a path that definitely doesn't have a town
+        result = _get_town_for_project("/nonexistent/path/12345")
+        assert result is None
+
+
+class TestSpawnRoleValidation:
+    """Integration tests for spawn command role validation."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def test_spawn_validates_role_against_town_template(self) -> None:
+        """Test spawn validates role against town template."""
+        # Create a mock town that only allows dev
+        mock_town = Town(
+            name="test-town",
+            port=8000,
+            template="solo",
+            worker_counts={"dev": 1},
+        )
+
+        with patch("mab.cli._get_town_for_project", return_value=mock_town):
+            # Spawning manager (not in solo template) should fail
+            result = self.runner.invoke(cli, ["spawn", "--role", "manager"])
+            assert result.exit_code == 1
+            assert "manager" in result.output.lower()
+            assert "solo" in result.output.lower()
+
+    def test_spawn_allows_valid_role(self) -> None:
+        """Test spawn allows valid role for town template."""
+        mock_town = Town(
+            name="test-town",
+            port=8000,
+            template="pair",
+            worker_counts={"dev": 1, "qa": 1},
+        )
+
+        with patch("mab.cli._get_town_for_project", return_value=mock_town):
+            with patch("mab.cli.get_default_client") as mock_client:
+                mock_client.return_value.call.return_value = {
+                    "worker_id": "test-123",
+                    "pid": 12345,
+                }
+                result = self.runner.invoke(cli, ["spawn", "--role", "dev"])
+                assert result.exit_code == 0
+                assert "Spawned dev worker" in result.output
+
+    def test_spawn_works_without_town(self) -> None:
+        """Test spawn works when no town is associated with project."""
+        # When no town exists, validation is skipped
+        with patch("mab.cli._get_town_for_project", return_value=None):
+            with patch("mab.cli.get_default_client") as mock_client:
+                mock_client.return_value.call.return_value = {
+                    "worker_id": "test-123",
+                    "pid": 12345,
+                }
+                result = self.runner.invoke(cli, ["spawn", "--role", "manager"])
+                assert result.exit_code == 0
+
+
+class TestWorkerAddRoleValidation:
+    """Integration tests for worker add command role validation."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def test_worker_add_validates_role_against_town_template(self) -> None:
+        """Test worker add validates role against town template."""
+        mock_town = Town(
+            name="test-town",
+            port=8000,
+            template="solo",
+            worker_counts={"dev": 1},
+        )
+
+        with patch("mab.cli._get_town_for_project", return_value=mock_town):
+            # Adding qa (not in solo template) should fail
+            result = self.runner.invoke(cli, ["worker", "add", "qa"])
+            assert result.exit_code == 1
+            assert "qa" in result.output.lower()
+            assert "solo" in result.output.lower()
+
+    def test_worker_add_allows_valid_role(self) -> None:
+        """Test worker add allows valid role for town template."""
+        mock_town = Town(
+            name="test-town",
+            port=8000,
+            template="full",
+            worker_counts={
+                "manager": 1,
+                "tech_lead": 1,
+                "dev": 1,
+                "qa": 1,
+                "reviewer": 1,
+            },
+        )
+
+        with patch("mab.cli._get_town_for_project", return_value=mock_town):
+            with patch("mab.cli.get_default_client") as mock_client:
+                mock_client.return_value.call.return_value = {
+                    "worker_id": "test-123",
+                    "pid": 12345,
+                }
+                result = self.runner.invoke(cli, ["worker", "add", "manager"])
+                assert result.exit_code == 0
+                assert "Added manager worker" in result.output
