@@ -391,6 +391,13 @@
                 showToast(`Town '${name}' created on port ${data.port}`, 'success');
                 document.getElementById('create-town-form').reset();
                 refreshTowns();
+                // Also refresh header town switcher (defined in base.html)
+                if (typeof loadTowns === 'function') {
+                    loadTowns();
+                }
+                if (typeof loadCurrentTownInfo === 'function') {
+                    loadCurrentTownInfo();
+                }
             } else {
                 showToast(data.detail || 'Failed to create town', 'error');
             }
@@ -415,6 +422,8 @@
             if (data.success) {
                 showToast(`Town '${townName}' started`, 'success');
                 refreshTowns();
+                // Refresh header town switcher
+                if (typeof loadTowns === 'function') loadTowns();
             } else {
                 showToast(data.message || 'Failed to start town', 'warning');
             }
@@ -438,6 +447,8 @@
             if (data.success) {
                 showToast(`Town '${townName}' stopped`, 'success');
                 refreshTowns();
+                // Refresh header town switcher
+                if (typeof loadTowns === 'function') loadTowns();
             } else {
                 showToast(data.message || 'Failed to stop town', 'warning');
             }
@@ -461,6 +472,9 @@
             if (data.success) {
                 showToast(`Town '${townName}' deleted`, 'success');
                 refreshTowns();
+                // Refresh header town switcher and current town info
+                if (typeof loadTowns === 'function') loadTowns();
+                if (typeof loadCurrentTownInfo === 'function') loadCurrentTownInfo();
             } else {
                 showToast(data.detail || 'Failed to delete town', 'error');
             }
@@ -513,6 +527,9 @@
                 showToast(`Town '${townName}' updated`, 'success');
                 closeEditModal();
                 refreshTowns();
+                // Refresh header town switcher and current town info
+                if (typeof loadTowns === 'function') loadTowns();
+                if (typeof loadCurrentTownInfo === 'function') loadCurrentTownInfo();
             } else {
                 showToast(data.detail || 'Failed to update town', 'error');
             }

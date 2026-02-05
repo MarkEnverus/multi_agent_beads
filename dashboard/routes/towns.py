@@ -133,6 +133,7 @@ async def get_current_town() -> dict[str, Any]:
     try:
         town = manager.get(TOWN_NAME)
         return {
+            "exists": True,
             "town": town.to_dict(),
             "name": TOWN_NAME,
             "template": town.template,
@@ -141,15 +142,16 @@ async def get_current_town() -> dict[str, Any]:
             "active_workers": active_workers,
         }
     except TownNotFoundError:
-        # Return default info if town not in database
+        # Clearly indicate town doesn't exist - don't fake defaults
         return {
+            "exists": False,
             "town": None,
             "name": TOWN_NAME,
-            "template": "pair",
-            "workflow": ["dev", "qa", "human_merge"],
-            "worker_counts": {"dev": 1, "qa": 1},
+            "template": None,
+            "workflow": None,
+            "worker_counts": {},
             "active_workers": active_workers,
-            "message": f"Town '{TOWN_NAME}' not found in database (using defaults)",
+            "message": f"Town '{TOWN_NAME}' does not exist. Create it with: mab town create {TOWN_NAME}",
         }
 
 
