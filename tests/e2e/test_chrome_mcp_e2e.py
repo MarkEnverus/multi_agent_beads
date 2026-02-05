@@ -684,10 +684,14 @@ class TestWorkerFlow:
             pytest.skip("Daemon not running - skipping spawn verification test")
 
         # Get current workers count
-        workers_before = requests.get(
-            f"{test_runner.base_url}/api/workers",
-            timeout=10,
-        ).json().get("workers", [])
+        workers_before = (
+            requests.get(
+                f"{test_runner.base_url}/api/workers",
+                timeout=10,
+            )
+            .json()
+            .get("workers", [])
+        )
 
         # Spawn a worker
         spawn_resp = requests.post(
@@ -703,14 +707,16 @@ class TestWorkerFlow:
         time.sleep(2)
 
         # Check workers list again
-        workers_after = requests.get(
-            f"{test_runner.base_url}/api/workers",
-            timeout=10,
-        ).json().get("workers", [])
-
-        assert len(workers_after) > len(workers_before), (
-            "Worker count should increase after spawn"
+        workers_after = (
+            requests.get(
+                f"{test_runner.base_url}/api/workers",
+                timeout=10,
+            )
+            .json()
+            .get("workers", [])
         )
+
+        assert len(workers_after) > len(workers_before), "Worker count should increase after spawn"
 
     def test_full_spawn_flow_integration(self, test_runner: ChromeE2ETestRunner) -> None:
         """Integration test for the complete spawn flow.
@@ -768,9 +774,7 @@ class TestWorkerFlow:
 
         workers = workers_resp.json().get("workers", [])
         worker_ids = [w.get("id") for w in workers]
-        assert worker_id in worker_ids, (
-            f"Spawned worker {worker_id} should appear in workers list"
-        )
+        assert worker_id in worker_ids, f"Spawned worker {worker_id} should appear in workers list"
 
         # Step 4: Verify worker appears in agents API
         agents_resp = requests.get(
