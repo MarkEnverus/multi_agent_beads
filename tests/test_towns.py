@@ -225,9 +225,7 @@ class TestTownManager:
         with pytest.raises(ProjectPathConflictError):
             manager.create(name="town2", port=8001, project_path="/path/to/project")
 
-    def test_create_town_project_path_no_conflict_if_none(
-        self, manager: TownManager
-    ) -> None:
+    def test_create_town_project_path_no_conflict_if_none(self, manager: TownManager) -> None:
         """Test creating towns without project path doesn't conflict."""
         # Both towns have None project_path - should not conflict
         manager.create(name="town1", port=8000, project_path=None)
