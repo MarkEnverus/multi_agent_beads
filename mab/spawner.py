@@ -551,6 +551,7 @@ class Spawner(ABC):
         project_path: str,
         worker_id: str,
         env_vars: dict[str, str] | None = None,
+        bead_id: str | None = None,
     ) -> ProcessInfo:
         """Spawn a new worker process.
 
@@ -559,6 +560,7 @@ class Spawner(ABC):
             project_path: Path to the project directory.
             worker_id: Unique identifier for this worker.
             env_vars: Additional environment variables.
+            bead_id: Optional specific bead ID for this worker to work on.
 
         Returns:
             ProcessInfo with spawned process details.
@@ -1413,6 +1415,7 @@ class TmuxSpawner(Spawner):
         project_path: str,
         worker_id: str,
         env_vars: dict[str, str] | None = None,
+        bead_id: str | None = None,
     ) -> ProcessInfo:
         """Spawn a worker in a tmux session."""
         project = Path(project_path).resolve()
