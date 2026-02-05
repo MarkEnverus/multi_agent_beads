@@ -61,15 +61,11 @@ class TestBuildWorkerPrompt:
         assert "SESSION_START" in result
 
     def test_max_idle_polls_configurable(self, spawner: SubprocessSpawner) -> None:
-        result = spawner._build_worker_prompt(
-            "dev", "", "worker-1", max_idle_polls=20
-        )
+        result = spawner._build_worker_prompt("dev", "", "worker-1", max_idle_polls=20)
         assert "20" in result
 
     def test_poll_interval_configurable(self, spawner: SubprocessSpawner) -> None:
-        result = spawner._build_worker_prompt(
-            "dev", "", "worker-1", poll_interval_seconds=60
-        )
+        result = spawner._build_worker_prompt("dev", "", "worker-1", poll_interval_seconds=60)
         assert "sleep 60" in result
 
 
@@ -89,84 +85,60 @@ class TestBuildSingleTaskPrompt:
         assert "worker-abc" in result
 
     def test_contains_bead_id(self, spawner: SubprocessSpawner) -> None:
-        result = spawner._build_single_task_prompt(
-            "dev", "", "worker-1", "multi_agent_beads-xyz99"
-        )
+        result = spawner._build_single_task_prompt("dev", "", "worker-1", "multi_agent_beads-xyz99")
         assert "multi_agent_beads-xyz99" in result
 
     def test_contains_claim_command(self, spawner: SubprocessSpawner) -> None:
-        result = spawner._build_single_task_prompt(
-            "dev", "", "worker-1", "beads-abc12"
-        )
+        result = spawner._build_single_task_prompt("dev", "", "worker-1", "beads-abc12")
         assert "bd update beads-abc12 --status=in_progress" in result
 
     def test_contains_show_command(self, spawner: SubprocessSpawner) -> None:
-        result = spawner._build_single_task_prompt(
-            "dev", "", "worker-1", "beads-abc12"
-        )
+        result = spawner._build_single_task_prompt("dev", "", "worker-1", "beads-abc12")
         assert "bd show beads-abc12" in result
 
     def test_contains_close_command(self, spawner: SubprocessSpawner) -> None:
-        result = spawner._build_single_task_prompt(
-            "dev", "", "worker-1", "beads-abc12"
-        )
+        result = spawner._build_single_task_prompt("dev", "", "worker-1", "beads-abc12")
         assert "bd close beads-abc12" in result
 
     def test_no_polling_loop(self, spawner: SubprocessSpawner) -> None:
-        result = spawner._build_single_task_prompt(
-            "dev", "", "worker-1", "beads-abc12"
-        )
+        result = spawner._build_single_task_prompt("dev", "", "worker-1", "beads-abc12")
         assert "CONTINUOUS POLLING" not in result
         assert "MAIN WORK LOOP" not in result
         assert "idle_count" not in result
         assert "sleep" not in result
 
     def test_instructs_exit_after_completion(self, spawner: SubprocessSpawner) -> None:
-        result = spawner._build_single_task_prompt(
-            "dev", "", "worker-1", "beads-abc12"
-        )
+        result = spawner._build_single_task_prompt("dev", "", "worker-1", "beads-abc12")
         assert "EXIT IMMEDIATELY" in result
         assert "Do NOT poll" in result
 
     def test_contains_prompt_content(self, spawner: SubprocessSpawner) -> None:
         content = "# Custom role instructions\nDo special things."
-        result = spawner._build_single_task_prompt(
-            "dev", content, "worker-1", "beads-abc12"
-        )
+        result = spawner._build_single_task_prompt("dev", content, "worker-1", "beads-abc12")
         assert content in result
 
     def test_contains_setup_commands(self, spawner: SubprocessSpawner) -> None:
-        result = spawner._build_single_task_prompt(
-            "dev", "", "worker-1", "beads-abc12"
-        )
+        result = spawner._build_single_task_prompt("dev", "", "worker-1", "beads-abc12")
         assert "log()" in result
         assert "BD_ROOT" in result
         assert "WORKER_LOG_FILE" in result
         assert "SESSION_START" in result
 
     def test_contains_sync_command(self, spawner: SubprocessSpawner) -> None:
-        result = spawner._build_single_task_prompt(
-            "dev", "", "worker-1", "beads-abc12"
-        )
+        result = spawner._build_single_task_prompt("dev", "", "worker-1", "beads-abc12")
         assert "bd sync" in result
 
     def test_session_end_references_bead(self, spawner: SubprocessSpawner) -> None:
-        result = spawner._build_single_task_prompt(
-            "dev", "", "worker-1", "beads-abc12"
-        )
-        assert 'SESSION_END: beads-abc12' in result
+        result = spawner._build_single_task_prompt("dev", "", "worker-1", "beads-abc12")
+        assert "SESSION_END: beads-abc12" in result
 
     def test_single_task_label(self, spawner: SubprocessSpawner) -> None:
         """Single task prompt says SINGLE TASK, not CONTINUOUS POLLING."""
-        result = spawner._build_single_task_prompt(
-            "dev", "", "worker-1", "beads-abc12"
-        )
+        result = spawner._build_single_task_prompt("dev", "", "worker-1", "beads-abc12")
         assert "SINGLE TASK" in result
 
     def test_assigned_bead_in_header(self, spawner: SubprocessSpawner) -> None:
-        result = spawner._build_single_task_prompt(
-            "dev", "", "worker-1", "beads-abc12"
-        )
+        result = spawner._build_single_task_prompt("dev", "", "worker-1", "beads-abc12")
         assert "Assigned Bead: beads-abc12" in result
 
 
@@ -209,12 +181,8 @@ class TestPromptSelection:
         worker_prompt = spawner._build_worker_prompt("dev", "# content", "w-1")
         assert "CONTINUOUS POLLING" in worker_prompt
 
-    def test_spawn_with_bead_uses_single_task_prompt(
-        self, spawner: SubprocessSpawner
-    ) -> None:
+    def test_spawn_with_bead_uses_single_task_prompt(self, spawner: SubprocessSpawner) -> None:
         """With bead_id, single-task prompt is used."""
-        single_prompt = spawner._build_single_task_prompt(
-            "dev", "# content", "w-1", "beads-123"
-        )
+        single_prompt = spawner._build_single_task_prompt("dev", "# content", "w-1", "beads-123")
         assert "SINGLE TASK" in single_prompt
         assert "CONTINUOUS POLLING" not in single_prompt

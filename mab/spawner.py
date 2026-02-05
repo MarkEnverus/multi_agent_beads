@@ -1557,9 +1557,7 @@ class TmuxSpawner(Spawner):
 
         # Build full prompt - use single-task prompt when bead_id assigned
         if bead_id:
-            full_prompt = self._build_single_task_prompt(
-                role, prompt_content, worker_id, bead_id
-            )
+            full_prompt = self._build_single_task_prompt(role, prompt_content, worker_id, bead_id)
         else:
             full_prompt = self._build_worker_prompt(role, prompt_content, worker_id)
 
