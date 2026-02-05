@@ -34,7 +34,26 @@
                         }
                     }
                 }
-            }
+            },
+            // Safelist role-based colors used in dynamic JavaScript templates
+            safelist: [
+                // Text colors for agent roles
+                'text-green-300', 'text-blue-300', 'text-yellow-300',
+                'text-purple-300', 'text-cyan-300', 'text-gray-300',
+                'text-red-300', 'text-gray-400',
+                // Background colors for agent roles
+                'bg-green-900', 'bg-blue-900', 'bg-yellow-900',
+                'bg-purple-900', 'bg-cyan-900', 'bg-gray-800',
+                'bg-red-900', 'bg-gray-900',
+                // Border colors for agent roles
+                'border-green-600', 'border-blue-600', 'border-yellow-600',
+                'border-purple-600', 'border-cyan-600', 'border-gray-600',
+                'border-red-600',
+                // Dot/indicator colors
+                'bg-green-500', 'bg-blue-500', 'bg-yellow-500',
+                'bg-purple-500', 'bg-cyan-500', 'bg-gray-500',
+                'bg-red-500',
+            ]
         }
     </script>
 
