@@ -121,6 +121,7 @@ class Worker:
     town_name: str = "default"  # Town this worker belongs to
     worktree_path: str | None = None  # Path to isolated git worktree
     worktree_branch: str | None = None  # Branch name for the worktree
+    bead_id: str | None = None  # Specific bead ID this worker is assigned to work on
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -142,6 +143,7 @@ class Worker:
             "town_name": self.town_name,
             "worktree_path": self.worktree_path,
             "worktree_branch": self.worktree_branch,
+            "bead_id": self.bead_id,
         }
 
     @classmethod
@@ -163,6 +165,13 @@ class Worker:
         except (KeyError, IndexError):
             pass
 
+        # Handle legacy rows without bead_id column
+        bead_id = None
+        try:
+            bead_id = row["bead_id"]
+        except (KeyError, IndexError):
+            pass
+
         return cls(
             id=row["id"],
             role=row["role"],
@@ -181,6 +190,7 @@ class Worker:
             town_name=town_name,
             worktree_path=worktree_path,
             worktree_branch=worktree_branch,
+            bead_id=bead_id,
         )
 
 
@@ -274,7 +284,8 @@ class WorkerDatabase:
                     auto_restart_enabled INTEGER DEFAULT 1,
                     town_name TEXT DEFAULT 'default',
                     worktree_path TEXT,
-                    worktree_branch TEXT
+                    worktree_branch TEXT,
+                    bead_id TEXT
                 )
             """)
             conn.execute("""
@@ -296,6 +307,9 @@ class WorkerDatabase:
 
             if "worktree_branch" not in columns:
                 conn.execute("ALTER TABLE workers ADD COLUMN worktree_branch TEXT")
+
+            if "bead_id" not in columns:
+                conn.execute("ALTER TABLE workers ADD COLUMN bead_id TEXT")
 
             if "last_restart_at" not in columns:
                 conn.execute("ALTER TABLE workers ADD COLUMN last_restart_at TEXT")
@@ -327,8 +341,8 @@ class WorkerDatabase:
                     id, role, project_path, status, pid, created_at,
                     started_at, stopped_at, crash_count, last_heartbeat,
                     exit_code, error_message, last_restart_at, auto_restart_enabled,
-                    town_name, worktree_path, worktree_branch
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    town_name, worktree_path, worktree_branch, bead_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     worker.id,
@@ -348,6 +362,7 @@ class WorkerDatabase:
                     worker.town_name,
                     worker.worktree_path,
                     worker.worktree_branch,
+                    worker.bead_id,
                 ),
             )
             conn.commit()
@@ -372,7 +387,8 @@ class WorkerDatabase:
                     auto_restart_enabled = ?,
                     town_name = ?,
                     worktree_path = ?,
-                    worktree_branch = ?
+                    worktree_branch = ?,
+                    bead_id = ?
                 WHERE id = ?
             """,
                 (
@@ -391,6 +407,7 @@ class WorkerDatabase:
                     worker.town_name,
                     worker.worktree_path,
                     worker.worktree_branch,
+                    worker.bead_id,
                     worker.id,
                 ),
             )
@@ -627,6 +644,7 @@ class WorkerManager:
         project_path: str,
         auto_restart: bool = True,
         town_name: str = "default",
+        bead_id: str | None = None,
     ) -> Worker:
         """Spawn a new worker process.
 
@@ -635,6 +653,7 @@ class WorkerManager:
             project_path: Path to project for this worker.
             auto_restart: Whether to auto-restart on crash.
             town_name: Town this worker belongs to.
+            bead_id: Optional specific bead ID for this worker to work on.
 
         Returns:
             Created Worker object.
@@ -652,6 +671,7 @@ class WorkerManager:
             project_path=project_path,
             status=WorkerStatus.STARTING,
             town_name=town_name,
+            bead_id=bead_id,
         )
         self.db.insert_worker(worker)
 
@@ -718,6 +738,7 @@ class WorkerManager:
                 project_path=worker.project_path,
                 worker_id=worker.id,
                 env_vars=env_vars,
+                bead_id=worker.bead_id,
             )
             return process_info
 
