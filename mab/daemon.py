@@ -173,6 +173,10 @@ class Daemon:
         self._project_managers: dict[str, WorkerManager] = {}  # Per-project managers
         self._health_check_task: asyncio.Task[None] | None = None
 
+        # Active worker tracking by role to prevent duplicate spawns
+        # Structure: {project_path: {role: set of worker_ids}}
+        self._active_workers_by_role: dict[str, dict[str, set[str]]] = {}
+
         # Set up logging
         self._setup_logging()
 
@@ -554,6 +558,8 @@ class Daemon:
 
         for worker in crashed:
             self.logger.warning(f"Worker {worker.id} crashed (count: {worker.crash_count})")
+            # Unregister crashed worker from active tracking
+            self._unregister_active_worker(worker.id, worker.role, worker.project_path)
 
         for worker in restart_scheduled:
             backoff = self.health_config.calculate_backoff(worker.crash_count)
@@ -666,6 +672,108 @@ class Daemon:
             self.logger.info(f"Created per-project worker manager for {project_path}")
 
         return self._project_managers[project_path]
+
+    def _has_active_worker(self, role: str, project_path: str | None = None) -> bool:
+        """Check if there's an active worker for the given role.
+
+        This method checks both the in-memory tracking dict and verifies
+        that tracked workers are still actually running (process exists).
+
+        Args:
+            role: The worker role to check (e.g., 'dev', 'qa', 'manager').
+            project_path: Optional project path to scope the check.
+                         If None, checks across all projects.
+
+        Returns:
+            True if there's at least one active worker for the role.
+        """
+        if project_path:
+            # Check specific project
+            project_workers = self._active_workers_by_role.get(project_path, {})
+            worker_ids = project_workers.get(role, set())
+
+            # Verify each tracked worker is still running
+            for worker_id in list(worker_ids):  # Copy to allow modification
+                if self._is_worker_still_running(worker_id):
+                    return True
+                else:
+                    # Clean up stale entry
+                    worker_ids.discard(worker_id)
+
+            return False
+        else:
+            # Check across all projects
+            for proj_path, roles in self._active_workers_by_role.items():
+                worker_ids = roles.get(role, set())
+                for worker_id in list(worker_ids):
+                    if self._is_worker_still_running(worker_id):
+                        return True
+                    else:
+                        worker_ids.discard(worker_id)
+
+            return False
+
+    def _is_worker_still_running(self, worker_id: str) -> bool:
+        """Check if a specific worker is still running.
+
+        Looks up the worker in the appropriate manager and verifies
+        its process is still alive.
+
+        Args:
+            worker_id: The worker ID to check.
+
+        Returns:
+            True if the worker exists and its process is running.
+        """
+        manager = self._find_worker_manager(worker_id)
+        if manager is None:
+            return False
+
+        try:
+            worker = manager.get(worker_id)
+            if worker.status != WorkerStatus.RUNNING:
+                return False
+            if worker.pid is None:
+                return False
+            return self._is_process_running(worker.pid)
+        except WorkerNotFoundError:
+            return False
+
+    def _register_active_worker(self, worker_id: str, role: str, project_path: str) -> None:
+        """Register a worker as active for its role.
+
+        Called when a worker is successfully spawned.
+
+        Args:
+            worker_id: The worker ID.
+            role: The worker's role.
+            project_path: The project the worker belongs to.
+        """
+        if project_path not in self._active_workers_by_role:
+            self._active_workers_by_role[project_path] = {}
+
+        if role not in self._active_workers_by_role[project_path]:
+            self._active_workers_by_role[project_path][role] = set()
+
+        self._active_workers_by_role[project_path][role].add(worker_id)
+        self.logger.debug(f"Registered active worker {worker_id} for role {role} in {project_path}")
+
+    def _unregister_active_worker(self, worker_id: str, role: str, project_path: str) -> None:
+        """Unregister a worker from active tracking.
+
+        Called when a worker is stopped or crashes.
+
+        Args:
+            worker_id: The worker ID.
+            role: The worker's role.
+            project_path: The project the worker belongs to.
+        """
+        if project_path in self._active_workers_by_role:
+            if role in self._active_workers_by_role[project_path]:
+                self._active_workers_by_role[project_path][role].discard(worker_id)
+                self.logger.debug(
+                    f"Unregistered active worker {worker_id} for role {role} in {project_path}"
+                )
 
     def _register_rpc_handlers(self) -> None:
         """Register RPC method handlers."""
@@ -816,6 +924,9 @@ class Daemon:
 
             self.logger.info(f"Worker spawned: {worker.id} (PID {worker.pid})")
 
+            # Register worker as active for its role
+            self._register_active_worker(worker.id, role, project_path)
+
             return {
                 "worker_id": worker.id,
                 "pid": worker.pid,
@@ -887,6 +998,9 @@ class Daemon:
         self.logger.info(f"Worker stop requested: worker_id={worker_id}")
 
         try:
+            # Get worker info before stopping for unregistration
+            worker_before_stop = manager.get(worker_id)
+
             worker = await manager.stop(
                 worker_id=worker_id,
                 graceful=graceful,
@@ -894,6 +1008,11 @@ class Daemon:
             )
 
             self.logger.info(f"Worker stopped: {worker_id}")
+
+            # Unregister worker from active tracking
+            self._unregister_active_worker(
+                worker_id, worker_before_stop.role, worker_before_stop.project_path
+            )
 
             return {
                 "success": True,
