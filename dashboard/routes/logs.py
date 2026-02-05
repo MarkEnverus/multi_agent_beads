@@ -420,7 +420,10 @@ async def get_recent_logs(
         bead_id,
         level,
     )
-    return _read_recent_logs(limit=limit, role=role, bead_id=bead_id, level=level)
+    # Run blocking file I/O in thread pool to avoid blocking event loop
+    return await asyncio.to_thread(
+        _read_recent_logs, limit=limit, role=role, bead_id=bead_id, level=level
+    )
 
 
 @router.get("/stream")
@@ -498,7 +501,10 @@ async def export_logs(
         level,
     )
 
-    entries = _read_recent_logs(limit=limit, role=role, bead_id=bead_id, level=level)
+    # Run blocking file I/O in thread pool to avoid blocking event loop
+    entries = await asyncio.to_thread(
+        _read_recent_logs, limit=limit, role=role, bead_id=bead_id, level=level
+    )
 
     if format == "text":
         # Reverse to chronological order for text format
