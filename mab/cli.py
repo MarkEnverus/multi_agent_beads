@@ -1623,6 +1623,241 @@ def fix_worktrees(ctx: click.Context, project_path: Path) -> None:
         raise SystemExit(1)
 
 
+def _parse_duration(duration_str: str) -> int:
+    """Parse a duration string like '7d', '24h', '1w' into seconds.
+
+    Args:
+        duration_str: Duration string (e.g., '7d', '24h', '2w', '30m').
+
+    Returns:
+        Duration in seconds.
+
+    Raises:
+        ValueError: If duration format is invalid.
+    """
+    import re
+
+    match = re.match(r"^(\d+)([smhdw])$", duration_str.lower())
+    if not match:
+        raise ValueError(
+            f"Invalid duration format: {duration_str}. Use format like '7d', '24h', '2w', '30m'."
+        )
+
+    value = int(match.group(1))
+    unit = match.group(2)
+
+    multipliers = {
+        "s": 1,
+        "m": 60,
+        "h": 3600,
+        "d": 86400,
+        "w": 604800,
+    }
+
+    return value * multipliers[unit]
+
+
+@cli.command()
+@click.option(
+    "--all",
+    "-a",
+    "cleanup_all",
+    is_flag=True,
+    default=False,
+    help="Remove all non-running workers (stopped, crashed, failed)",
+)
+@click.option(
+    "--older-than",
+    "-o",
+    type=str,
+    default=None,
+    help="Remove workers older than specified duration (e.g., '7d', '24h', '2w')",
+)
+@click.option(
+    "--status",
+    "-s",
+    type=click.Choice(["stopped", "crashed", "failed"]),
+    default=None,
+    help="Remove workers with specific status only",
+)
+@click.option(
+    "--dry-run",
+    "-n",
+    is_flag=True,
+    default=False,
+    help="Show what would be removed without actually removing",
+)
+@click.option(
+    "--project",
+    "-p",
+    "project_path",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project path (defaults to current directory)",
+)
+@click.pass_context
+def cleanup(
+    ctx: click.Context,
+    cleanup_all: bool,
+    older_than: str | None,
+    status: str | None,
+    dry_run: bool,
+    project_path: Path | None,
+) -> None:
+    """Clean up old workers from the database.
+
+    Removes stopped, crashed, or failed workers from the worker database.
+    Running workers are never removed.
+
+    \b
+    Examples:
+      mab cleanup --all              # Remove all non-running workers
+      mab cleanup --older-than=7d    # Remove workers older than 7 days
+      mab cleanup --status=crashed   # Remove only crashed workers
+      mab cleanup --all --dry-run    # Show what would be removed
+    """
+    from datetime import datetime, timedelta
+
+    from mab.workers import WorkerDatabase, WorkerStatus
+
+    # Validate options
+    if not cleanup_all and not older_than and not status:
+        click.secho(
+            "Error: Must specify --all, --older-than, or --status",
+            fg="red",
+            err=True,
+        )
+        click.echo("Run 'mab cleanup --help' for usage information.")
+        raise SystemExit(1)
+
+    # Parse older-than duration
+    max_age_seconds: int | None = None
+    if older_than:
+        try:
+            max_age_seconds = _parse_duration(older_than)
+        except ValueError as e:
+            click.secho(f"Error: {e}", fg="red", err=True)
+            raise SystemExit(1)
+
+    # Determine project path
+    project = project_path or ctx.obj.get("town_path", Path.cwd())
+    project = Path(project).resolve()
+
+    # Find database locations
+    databases_to_check: list[Path] = []
+
+    # Check project-specific database
+    project_db = project / ".mab" / "workers.db"
+    if project_db.exists():
+        databases_to_check.append(project_db)
+
+    # Check global database
+    global_db = MAB_HOME / "workers.db"
+    if global_db.exists():
+        databases_to_check.append(global_db)
+
+    if not databases_to_check:
+        click.echo("No worker databases found.")
+        raise SystemExit(0)
+
+    # Determine which statuses to clean up
+    if status:
+        target_statuses = [WorkerStatus(status)]
+    elif cleanup_all:
+        target_statuses = [
+            WorkerStatus.STOPPED,
+            WorkerStatus.CRASHED,
+            WorkerStatus.FAILED,
+        ]
+    else:
+        # If only --older-than specified, default to all non-running statuses
+        target_statuses = [
+            WorkerStatus.STOPPED,
+            WorkerStatus.CRASHED,
+            WorkerStatus.FAILED,
+        ]
+
+    # Collect workers to remove
+    workers_to_remove: list[tuple[Path, str, str, str, str | None]] = []
+    cutoff_time = datetime.now() - timedelta(seconds=max_age_seconds) if max_age_seconds else None
+
+    for db_path in databases_to_check:
+        try:
+            db = WorkerDatabase(db_path)
+            for target_status in target_statuses:
+                workers = db.list_workers(status=target_status)
+                for worker in workers:
+                    # Skip running workers (should never happen but be safe)
+                    if worker.status == WorkerStatus.RUNNING:
+                        continue
+
+                    # Check age if --older-than specified
+                    if cutoff_time:
+                        # Use stopped_at if available, otherwise created_at
+                        timestamp_str = worker.stopped_at or worker.created_at
+                        try:
+                            # Parse ISO format timestamp
+                            worker_time = datetime.fromisoformat(
+                                timestamp_str.replace("Z", "+00:00")
+                            )
+                            # Make naive for comparison
+                            if worker_time.tzinfo:
+                                worker_time = worker_time.replace(tzinfo=None)
+                            if worker_time > cutoff_time:
+                                continue  # Worker is too recent
+                        except (ValueError, TypeError):
+                            continue  # Can't parse timestamp, skip
+
+                    workers_to_remove.append(
+                        (
+                            db_path,
+                            worker.id,
+                            worker.role,
+                            worker.status.value,
+                            worker.stopped_at or worker.created_at,
+                        )
+                    )
+        except Exception as e:
+            click.secho(f"Warning: Could not read database {db_path}: {e}", fg="yellow")
+            continue
+
+    if not workers_to_remove:
+        click.echo("No workers found matching criteria.")
+        raise SystemExit(0)
+
+    # Show what will be removed
+    click.echo(f"Found {len(workers_to_remove)} worker(s) to remove:")
+    for db_path, worker_id, role, worker_status, timestamp in workers_to_remove:
+        db_name = "project" if "/.mab/" in str(db_path) else "global"
+        click.echo(f"  - {worker_id} ({role}) [{worker_status}] {timestamp} ({db_name})")
+
+    if dry_run:
+        click.echo("\nDry run - no changes made")
+        raise SystemExit(0)
+
+    # Actually remove workers
+    removed_count = 0
+    errors = 0
+
+    for db_path, worker_id, role, worker_status, _ in workers_to_remove:
+        try:
+            db = WorkerDatabase(db_path)
+            if db.delete_worker(worker_id):
+                removed_count += 1
+            else:
+                errors += 1
+        except Exception as e:
+            click.secho(f"Error removing {worker_id}: {e}", fg="red", err=True)
+            errors += 1
+
+    if removed_count > 0:
+        click.secho(f"Removed {removed_count} worker(s)", fg="green")
+
+    if errors > 0:
+        click.secho(f"Failed to remove {errors} worker(s)", fg="red", err=True)
+        raise SystemExit(1)
+
+
 @cli.command("cleanup-worktrees")
 @click.option(
     "--project",
