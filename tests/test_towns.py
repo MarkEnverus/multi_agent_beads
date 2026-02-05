@@ -8,6 +8,7 @@ import pytest
 from mab.towns import (
     DEFAULT_PORT_START,
     PortConflictError,
+    ProjectPathConflictError,
     Town,
     TownDatabase,
     TownError,
@@ -217,6 +218,22 @@ class TestTownManager:
         with pytest.raises(PortConflictError):
             manager.create(name="town2", port=8000)
 
+    def test_create_town_project_path_conflict(self, manager: TownManager) -> None:
+        """Test creating a town with conflicting project path."""
+        manager.create(name="town1", port=8000, project_path="/path/to/project")
+
+        with pytest.raises(ProjectPathConflictError):
+            manager.create(name="town2", port=8001, project_path="/path/to/project")
+
+    def test_create_town_project_path_no_conflict_if_none(self, manager: TownManager) -> None:
+        """Test creating towns without project path doesn't conflict."""
+        # Both towns have None project_path - should not conflict
+        manager.create(name="town1", port=8000, project_path=None)
+        manager.create(name="town2", port=8001, project_path=None)
+
+        towns = manager.list_towns()
+        assert len(towns) == 2
+
     def test_create_town_invalid_name(self, manager: TownManager) -> None:
         """Test creating a town with invalid name."""
         with pytest.raises(TownError):
@@ -284,6 +301,22 @@ class TestTownManager:
 
         with pytest.raises(PortConflictError):
             manager.update("town2", port=8000)
+
+    def test_update_town_project_path_conflict(self, manager: TownManager) -> None:
+        """Test updating town to conflicting project path."""
+        manager.create(name="town1", port=8000, project_path="/path/to/project")
+        manager.create(name="town2", port=8001, project_path="/other/project")
+
+        with pytest.raises(ProjectPathConflictError):
+            manager.update("town2", project_path="/path/to/project")
+
+    def test_update_town_project_path_same_town_ok(self, manager: TownManager) -> None:
+        """Test updating town to same project path is allowed."""
+        manager.create(name="town1", port=8000, project_path="/path/to/project")
+
+        # Updating to the same path should not raise
+        updated = manager.update("town1", project_path="/path/to/project")
+        assert updated.project_path == "/path/to/project"
 
     def test_set_status(self, manager: TownManager) -> None:
         """Test setting town status."""

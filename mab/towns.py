@@ -173,6 +173,12 @@ class PortConflictError(TownError):
     pass
 
 
+class ProjectPathConflictError(TownError):
+    """Raised when project path is already in use by another town."""
+
+    pass
+
+
 class TownDatabase:
     """SQLite database for town metadata persistence.
 
@@ -501,6 +507,15 @@ class TownManager:
                     f"Port {port} already in use by town '{existing_by_port.name}'"
                 )
 
+        # Check project path conflict (only if project_path is provided)
+        if project_path is not None:
+            existing_by_path = self.db.list_towns(project_path=project_path)
+            if existing_by_path:
+                raise ProjectPathConflictError(
+                    f"Project path '{project_path}' already in use by town "
+                    f"'{existing_by_path[0].name}'"
+                )
+
         # Derive roles and workflow from template if not overridden
         effective_roles = default_roles
         if effective_roles is None:
@@ -620,6 +635,7 @@ class TownManager:
         Raises:
             TownNotFoundError: If town not found.
             PortConflictError: If new port is in use.
+            ProjectPathConflictError: If new project path is in use.
         """
         town = self.get(name)
 
@@ -639,7 +655,14 @@ class TownManager:
         if description is not None:
             town.description = description
 
-        if project_path is not None:
+        if project_path is not None and project_path != town.project_path:
+            # Check project path conflict
+            existing_by_path = self.db.list_towns(project_path=project_path)
+            if existing_by_path and existing_by_path[0].name != name:
+                raise ProjectPathConflictError(
+                    f"Project path '{project_path}' already in use by town "
+                    f"'{existing_by_path[0].name}'"
+                )
             town.project_path = project_path
 
         self.db.update_town(town)
