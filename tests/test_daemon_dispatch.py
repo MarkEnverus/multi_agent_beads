@@ -95,10 +95,12 @@ class TestRunBdReady:
         beads_dir.mkdir()
         (beads_dir / "beads.db").touch()
 
-        beads_json = json.dumps([
-            {"id": "bead-001", "title": "Fix bug", "priority": 1},
-            {"id": "bead-002", "title": "Add feature", "priority": 2},
-        ])
+        beads_json = json.dumps(
+            [
+                {"id": "bead-001", "title": "Fix bug", "priority": 1},
+                {"id": "bead-002", "title": "Add feature", "priority": 2},
+            ]
+        )
 
         mock_proc = AsyncMock()
         mock_proc.communicate = AsyncMock(return_value=(beads_json.encode(), b""))
@@ -441,11 +443,13 @@ class TestDispatchRPCHandlers:
         daemon = Daemon(mab_dir=tmp_path / ".mab")
         project_path = str(tmp_path / "project")
 
-        result = await daemon._handle_dispatch_start({
-            "project_path": project_path,
-            "roles": ["dev", "qa"],
-            "interval_seconds": 10.0,
-        })
+        result = await daemon._handle_dispatch_start(
+            {
+                "project_path": project_path,
+                "roles": ["dev", "qa"],
+                "interval_seconds": 10.0,
+            }
+        )
 
         assert result["success"] is True
         assert result["project_path"] == project_path
@@ -512,11 +516,13 @@ class TestHandleWorkerSpawnBeadId:
         mock_manager.spawn = AsyncMock(return_value=mock_worker)
 
         with patch.object(daemon, "_get_project_manager", return_value=mock_manager):
-            result = await daemon._handle_worker_spawn({
-                "role": "dev",
-                "project_path": str(tmp_path),
-                "bead_id": "bead-001",
-            })
+            result = await daemon._handle_worker_spawn(
+                {
+                    "role": "dev",
+                    "project_path": str(tmp_path),
+                    "bead_id": "bead-001",
+                }
+            )
 
         mock_manager.spawn.assert_called_once_with(
             role="dev",
@@ -542,10 +548,12 @@ class TestHandleWorkerSpawnBeadId:
         mock_manager.spawn = AsyncMock(return_value=mock_worker)
 
         with patch.object(daemon, "_get_project_manager", return_value=mock_manager):
-            await daemon._handle_worker_spawn({
-                "role": "dev",
-                "project_path": str(tmp_path),
-            })
+            await daemon._handle_worker_spawn(
+                {
+                    "role": "dev",
+                    "project_path": str(tmp_path),
+                }
+            )
 
         mock_manager.spawn.assert_called_once_with(
             role="dev",

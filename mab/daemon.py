@@ -855,9 +855,7 @@ class Daemon:
         bead_id = bead["id"]
         bead_title = bead.get("title", "")
 
-        self.logger.info(
-            f"Dispatch: found work for {role}: {bead_id} - {bead_title}"
-        )
+        self.logger.info(f"Dispatch: found work for {role}: {bead_id} - {bead_title}")
 
         # Spawn a single-task worker for this bead
         try:
@@ -871,8 +869,7 @@ class Daemon:
 
             self._register_active_worker(worker.id, role, project_path)
             self.logger.info(
-                f"Dispatch: spawned {role} worker {worker.id} "
-                f"(PID {worker.pid}) for bead {bead_id}"
+                f"Dispatch: spawned {role} worker {worker.id} (PID {worker.pid}) for bead {bead_id}"
             )
 
         except WorkerSpawnError as e:
@@ -954,9 +951,7 @@ class Daemon:
 
         # If event loop is running, start the task immediately
         if self._event_loop is not None and self._dispatch_task is None:
-            self._dispatch_task = asyncio.ensure_future(
-                self._worker_dispatch_loop()
-            )
+            self._dispatch_task = asyncio.ensure_future(self._worker_dispatch_loop())
             self.logger.info("Dispatch loop task created")
 
     def stop_dispatch(self) -> None:
@@ -1347,9 +1342,7 @@ class Daemon:
             "project_path": self._dispatch_project_path,
             "roles": self._dispatch_roles,
             "interval_seconds": self._dispatch_interval_seconds,
-            "task_running": (
-                self._dispatch_task is not None and not self._dispatch_task.done()
-            ),
+            "task_running": (self._dispatch_task is not None and not self._dispatch_task.done()),
         }
 
     def _cleanup(self) -> None:
