@@ -145,6 +145,40 @@ def _get_worker_log_file(project_path: str, worker_id: str) -> Path | None:
         return None
 
 
+def _get_worker_from_db(project_path: str, worker_id: str) -> dict[str, Any] | None:
+    """Get worker info from mab.db database.
+
+    This is used as a fallback when the daemon doesn't have the worker in memory
+    (e.g., stopped/historical workers).
+
+    Args:
+        project_path: Path to the project directory.
+        worker_id: Worker unique identifier.
+
+    Returns:
+        Dictionary with worker info (project_path, log_file), or None if not found.
+    """
+    try:
+        conn = get_db(project_path)
+        cursor = conn.execute(
+            "SELECT id, project_path, log_file FROM workers WHERE id = ?",
+            (worker_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            return {
+                "id": row["id"],
+                "project_path": row["project_path"],
+                "log_file": row["log_file"],
+            }
+        return None
+    except Exception as e:
+        logger.warning("Failed to get worker %s from database: %s", worker_id, e)
+        return None
+
+
 def _get_rpc_client() -> RPCClient:
     """Get RPC client for daemon communication."""
     return get_default_client()
@@ -1175,6 +1209,9 @@ async def get_worker_recent_logs(
     filtering from the shared claude.log for legacy workers without a
     per-worker log file.
 
+    For historical/stopped workers not in daemon memory, falls back to
+    database lookup to find the worker's log file.
+
     Args:
         worker_id: Worker unique identifier
         limit: Maximum number of entries to return
@@ -1183,23 +1220,41 @@ async def get_worker_recent_logs(
         List of log entries, most recent first.
 
     Raises:
-        HTTPException: If worker not found or daemon not running.
+        HTTPException: If worker not found in daemon or database.
     """
+    project_path: str | None = None
+
+    # Try to get worker from daemon first (for running workers)
     try:
         client = _get_rpc_client()
-        # Run blocking RPC call in thread pool to avoid blocking event loop
         result = await asyncio.to_thread(
             client.call, "worker.get", {"worker_id": worker_id}, DASHBOARD_RPC_TIMEOUT
         )
         worker = result.get("worker")
+        if worker:
+            project_path = worker.get("project_path")
+    except (DaemonNotRunningError, RPCError) as e:
+        # Daemon not running or RPC error - will try database fallback
+        logger.debug("RPC lookup failed for worker %s, trying database: %s", worker_id, e)
+    except Exception as e:
+        # Unexpected error - log but try database fallback
+        logger.warning("Unexpected error in RPC lookup for %s: %s", worker_id, e)
 
-        if not worker:
-            raise HTTPException(status_code=404, detail=f"Worker not found: {worker_id}")
+    # If not found in daemon, try database lookup (for historical/stopped workers)
+    if not project_path:
+        # Use PROJECT_ROOT as the default project path for database lookup
+        db_worker = await asyncio.to_thread(_get_worker_from_db, str(PROJECT_ROOT), worker_id)
+        if db_worker:
+            project_path = db_worker.get("project_path")
+            logger.debug(
+                "Found worker %s in database with project_path: %s", worker_id, project_path
+            )
 
-        project_path = worker.get("project_path")
-        if not project_path:
-            return []
+    # If still not found, return 404
+    if not project_path:
+        raise HTTPException(status_code=404, detail=f"Worker not found: {worker_id}")
 
+    try:
         # Look up log file from mab.db
         log_path = await asyncio.to_thread(_get_worker_log_file, project_path, worker_id)
 
@@ -1241,6 +1296,3 @@ async def get_worker_recent_logs(
             status_code=500,
             detail=f"Failed to read log file: {e}",
         )
-    except Exception as e:
-        _handle_rpc_error(e, f"get_worker_recent_logs({worker_id})")
-        raise
