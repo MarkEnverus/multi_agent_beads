@@ -629,7 +629,10 @@ class Spawner(ABC):
         poll_interval_seconds: int = 30,
         max_idle_polls: int = 10,
     ) -> str:
-        """Build the full worker prompt with role context.
+        """Build the full worker prompt with role context and polling loop.
+
+        This builds a prompt for workers that continuously poll for work.
+        For workers assigned a specific bead, use _build_single_task_prompt instead.
 
         Args:
             role: Worker role.
@@ -707,6 +710,111 @@ After running setup commands above:
 - **NEVER exit after completing a bead** - always check for more work
 - Only exit after {max_idle_polls} consecutive polls ({max_idle_polls * poll_interval_seconds // 60} minutes) with no work
 - Reset idle counter to 0 every time you successfully claim work
+
+---
+
+{prompt_content}
+"""
+
+    def _build_single_task_prompt(
+        self,
+        role: str,
+        prompt_content: str,
+        worker_id: str,
+        bead_id: str,
+    ) -> str:
+        """Build a prompt for a worker assigned to a single specific bead.
+
+        Unlike _build_worker_prompt which creates a polling loop, this builds
+        a focused prompt that works on exactly one bead and exits. This is
+        simpler and cheaper (less Claude usage) since the daemon handles
+        dispatch.
+
+        Args:
+            role: Worker role.
+            prompt_content: Content from role-specific prompt file.
+            worker_id: Worker identifier.
+            bead_id: The specific bead ID this worker must work on.
+
+        Returns:
+            Complete prompt string for Claude CLI.
+        """
+        return f"""# Autonomous Beads Worker - {role.upper()} Agent
+
+## Worker ID: {worker_id}
+## Assigned Bead: {bead_id}
+
+You are a {role} agent in the multi-agent beads system. You have been assigned **one specific bead** to work on. Complete it and exit.
+
+## CRITICAL: Setup Commands (RUN IMMEDIATELY)
+
+**STOP! Run these commands NOW before reading further:**
+
+```bash
+# 1. Define log function (uses WORKER_LOG_FILE and WORKER_ID env vars)
+log() {{ echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$WORKER_ID] $1" >> "$WORKER_LOG_FILE"; }}
+
+# 2. Define bd alias to use main project database (uses BD_ROOT env var)
+# Workers run in isolated git worktrees - you MUST use the main project's beads database
+alias bd='bd --db "$BD_ROOT/.beads/beads.db"'
+
+# 3. Log session start
+log "SESSION_START"
+```
+
+If `bd` commands show "No .beads found" or errors, check that BD_ROOT is set: `echo $BD_ROOT`
+
+## Session Protocol (SINGLE TASK)
+
+After running setup commands above, work on your assigned bead:
+
+### 1. Claim the bead
+
+```bash
+bd update {bead_id} --status=in_progress
+log "CLAIM: {bead_id}"
+```
+
+### 2. Read the bead
+
+```bash
+bd show {bead_id}
+log "READ: {bead_id}"
+```
+
+Read the full description and understand the acceptance criteria.
+
+### 3. Do the work
+
+```bash
+log "WORK_START: <brief description of what you're doing>"
+```
+
+Follow your role guidelines below to complete the work.
+
+### 4. Verify, commit, create PR (if code changes)
+
+Follow the standard PR workflow from your role guidelines.
+
+### 5. Close the bead (or hand off)
+
+After work is complete and verified:
+
+```bash
+bd close {bead_id} --reason="<what was done>"
+log "CLOSE: {bead_id}"
+```
+
+Or hand off to the next agent if your workflow requires it.
+
+### 6. Sync and exit
+
+```bash
+bd sync --flush-only
+log "SESSION_END: {bead_id}"
+```
+
+**EXIT IMMEDIATELY after completing this bead. Do NOT poll for more work.**
 
 ---
 
@@ -932,8 +1040,13 @@ while True:
                     worker_id=worker_id,
                 ) from e
 
-            # Build full prompt
-            full_prompt = self._build_worker_prompt(role, prompt_content, worker_id)
+            # Build full prompt - use single-task prompt when bead_id assigned
+            if bead_id:
+                full_prompt = self._build_single_task_prompt(
+                    role, prompt_content, worker_id, bead_id
+                )
+            else:
+                full_prompt = self._build_worker_prompt(role, prompt_content, worker_id)
 
             # Using -p flag to pass initial prompt
             # --dangerously-skip-permissions allows workers to run bash commands
@@ -1442,8 +1555,11 @@ class TmuxSpawner(Spawner):
                 worker_id=worker_id,
             ) from e
 
-        # Build full prompt
-        full_prompt = self._build_worker_prompt(role, prompt_content, worker_id)
+        # Build full prompt - use single-task prompt when bead_id assigned
+        if bead_id:
+            full_prompt = self._build_single_task_prompt(role, prompt_content, worker_id, bead_id)
+        else:
+            full_prompt = self._build_worker_prompt(role, prompt_content, worker_id)
 
         # Set up log file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
