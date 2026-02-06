@@ -77,16 +77,18 @@ class TestDispatchPromptTypeSelection:
 
         mock_popen = _make_mock_popen()
 
-        with patch("pty.openpty", return_value=(10, 11)), \
-             patch("os.ttyname", return_value="/dev/pts/0"), \
-             patch("os.open", return_value=9), \
-             patch("os.write"), \
-             patch("os.close"), \
-             patch("subprocess.Popen", mock_popen), \
-             patch("fcntl.fcntl"), \
-             patch("asyncio.create_task"), \
-             patch("asyncio.sleep", new_callable=AsyncMock), \
-             patch("mab.spawner.is_git_repo", return_value=False):
+        with (
+            patch("pty.openpty", return_value=(10, 11)),
+            patch("os.ttyname", return_value="/dev/pts/0"),
+            patch("os.open", return_value=9),
+            patch("os.write"),
+            patch("os.close"),
+            patch("subprocess.Popen", mock_popen),
+            patch("fcntl.fcntl"),
+            patch("asyncio.create_task"),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            patch("mab.spawner.is_git_repo", return_value=False),
+        ):
             await prod_spawner.spawn(
                 role="dev",
                 project_path=str(project_with_prompts),
@@ -121,16 +123,18 @@ class TestDispatchPromptTypeSelection:
 
         mock_popen = _make_mock_popen()
 
-        with patch("pty.openpty", return_value=(10, 11)), \
-             patch("os.ttyname", return_value="/dev/pts/0"), \
-             patch("os.open", return_value=9), \
-             patch("os.write"), \
-             patch("os.close"), \
-             patch("subprocess.Popen", mock_popen), \
-             patch("fcntl.fcntl"), \
-             patch("asyncio.create_task"), \
-             patch("asyncio.sleep", new_callable=AsyncMock), \
-             patch("mab.spawner.is_git_repo", return_value=False):
+        with (
+            patch("pty.openpty", return_value=(10, 11)),
+            patch("os.ttyname", return_value="/dev/pts/0"),
+            patch("os.open", return_value=9),
+            patch("os.write"),
+            patch("os.close"),
+            patch("subprocess.Popen", mock_popen),
+            patch("fcntl.fcntl"),
+            patch("asyncio.create_task"),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            patch("mab.spawner.is_git_repo", return_value=False),
+        ):
             await prod_spawner.spawn(
                 role="dev",
                 project_path=str(project_with_prompts),
@@ -153,16 +157,18 @@ class TestDispatchPromptCliArgs:
         """spawn() with bead_id passes single-task prompt to Claude CLI via -p flag."""
         mock_popen = _make_mock_popen()
 
-        with patch("pty.openpty", return_value=(10, 11)), \
-             patch("os.ttyname", return_value="/dev/pts/0"), \
-             patch("os.open", return_value=9), \
-             patch("os.write"), \
-             patch("os.close"), \
-             patch("subprocess.Popen", mock_popen), \
-             patch("fcntl.fcntl"), \
-             patch("asyncio.create_task"), \
-             patch("asyncio.sleep", new_callable=AsyncMock), \
-             patch("mab.spawner.is_git_repo", return_value=False):
+        with (
+            patch("pty.openpty", return_value=(10, 11)),
+            patch("os.ttyname", return_value="/dev/pts/0"),
+            patch("os.open", return_value=9),
+            patch("os.write"),
+            patch("os.close"),
+            patch("subprocess.Popen", mock_popen),
+            patch("fcntl.fcntl"),
+            patch("asyncio.create_task"),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            patch("mab.spawner.is_git_repo", return_value=False),
+        ):
             await prod_spawner.spawn(
                 role="dev",
                 project_path=str(project_with_prompts),
@@ -187,16 +193,18 @@ class TestDispatchPromptCliArgs:
         """spawn() without bead_id passes polling prompt to Claude CLI via -p flag."""
         mock_popen = _make_mock_popen()
 
-        with patch("pty.openpty", return_value=(10, 11)), \
-             patch("os.ttyname", return_value="/dev/pts/0"), \
-             patch("os.open", return_value=9), \
-             patch("os.write"), \
-             patch("os.close"), \
-             patch("subprocess.Popen", mock_popen), \
-             patch("fcntl.fcntl"), \
-             patch("asyncio.create_task"), \
-             patch("asyncio.sleep", new_callable=AsyncMock), \
-             patch("mab.spawner.is_git_repo", return_value=False):
+        with (
+            patch("pty.openpty", return_value=(10, 11)),
+            patch("os.ttyname", return_value="/dev/pts/0"),
+            patch("os.open", return_value=9),
+            patch("os.write"),
+            patch("os.close"),
+            patch("subprocess.Popen", mock_popen),
+            patch("fcntl.fcntl"),
+            patch("asyncio.create_task"),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            patch("mab.spawner.is_git_repo", return_value=False),
+        ):
             await prod_spawner.spawn(
                 role="dev",
                 project_path=str(project_with_prompts),
@@ -219,16 +227,18 @@ class TestDispatchPromptCliArgs:
         """spawn() embeds the role-specific prompt file content into the final prompt."""
         mock_popen = _make_mock_popen()
 
-        with patch("pty.openpty", return_value=(10, 11)), \
-             patch("os.ttyname", return_value="/dev/pts/0"), \
-             patch("os.open", return_value=9), \
-             patch("os.write"), \
-             patch("os.close"), \
-             patch("subprocess.Popen", mock_popen), \
-             patch("fcntl.fcntl"), \
-             patch("asyncio.create_task"), \
-             patch("asyncio.sleep", new_callable=AsyncMock), \
-             patch("mab.spawner.is_git_repo", return_value=False):
+        with (
+            patch("pty.openpty", return_value=(10, 11)),
+            patch("os.ttyname", return_value="/dev/pts/0"),
+            patch("os.open", return_value=9),
+            patch("os.write"),
+            patch("os.close"),
+            patch("subprocess.Popen", mock_popen),
+            patch("fcntl.fcntl"),
+            patch("asyncio.create_task"),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            patch("mab.spawner.is_git_repo", return_value=False),
+        ):
             await prod_spawner.spawn(
                 role="dev",
                 project_path=str(project_with_prompts),
@@ -250,16 +260,18 @@ class TestDispatchPromptCliArgs:
         """spawn() reads the correct prompt file for each role."""
         mock_popen = _make_mock_popen()
 
-        with patch("pty.openpty", return_value=(10, 11)), \
-             patch("os.ttyname", return_value="/dev/pts/0"), \
-             patch("os.open", return_value=9), \
-             patch("os.write"), \
-             patch("os.close"), \
-             patch("subprocess.Popen", mock_popen), \
-             patch("fcntl.fcntl"), \
-             patch("asyncio.create_task"), \
-             patch("asyncio.sleep", new_callable=AsyncMock), \
-             patch("mab.spawner.is_git_repo", return_value=False):
+        with (
+            patch("pty.openpty", return_value=(10, 11)),
+            patch("os.ttyname", return_value="/dev/pts/0"),
+            patch("os.open", return_value=9),
+            patch("os.write"),
+            patch("os.close"),
+            patch("subprocess.Popen", mock_popen),
+            patch("fcntl.fcntl"),
+            patch("asyncio.create_task"),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            patch("mab.spawner.is_git_repo", return_value=False),
+        ):
             await prod_spawner.spawn(
                 role="qa",
                 project_path=str(project_with_prompts),
@@ -279,17 +291,13 @@ class TestPromptTypesMutuallyExclusive:
 
     def test_worker_prompt_has_no_assigned_bead(self) -> None:
         """Worker prompt (polling mode) should not contain 'Assigned Bead' header."""
-        spawner = SubprocessSpawner(
-            logs_dir=Path("/tmp"), test_mode=True
-        )
+        spawner = SubprocessSpawner(logs_dir=Path("/tmp"), test_mode=True)
         result = spawner._build_worker_prompt("dev", "", "worker-1")
         assert "Assigned Bead:" not in result
 
     def test_single_task_prompt_has_no_polling(self) -> None:
         """Single-task prompt (dispatch mode) has no polling loop constructs."""
-        spawner = SubprocessSpawner(
-            logs_dir=Path("/tmp"), test_mode=True
-        )
+        spawner = SubprocessSpawner(logs_dir=Path("/tmp"), test_mode=True)
         result = spawner._build_single_task_prompt("dev", "", "worker-1", "beads-123")
         assert "CONTINUOUS POLLING" not in result
         assert "MAIN WORK LOOP" not in result
@@ -297,9 +305,7 @@ class TestPromptTypesMutuallyExclusive:
 
     def test_prompts_share_common_setup(self) -> None:
         """Both prompt types include the same setup commands."""
-        spawner = SubprocessSpawner(
-            logs_dir=Path("/tmp"), test_mode=True
-        )
+        spawner = SubprocessSpawner(logs_dir=Path("/tmp"), test_mode=True)
         worker = spawner._build_worker_prompt("dev", "", "worker-1")
         single = spawner._build_single_task_prompt("dev", "", "worker-1", "beads-123")
 
@@ -309,9 +315,7 @@ class TestPromptTypesMutuallyExclusive:
 
     def test_prompts_both_include_role_content(self) -> None:
         """Both prompt types embed the role-specific content."""
-        spawner = SubprocessSpawner(
-            logs_dir=Path("/tmp"), test_mode=True
-        )
+        spawner = SubprocessSpawner(logs_dir=Path("/tmp"), test_mode=True)
         content = "# Custom role-specific instructions"
         worker = spawner._build_worker_prompt("dev", content, "worker-1")
         single = spawner._build_single_task_prompt("dev", content, "worker-1", "beads-123")
