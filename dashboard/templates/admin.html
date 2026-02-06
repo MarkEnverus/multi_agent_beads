@@ -115,6 +115,71 @@
     </div>
 </div>
 
+{# Dispatch Status Card #}
+<div class="mb-6">
+    <div id="dispatch-status" class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-4">
+                <div class="flex-shrink-0">
+                    <div id="dispatch-icon" class="h-12 w-12 rounded-full bg-gray-700 flex items-center justify-center">
+                        <svg class="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                    </div>
+                </div>
+                <div>
+                    <h2 class="text-lg font-semibold text-white">Dispatch Loop</h2>
+                    <p id="dispatch-state" class="text-gray-400">Loading...</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-6">
+                {# Dispatch info #}
+                <div class="flex items-center space-x-6 text-sm">
+                    <div>
+                        <span class="text-gray-500">Interval:</span>
+                        <span id="dispatch-interval" class="text-gray-300 ml-1">-</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Roles:</span>
+                        <span id="dispatch-roles" class="text-gray-300 ml-1">-</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Project:</span>
+                        <span id="dispatch-project" class="text-gray-300 ml-1 max-w-xs truncate inline-block align-bottom" title="">-</span>
+                    </div>
+                </div>
+                {# Control buttons #}
+                <div id="dispatch-controls" class="flex items-center space-x-2 ml-4">
+                    <button
+                        id="dispatch-start-btn"
+                        onclick="startDispatch()"
+                        class="px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors flex items-center space-x-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Start Dispatch Loop"
+                    >
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>Start</span>
+                    </button>
+                    <button
+                        id="dispatch-stop-btn"
+                        onclick="stopDispatch()"
+                        class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors flex items-center space-x-1.5 disabled:opacity-50 disabled:cursor-not-allowed hidden"
+                        title="Stop Dispatch Loop"
+                    >
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                        </svg>
+                        <span>Stop</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 {# Project Initialization Section #}
 <div class="mb-6">
     <div id="project-init" class="bg-gray-800 rounded-lg border border-gray-700 p-6">
@@ -750,7 +815,8 @@
         await Promise.all([
             refreshDaemonStatusImmediate(),
             refreshHealthStatusImmediate(),
-            refreshWorkersImmediate()
+            refreshWorkersImmediate(),
+            refreshDispatchStatusImmediate()
         ]);
     }
 
@@ -825,6 +891,163 @@
         startBtn.classList.toggle('hidden', isRunning);
         stopBtn.classList.toggle('hidden', !isRunning);
         restartBtn.classList.toggle('hidden', !isRunning);
+    }
+
+    // Dispatch status functions
+    async function refreshDispatchStatusImmediate() {
+        try {
+            const response = await fetch('/api/workers/dispatch/status');
+            if (response.ok) {
+                const data = await response.json();
+                updateDispatchStatus(data);
+            } else if (response.status === 503) {
+                updateDispatchStatus({ enabled: false });
+            }
+        } catch (error) {
+            console.debug('Failed to fetch dispatch status:', error);
+            updateDispatchStatus({ enabled: false });
+        }
+    }
+
+    function updateDispatchStatus(data) {
+        const stateEl = document.getElementById('dispatch-state');
+        const intervalEl = document.getElementById('dispatch-interval');
+        const rolesEl = document.getElementById('dispatch-roles');
+        const projectEl = document.getElementById('dispatch-project');
+        const iconEl = document.getElementById('dispatch-icon');
+        const startBtn = document.getElementById('dispatch-start-btn');
+        const stopBtn = document.getElementById('dispatch-stop-btn');
+
+        const enabled = data.enabled || false;
+        const taskRunning = data.task_running || false;
+
+        // Determine state display
+        let stateText, stateClass, iconBg;
+        if (enabled && taskRunning) {
+            stateText = 'POLLING';
+            stateClass = 'text-green-400';
+            iconBg = 'bg-green-900/50';
+        } else if (enabled && !taskRunning) {
+            stateText = 'ENABLED';
+            stateClass = 'text-yellow-400';
+            iconBg = 'bg-yellow-900/50';
+        } else {
+            stateText = 'INACTIVE';
+            stateClass = 'text-gray-400';
+            iconBg = 'bg-gray-700';
+        }
+
+        stateEl.innerHTML = `Status: <span class="${stateClass} font-semibold">${stateText}</span>`;
+        iconEl.className = `h-12 w-12 rounded-full ${iconBg} flex items-center justify-center`;
+
+        // Update info fields
+        intervalEl.textContent = data.interval_seconds ? `${data.interval_seconds}s` : '-';
+
+        if (data.roles && data.roles.length > 0) {
+            rolesEl.textContent = data.roles.join(', ');
+        } else {
+            rolesEl.textContent = enabled ? 'all' : '-';
+        }
+
+        if (data.project_path) {
+            // Show last 2 path components for brevity
+            const parts = data.project_path.split('/');
+            const display = parts.slice(-2).join('/');
+            projectEl.textContent = display;
+            projectEl.title = data.project_path;
+        } else {
+            projectEl.textContent = '-';
+            projectEl.title = '';
+        }
+
+        // Toggle buttons
+        startBtn.classList.toggle('hidden', enabled);
+        stopBtn.classList.toggle('hidden', !enabled);
+    }
+
+    async function startDispatch() {
+        const btn = document.getElementById('dispatch-start-btn');
+        btn.disabled = true;
+        btn.innerHTML = `
+            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Starting...</span>
+        `;
+
+        try {
+            const response = await fetch('/api/workers/dispatch/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    project_path: projectPath,
+                    interval_seconds: 5.0
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                showToast('Dispatch loop started', 'success');
+                refreshDispatchStatusImmediate();
+            } else {
+                showToast(data.message || 'Failed to start dispatch', 'error');
+            }
+        } catch (error) {
+            console.error('Failed to start dispatch:', error);
+            showToast('Failed to start dispatch', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = `
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>Start</span>
+            `;
+        }
+    }
+
+    async function stopDispatch() {
+        const btn = document.getElementById('dispatch-stop-btn');
+        btn.disabled = true;
+        btn.innerHTML = `
+            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Stopping...</span>
+        `;
+
+        try {
+            const response = await fetch('/api/workers/dispatch/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                showToast('Dispatch loop stopped', 'success');
+                refreshDispatchStatusImmediate();
+            } else {
+                showToast(data.message || 'Failed to stop dispatch', 'error');
+            }
+        } catch (error) {
+            console.error('Failed to stop dispatch:', error);
+            showToast('Failed to stop dispatch', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = `
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                </svg>
+                <span>Stop</span>
+            `;
+        }
     }
 
     // Daemon control functions

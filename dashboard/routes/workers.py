@@ -245,6 +245,86 @@ async def get_health_status() -> dict[str, Any]:
         raise
 
 
+class DispatchStatusResponse(BaseModel):
+    """Response model for dispatch loop status."""
+
+    enabled: bool = Field(..., description="Whether dispatch loop is active")
+    project_path: str | None = Field(None, description="Project being monitored")
+    roles: list[str] = Field(default_factory=list, description="Roles being dispatched")
+    interval_seconds: float = Field(..., description="Poll interval in seconds")
+    task_running: bool = Field(..., description="Whether the async dispatch task is running")
+
+
+class DispatchStartRequest(BaseModel):
+    """Request model for starting the dispatch loop."""
+
+    project_path: str = Field(..., description="Project path to monitor for work")
+    roles: list[str] | None = Field(None, description="Roles to dispatch (all if omitted)")
+    interval_seconds: float = Field(default=5.0, description="Poll interval in seconds")
+
+
+@router.get("/dispatch/status", response_model=DispatchStatusResponse)
+async def get_dispatch_status() -> dict[str, Any]:
+    """Get current dispatch loop status.
+
+    Returns whether the dispatch loop is active, which project and roles
+    it monitors, and the polling interval.
+    """
+    try:
+        client = _get_rpc_client()
+        result: dict[str, Any] = await asyncio.to_thread(
+            client.call, "dispatch.status", None, DASHBOARD_RPC_TIMEOUT
+        )
+        logger.debug("Dispatch status: %s", result)
+        return result
+    except Exception as e:
+        _handle_rpc_error(e, "get_dispatch_status")
+        raise
+
+
+@router.post("/dispatch/start")
+async def start_dispatch(request: DispatchStartRequest) -> dict[str, Any]:
+    """Start the dispatch loop.
+
+    Begins polling for available work and spawning workers as needed.
+    """
+    try:
+        client = _get_rpc_client()
+        params: dict[str, Any] = {
+            "project_path": request.project_path,
+            "interval_seconds": request.interval_seconds,
+        }
+        if request.roles is not None:
+            params["roles"] = request.roles
+
+        result: dict[str, Any] = await asyncio.to_thread(
+            client.call, "dispatch.start", params, DASHBOARD_RPC_TIMEOUT
+        )
+        logger.info("Dispatch started: %s", result)
+        return result
+    except Exception as e:
+        _handle_rpc_error(e, "start_dispatch")
+        raise
+
+
+@router.post("/dispatch/stop")
+async def stop_dispatch() -> dict[str, Any]:
+    """Stop the dispatch loop.
+
+    Stops polling for work. Running workers are not affected.
+    """
+    try:
+        client = _get_rpc_client()
+        result: dict[str, Any] = await asyncio.to_thread(
+            client.call, "dispatch.stop", None, DASHBOARD_RPC_TIMEOUT
+        )
+        logger.info("Dispatch stopped")
+        return result
+    except Exception as e:
+        _handle_rpc_error(e, "stop_dispatch")
+        raise
+
+
 class DaemonStartRequest(BaseModel):
     """Request model for starting the daemon."""
 
