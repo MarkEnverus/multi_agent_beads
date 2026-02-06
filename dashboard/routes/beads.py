@@ -127,6 +127,33 @@ async def queue_depth_by_role() -> dict[str, int]:
     return await asyncio.to_thread(BeadService.queue_depth_by_role)
 
 
+@router.get("/stats")
+async def get_stats() -> dict[str, Any]:
+    """Get project statistics.
+
+    Returns summary counts (total, open, closed, in-progress, blocked) and
+    recent activity metrics (commits, issues created/closed in last 24h).
+
+    Raises:
+        BeadCommandError: If the bd command fails.
+        BeadParseError: If output parsing fails.
+    """
+    logger.debug("Getting project stats")
+    return await asyncio.to_thread(BeadService.get_stats)
+
+
+@router.get("/cache-health")
+async def get_cache_health() -> dict[str, Any]:
+    """Get cache health information for monitoring.
+
+    Returns failure counts per cache key, useful for diagnosing stale data.
+    Keys with failure counts above the alert threshold indicate potential issues
+    with the bd CLI or database.
+    """
+    logger.debug("Getting cache health")
+    return BeadService.get_cache_health()
+
+
 @router.get("/in-progress", response_model=list[BeadResponse])
 async def list_in_progress_beads() -> list[dict[str, Any]]:
     """List beads that are currently in progress.
