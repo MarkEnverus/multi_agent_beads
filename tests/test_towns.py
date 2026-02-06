@@ -350,3 +350,34 @@ class TestTownManager:
         manager.set_status("town1", TownStatus.RUNNING, pid=12345)
 
         assert manager.count_running() == 1
+
+    def test_create_town_with_solo_template(self, manager: TownManager) -> None:
+        """Test creating a town with solo template gets correct roles."""
+        town = manager.create(name="test", port=8000, template="solo")
+        assert town.template == "solo"
+        assert town.get_effective_roles() == {"dev": 1}
+
+    def test_create_town_with_pair_template(self, manager: TownManager) -> None:
+        """Test creating a town with pair template gets correct roles."""
+        town = manager.create(name="test", port=8000, template="pair")
+        assert town.template == "pair"
+        assert town.get_effective_roles() == {"dev": 1, "qa": 1}
+
+    def test_create_town_with_full_template(self, manager: TownManager) -> None:
+        """Test creating a town with full template gets correct roles."""
+        town = manager.create(name="test", port=8000, template="full")
+        assert town.template == "full"
+        expected = {"manager": 1, "tech_lead": 1, "dev": 1, "qa": 1, "reviewer": 1}
+        assert town.get_effective_roles() == expected
+
+    def test_effective_roles_always_from_template(self, manager: TownManager) -> None:
+        """Test that get_effective_roles always returns template roles."""
+        town = manager.create(name="test", port=8000, template="pair")
+        # Even if worker_counts were somehow different, effective_roles
+        # should always return the template's fixed configuration
+        assert town.get_effective_roles() == {"dev": 1, "qa": 1}
+
+    def test_create_town_invalid_template(self, manager: TownManager) -> None:
+        """Test creating a town with invalid template raises error."""
+        with pytest.raises(TownError, match="Invalid template"):
+            manager.create(name="test", port=8000, template="custom")
