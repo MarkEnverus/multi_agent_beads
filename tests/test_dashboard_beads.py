@@ -715,7 +715,13 @@ class TestKanbanQueueDepth:
             {"id": "b1", "title": "T1", "status": "open", "priority": 2, "labels": ["dev"]},
             {"id": "b2", "title": "T2", "status": "open", "priority": 2, "labels": ["dev"]},
             {"id": "b3", "title": "T3", "status": "open", "priority": 2, "labels": ["qa"]},
-            {"id": "b4", "title": "T4", "status": "open", "priority": 2, "labels": ["dev", "frontend"]},
+            {
+                "id": "b4",
+                "title": "T4",
+                "status": "open",
+                "priority": 2,
+                "labels": ["dev", "frontend"],
+            },
         ]
         all_beads_data = ready_beads_data + [
             {"id": "b5", "title": "T5", "status": "in_progress", "priority": 1, "labels": ["dev"]},
