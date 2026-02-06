@@ -277,6 +277,7 @@
                                     ${truncatePath(town.project_path)}
                                 </p>
                             ` : ''}
+                            ${renderActiveWorkers(town.active_workers)}
                         </div>
                     </div>
                     <div class="flex items-center space-x-4">
@@ -327,6 +328,30 @@
                 </div>
             </div>
         `;
+    }
+
+    function renderActiveWorkers(activeWorkers) {
+        if (!activeWorkers || Object.keys(activeWorkers).length === 0) {
+            return '';
+        }
+
+        const roleBadges = {
+            'dev': 'bg-blue-900/50 text-blue-300',
+            'qa': 'bg-green-900/50 text-green-300',
+            'tech_lead': 'bg-purple-900/50 text-purple-300',
+            'reviewer': 'bg-yellow-900/50 text-yellow-300',
+            'manager': 'bg-red-900/50 text-red-300',
+        };
+
+        const badges = Object.entries(activeWorkers).map(([role, count]) => {
+            const colorClass = roleBadges[role] || 'bg-gray-700 text-gray-300';
+            return `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-mono ${colorClass}">${role}: ${count}</span>`;
+        }).join(' ');
+
+        return `<div class="flex items-center gap-1.5 mt-1">
+            <span class="text-xs text-gray-500">Workers:</span>
+            ${badges}
+        </div>`;
     }
 
     function getTemplateBadge(template) {
