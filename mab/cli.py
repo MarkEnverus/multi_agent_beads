@@ -382,7 +382,7 @@ def start(
                     description=f"Auto-created with template '{template}'",
                 )
                 click.secho(f"Created town '{town_name}' with template '{template}'", fg="green")
-                click.echo(f"  Workers: {_format_worker_counts(new_town.worker_counts)}")
+                click.echo(f"  Workers: {_format_worker_counts(new_town.get_effective_roles())}")
                 click.echo(f"  Port: {new_town.port}")
             except TownError as e:
                 click.secho(f"Error creating town: {e}", fg="red", err=True)
@@ -1169,13 +1169,6 @@ def town(ctx: click.Context) -> None:
     help="Maximum concurrent workers (defaults to template total)",
 )
 @click.option(
-    "--roles",
-    "-r",
-    multiple=True,
-    default=None,
-    help="Override default roles (can be specified multiple times)",
-)
-@click.option(
     "--description",
     "-d",
     default="",
@@ -1189,12 +1182,14 @@ def town_create(
     project: str | None,
     template: str,
     max_workers: int | None,
-    roles: tuple[str, ...] | None,
     description: str,
 ) -> None:
     """Create a new orchestration town.
 
     NAME is the unique identifier for the town (alphanumeric with underscores).
+
+    Towns use predefined templates with fixed role configurations.
+    Custom role combinations are not supported.
 
     \b
     Templates:
@@ -1216,9 +1211,7 @@ def town_create(
         click.secho(f"Error: Invalid template '{template}'", fg="red", err=True)
         raise SystemExit(1)
 
-    # Use template defaults if not overridden
     effective_max_workers = max_workers or template_config.get_total_workers()
-    effective_roles = list(roles) if roles else None
 
     try:
         new_town = manager.create(
@@ -1226,14 +1219,13 @@ def town_create(
             port=port,
             project_path=project,
             max_workers=effective_max_workers,
-            default_roles=effective_roles,
             description=description,
             template=template,
         )
 
         click.secho(f"Created town '{name}' on port {new_town.port}", fg="green")
         click.echo(f"  Template: {new_town.template}")
-        click.echo(f"  Workers: {_format_worker_counts(new_town.worker_counts)}")
+        click.echo(f"  Workers: {_format_worker_counts(new_town.get_effective_roles())}")
         if new_town.project_path:
             click.echo(f"  Project: {new_town.project_path}")
 

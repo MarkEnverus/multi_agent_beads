@@ -8,6 +8,7 @@ from mab.templates import (
     TEMPLATES,
     TeamTemplate,
     TemplateError,
+    TemplateName,
     TemplateNotFoundError,
     WorkflowStep,
     get_template,
@@ -15,6 +16,33 @@ from mab.templates import (
     get_workflow_for_role,
     validate_template_name,
 )
+
+
+class TestTemplateName:
+    """Tests for TemplateName enum."""
+
+    def test_template_name_values(self):
+        """Test that template names have expected string values."""
+        assert TemplateName.SOLO.value == "solo"
+        assert TemplateName.PAIR.value == "pair"
+        assert TemplateName.FULL.value == "full"
+
+    def test_template_name_matches_templates_dict(self):
+        """Test that all TemplateName values exist in TEMPLATES dict."""
+        for name in TemplateName:
+            assert name.value in TEMPLATES
+
+    def test_templates_dict_matches_template_name(self):
+        """Test that all TEMPLATES keys are valid TemplateName values."""
+        valid_names = {name.value for name in TemplateName}
+        for key in TEMPLATES:
+            assert key in valid_names
+
+    def test_template_name_is_str_enum(self):
+        """Test that TemplateName values can be used as strings."""
+        assert TemplateName.SOLO == "solo"
+        assert TemplateName.PAIR == "pair"
+        assert TemplateName.FULL == "full"
 
 
 class TestWorkflowStep:

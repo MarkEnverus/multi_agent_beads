@@ -19,6 +19,18 @@ from enum import Enum
 from typing import Any
 
 
+class TemplateName(str, Enum):
+    """Valid town template names.
+
+    Towns must use one of these predefined templates with fixed role
+    configurations. Custom role combinations are not allowed.
+    """
+
+    SOLO = "solo"
+    PAIR = "pair"
+    FULL = "full"
+
+
 class WorkflowStep(str, Enum):
     """Workflow steps that define how beads move through the team."""
 

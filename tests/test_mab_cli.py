@@ -495,21 +495,21 @@ class TestRoleValidation:
             assert is_valid is True, f"Role {role} should be valid for full template"
             assert error_msg == ""
 
-    def test_validate_role_uses_effective_roles(self) -> None:
-        """Test validation uses town's get_effective_roles method."""
-        # Town with custom worker_counts (should override template)
+    def test_validate_role_uses_template_roles(self) -> None:
+        """Test validation always uses template roles, ignoring worker_counts."""
+        # Even if worker_counts is set differently, template roles determine validity
         town = Town(
             name="test-town",
             port=8000,
-            template="pair",  # pair template normally has only dev and qa
-            worker_counts={"dev": 2, "reviewer": 1},  # Custom override adds reviewer
+            template="pair",  # pair template has dev and qa
+            worker_counts={"dev": 2, "reviewer": 1},  # Stale/legacy data
         )
-        # Reviewer should be valid because worker_counts includes it
-        is_valid, error_msg = _validate_role_for_town("reviewer", town)
+        # QA should be valid because pair template includes it
+        is_valid, error_msg = _validate_role_for_town("qa", town)
         assert is_valid is True
 
-        # QA should NOT be valid because worker_counts doesn't include it
-        is_valid, error_msg = _validate_role_for_town("qa", town)
+        # Reviewer should NOT be valid because pair template doesn't include it
+        is_valid, error_msg = _validate_role_for_town("reviewer", town)
         assert is_valid is False
 
 

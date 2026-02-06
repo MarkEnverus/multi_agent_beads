@@ -136,16 +136,14 @@ class Town:
     def get_effective_roles(self) -> dict[str, int]:
         """Get the effective role counts for this town.
 
-        Returns worker_counts if set, otherwise falls back to template defaults.
+        Always returns the template's fixed role configuration.
+        Custom role overrides are not supported.
         """
-        if self.worker_counts:
-            return self.worker_counts
-
         template = self.get_template_config()
         if template:
             return template.roles
 
-        # Fallback to default_roles with count of 1 each
+        # Fallback for legacy data without a valid template
         return {role: 1 for role in self.default_roles}
 
 
@@ -454,10 +452,8 @@ class TownManager:
         port: int | None = None,
         project_path: str | None = None,
         max_workers: int = 3,
-        default_roles: list[str] | None = None,
         description: str = "",
         template: str = "pair",
-        worker_counts: dict[str, int] | None = None,
     ) -> Town:
         """Create a new town.
 
@@ -466,10 +462,8 @@ class TownManager:
             port: Dashboard port (auto-allocated if None).
             project_path: Path to project directory.
             max_workers: Maximum workers for this town.
-            default_roles: Roles to spawn on start.
             description: Human-readable description.
             template: Team template name (solo, pair, full).
-            worker_counts: Custom role counts (overrides template).
 
         Returns:
             Created Town object.
@@ -516,15 +510,9 @@ class TownManager:
                     f"'{existing_by_path[0].name}'"
                 )
 
-        # Derive roles and workflow from template if not overridden
-        effective_roles = default_roles
-        if effective_roles is None:
-            effective_roles = list(template_config.roles.keys())
-
+        # Derive roles and workflow strictly from template
+        default_roles = list(template_config.roles.keys())
         workflow = [step.value for step in template_config.workflow]
-
-        # Use worker_counts if provided, otherwise derive from template
-        effective_worker_counts = worker_counts or template_config.roles.copy()
 
         # Create town
         town = Town(
@@ -532,11 +520,11 @@ class TownManager:
             port=port,
             project_path=project_path,
             max_workers=max_workers,
-            default_roles=effective_roles,
+            default_roles=default_roles,
             description=description or template_config.description,
             template=template,
             workflow=workflow,
-            worker_counts=effective_worker_counts,
+            worker_counts=template_config.roles.copy(),
         )
 
         self.db.insert_town(town)
@@ -615,17 +603,18 @@ class TownManager:
         name: str,
         port: int | None = None,
         max_workers: int | None = None,
-        default_roles: list[str] | None = None,
         description: str | None = None,
         project_path: str | None = None,
     ) -> Town:
         """Update town configuration.
 
+        Note: Template and roles cannot be changed after creation.
+        Roles are always derived from the town's template.
+
         Args:
             name: Town name.
             port: New port (if changing).
             max_workers: New max workers.
-            default_roles: New default roles.
             description: New description.
             project_path: New project path.
 
@@ -648,9 +637,6 @@ class TownManager:
 
         if max_workers is not None:
             town.max_workers = max_workers
-
-        if default_roles is not None:
-            town.default_roles = default_roles
 
         if description is not None:
             town.description = description
