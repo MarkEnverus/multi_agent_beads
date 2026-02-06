@@ -618,6 +618,143 @@ class TestResponseConsistency:
             assert "test-id-123" in response.json()["message"]
 
 
+class TestQueueDepthEndpoint:
+    """Tests for GET /api/beads/queue-depth endpoint."""
+
+    def test_queue_depth_returns_role_counts(self) -> None:
+        """Test that queue depth returns counts per role label."""
+        with patch.object(BeadService, "queue_depth_by_role") as mock_qd:
+            mock_qd.return_value = {"dev": 5, "qa": 3, "review": 1}
+
+            response = client.get("/api/beads/queue-depth")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data == {"dev": 5, "qa": 3, "review": 1}
+
+    def test_queue_depth_empty_when_no_ready_beads(self) -> None:
+        """Test that queue depth returns empty dict when no ready beads."""
+        with patch.object(BeadService, "queue_depth_by_role") as mock_qd:
+            mock_qd.return_value = {}
+
+            response = client.get("/api/beads/queue-depth")
+
+            assert response.status_code == 200
+            assert response.json() == {}
+
+    def test_queue_depth_error_handling(self) -> None:
+        """Test error handling when bd command fails."""
+        with patch.object(BeadService, "queue_depth_by_role") as mock_qd:
+            mock_qd.side_effect = BeadCommandError(
+                message="bd command failed",
+                command=["ready"],
+            )
+
+            response = client.get("/api/beads/queue-depth")
+
+            assert response.status_code == 500
+
+
+class TestQueueDepthService:
+    """Tests for BeadService.queue_depth_by_role method."""
+
+    def test_queue_depth_from_kanban_data(self) -> None:
+        """Test queue depth is computed from ready beads labels."""
+        with patch.object(BeadService, "get_kanban_data") as mock_kanban:
+            mock_kanban.return_value = {
+                "ready_beads": [],
+                "in_progress_beads": [],
+                "done_beads": [],
+                "total_count": 0,
+                "queue_depth_by_role": {"dev": 3, "qa": 2, "frontend": 1},
+            }
+
+            result = BeadService.queue_depth_by_role()
+
+            assert result == {"dev": 3, "qa": 2, "frontend": 1}
+
+    def test_queue_depth_sorted_descending(self) -> None:
+        """Test queue depth is sorted by count descending."""
+        with patch.object(BeadService, "get_kanban_data") as mock_kanban:
+            mock_kanban.return_value = {
+                "ready_beads": [],
+                "in_progress_beads": [],
+                "done_beads": [],
+                "total_count": 0,
+                "queue_depth_by_role": {"review": 1, "dev": 5, "qa": 3},
+            }
+
+            result = BeadService.queue_depth_by_role()
+
+            keys = list(result.keys())
+            assert keys == ["dev", "qa", "review"]
+            assert list(result.values()) == [5, 3, 1]
+
+    def test_queue_depth_empty_when_no_labels(self) -> None:
+        """Test queue depth is empty when ready beads have no labels."""
+        with patch.object(BeadService, "get_kanban_data") as mock_kanban:
+            mock_kanban.return_value = {
+                "ready_beads": [],
+                "in_progress_beads": [],
+                "done_beads": [],
+                "total_count": 0,
+                "queue_depth_by_role": {},
+            }
+
+            result = BeadService.queue_depth_by_role()
+
+            assert result == {}
+
+
+class TestKanbanQueueDepth:
+    """Tests for queue depth computation in _fetch_kanban_data."""
+
+    def test_kanban_data_includes_queue_depth(self) -> None:
+        """Test that _fetch_kanban_data computes queue depth from ready beads."""
+        ready_beads_data = [
+            {"id": "b1", "title": "T1", "status": "open", "priority": 2, "labels": ["dev"]},
+            {"id": "b2", "title": "T2", "status": "open", "priority": 2, "labels": ["dev"]},
+            {"id": "b3", "title": "T3", "status": "open", "priority": 2, "labels": ["qa"]},
+            {"id": "b4", "title": "T4", "status": "open", "priority": 2, "labels": ["dev", "frontend"]},
+        ]
+        all_beads_data = ready_beads_data + [
+            {"id": "b5", "title": "T5", "status": "in_progress", "priority": 1, "labels": ["dev"]},
+            {"id": "b6", "title": "T6", "status": "closed", "priority": 3, "labels": ["qa"]},
+        ]
+
+        with (
+            patch.object(BeadService, "list_beads", return_value=all_beads_data),
+            patch.object(BeadService, "list_blocked", return_value=[]),
+        ):
+            result = BeadService._fetch_kanban_data(done_limit=20)
+
+            assert "queue_depth_by_role" in result
+            qd = result["queue_depth_by_role"]
+            assert qd["dev"] == 3  # b1, b2, b4
+            assert qd["qa"] == 1  # b3
+            assert qd["frontend"] == 1  # b4
+
+    def test_kanban_queue_depth_excludes_blocked(self) -> None:
+        """Test that queue depth only counts ready (non-blocked) beads."""
+        all_beads_data = [
+            {"id": "b1", "title": "T1", "status": "open", "priority": 2, "labels": ["dev"]},
+            {"id": "b2", "title": "T2", "status": "open", "priority": 2, "labels": ["dev"]},
+        ]
+        blocked_data = [
+            {"id": "b2", "title": "T2", "status": "open", "priority": 2, "labels": ["dev"]},
+        ]
+
+        with (
+            patch.object(BeadService, "list_beads", return_value=all_beads_data),
+            patch.object(BeadService, "list_blocked", return_value=blocked_data),
+        ):
+            result = BeadService._fetch_kanban_data(done_limit=20)
+
+            qd = result["queue_depth_by_role"]
+            # Only b1 is ready (b2 is blocked)
+            assert qd.get("dev") == 1
+
+
 class TestCacheFailureTracking:
     """Tests for cache refresh failure tracking."""
 

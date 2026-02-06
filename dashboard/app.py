@@ -274,6 +274,7 @@ async def kanban_partial(
     in_progress_beads: list[dict[str, Any]] = []
     done_beads: list[dict[str, Any]] = []
     total_count = 0
+    queue_depth: dict[str, int] = {}
     error_message: str | None = None
     is_stale = False
 
@@ -286,6 +287,7 @@ async def kanban_partial(
         in_progress_beads = kanban_data["in_progress_beads"]
         done_beads = kanban_data["done_beads"]
         total_count = kanban_data["total_count"]
+        queue_depth = kanban_data.get("queue_depth_by_role", {})
         is_stale = kanban_data.get("_stale", False)
 
     except BeadError as e:
@@ -300,6 +302,7 @@ async def kanban_partial(
             "in_progress_beads": in_progress_beads,
             "done_beads": done_beads,
             "total_count": total_count,
+            "queue_depth": queue_depth,
             "error_message": error_message,
             "is_stale": is_stale,
         },

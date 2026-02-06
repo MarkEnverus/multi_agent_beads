@@ -111,6 +111,22 @@ async def list_ready_beads(
     return await asyncio.to_thread(BeadService.list_ready, label=label)
 
 
+@router.get("/queue-depth")
+async def queue_depth_by_role() -> dict[str, int]:
+    """Get the count of ready beads per role label.
+
+    Returns a dictionary mapping role labels (e.g., dev, qa, review) to the
+    number of ready beads waiting for that role. Useful for understanding
+    workload distribution across roles.
+
+    Raises:
+        BeadCommandError: If the bd command fails.
+        BeadParseError: If output parsing fails.
+    """
+    logger.debug("Getting queue depth by role")
+    return await asyncio.to_thread(BeadService.queue_depth_by_role)
+
+
 @router.get("/in-progress", response_model=list[BeadResponse])
 async def list_in_progress_beads() -> list[dict[str, Any]]:
     """List beads that are currently in progress.

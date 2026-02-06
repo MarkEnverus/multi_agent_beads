@@ -104,3 +104,49 @@
         <div class="text-sm text-gray-400">Done</div>
     </div>
 </div>
+
+{# Queue Depth by Role #}
+{% if queue_depth %}
+{% set role_colors = {
+    'dev': 'bg-blue-500',
+    'qa': 'bg-purple-500',
+    'architecture': 'bg-indigo-500',
+    'dashboard': 'bg-cyan-500',
+    'docs': 'bg-emerald-500',
+    'epic': 'bg-pink-500',
+    'review': 'bg-amber-500',
+    'scripts': 'bg-teal-500',
+    'bug': 'bg-red-500',
+    'frontend': 'bg-sky-500',
+    'test': 'bg-gray-500'
+} %}
+{% set role_text_colors = {
+    'dev': 'text-blue-400',
+    'qa': 'text-purple-400',
+    'architecture': 'text-indigo-400',
+    'dashboard': 'text-cyan-400',
+    'docs': 'text-emerald-400',
+    'epic': 'text-pink-400',
+    'review': 'text-amber-400',
+    'scripts': 'text-teal-400',
+    'bug': 'text-red-400',
+    'frontend': 'text-sky-400',
+    'test': 'text-gray-400'
+} %}
+{% set max_depth = queue_depth.values()|max %}
+<div class="mt-4 bg-gray-800 rounded-lg p-4 border border-gray-700">
+    <h3 class="text-sm font-semibold text-gray-300 mb-3">Queue Depth by Role</h3>
+    <div class="space-y-2">
+        {% for role, count in queue_depth.items() %}
+        <div class="flex items-center space-x-3">
+            <span class="text-xs font-medium w-20 text-right {{ role_text_colors.get(role, 'text-gray-400') }}">{{ role }}</span>
+            <div class="flex-1 bg-gray-700 rounded-full h-4 overflow-hidden">
+                <div class="{{ role_colors.get(role, 'bg-gray-500') }} h-4 rounded-full transition-all duration-300"
+                     style="width: {{ (count / max_depth * 100)|round|int }}%"></div>
+            </div>
+            <span class="text-xs font-mono text-gray-300 w-8 text-right">{{ count }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
