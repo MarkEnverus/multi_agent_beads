@@ -817,6 +817,70 @@ class BeadService:
             raise
 
     @classmethod
+    def get_stats(cls, *, use_cache: bool = True) -> dict[str, Any]:
+        """Get project statistics from bd stats.
+
+        Returns summary and recent activity data including total/open/closed
+        issue counts, average lead time, and recent commit/change activity.
+
+        Args:
+            use_cache: Whether to use cached results (default True).
+
+        Returns:
+            Dictionary with 'summary' and 'recent_activity' keys as returned
+            by 'bd stats --json'.
+
+        Raises:
+            BeadCommandError: If the bd command fails.
+            BeadParseError: If output parsing fails.
+        """
+        cache_key = "stats"
+
+        if use_cache:
+            cached = _cache.get(cache_key)
+            if cached is not None:
+                logger.debug("Cache hit for get_stats")
+                return cast(dict[str, Any], cached)
+
+        output = cls.run_command(["stats", "--json"])
+        if not output or not output.strip():
+            return {"summary": {}, "recent_activity": {}}
+
+        try:
+            result = json.loads(output)
+        except json.JSONDecodeError as e:
+            logger.error("Failed to parse bd stats JSON output: %s", e)
+            raise BeadParseError(
+                message="Failed to parse stats data from command output",
+                raw_output=output,
+            ) from None
+
+        _cache.set(cache_key, result)
+        return cast(dict[str, Any], result)
+
+    @classmethod
+    def get_cache_health(cls) -> dict[str, Any]:
+        """Get cache health information for monitoring.
+
+        Returns failure counts for all cache keys, useful for diagnosing
+        stale data issues from the dashboard.
+
+        Returns:
+            Dictionary with cache health metrics.
+        """
+        failure_counts = _cache.get_all_failure_counts()
+        return {
+            "failure_counts": failure_counts,
+            "total_failures": sum(failure_counts.values()),
+            "alert_threshold": _cache.FAILURE_ALERT_THRESHOLD,
+            "keys_above_threshold": [
+                key
+                for key, count in failure_counts.items()
+                if count >= _cache.FAILURE_ALERT_THRESHOLD
+            ],
+        }
+
+    @classmethod
     def _background_refresh_kanban(cls, done_limit: int) -> None:
         """Background refresh task for kanban data.
 
