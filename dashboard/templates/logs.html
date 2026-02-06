@@ -431,8 +431,8 @@
             if (response.ok) {
                 const logs = await response.json();
                 // Add older logs that aren't already in buffer
-                const existingTimestamps = new Set(allLogs.map(l => l.timestamp + l.pid));
-                const newLogs = logs.filter(l => !existingTimestamps.has(l.timestamp + l.pid));
+                const existingKeys = new Set(allLogs.map(l => l.timestamp + (l.worker_id || l.pid || '')));
+                const newLogs = logs.filter(l => !existingKeys.has(l.timestamp + (l.worker_id || l.pid || '')));
                 if (newLogs.length > 0) {
                     allLogs = [...newLogs.reverse(), ...allLogs];
                     trimBuffer();
@@ -690,7 +690,9 @@
             html += `<span class="text-gray-500">${entry.timestamp}</span> `;
         }
 
-        html += `<span class="text-gray-600">[${entry.pid}]</span> `;
+        const identifier = entry.worker_id || entry.pid || '?';
+        const idColor = entry.worker_id ? 'text-cyan-600' : 'text-gray-600';
+        html += `<span class="${idColor}">[${identifier}]</span> `;
         html += `<span class="${eventColor} font-medium">${entry.event}</span>`;
 
         if (entry.message) {
@@ -870,7 +872,8 @@
             mimeType = 'application/json';
         } else {
             content = logsToExport.map(l => {
-                let line = `[${l.timestamp}] [${l.pid}] ${l.event}`;
+                const id = l.worker_id || l.pid || '?';
+                let line = `[${l.timestamp}] [${id}] ${l.event}`;
                 if (l.message) line += `: ${l.message}`;
                 return line;
             }).join('\n');

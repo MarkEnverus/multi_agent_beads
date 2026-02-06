@@ -24,7 +24,8 @@ class LogEntry(BaseModel):
     """Response model for a log entry."""
 
     timestamp: str = Field(..., description="Log entry timestamp")
-    pid: int = Field(..., description="Process ID of the agent")
+    pid: int | None = Field(None, description="Process ID of the agent (if numeric identifier)")
+    worker_id: str | None = Field(None, description="Worker ID (if alphanumeric identifier)")
     event: str = Field(..., description="Event type (SESSION_START, CLAIM, etc.)")
     message: str | None = Field(None, description="Event message/details")
     role: str | None = Field(None, description="Inferred agent role")
@@ -32,8 +33,9 @@ class LogEntry(BaseModel):
     level: str = Field("info", description="Log level (error, warn, info)")
 
 
-# Log line pattern: [TIMESTAMP] [PID] EVENT_TYPE: details
-LOG_PATTERN = re.compile(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(\d+)\] (.+)")
+# Log line pattern: [TIMESTAMP] [IDENTIFIER] EVENT_TYPE: details
+# IDENTIFIER can be either a PID (digits only) or a worker_id (alphanumeric with hyphens)
+LOG_PATTERN = re.compile(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[([\w-]+)\] (.+)")
 
 # Bead ID pattern for extraction
 BEAD_ID_PATTERN = re.compile(r"(multi_agent_beads-\w+)")
@@ -88,6 +90,7 @@ def _parse_log_line(line: str) -> dict[str, Any] | None:
 
     Returns:
         Parsed log entry dict, or None if line is invalid.
+        Contains 'worker_id' if identifier is alphanumeric, 'pid' if numeric.
     """
     line = line.strip()
     if not line:
@@ -97,13 +100,7 @@ def _parse_log_line(line: str) -> dict[str, Any] | None:
     if not match:
         return None
 
-    timestamp_str, pid_str, content = match.groups()
-
-    try:
-        pid = int(pid_str)
-    except ValueError:
-        logger.warning("Invalid PID in log line: %s", pid_str)
-        return None
+    timestamp_str, identifier, content = match.groups()
 
     # Parse event type and message
     if ":" in content:
@@ -127,15 +124,24 @@ def _parse_log_line(line: str) -> dict[str, Any] | None:
     # Determine log level
     level = _get_log_level(event)
 
-    return {
+    result: dict[str, Any] = {
         "timestamp": timestamp_str,
-        "pid": pid,
+        "pid": None,
+        "worker_id": None,
         "event": event,
         "message": message,
         "role": role,
         "bead_id": bead_id,
         "level": level,
     }
+
+    # Determine if identifier is a PID (all digits) or worker_id
+    if identifier.isdigit():
+        result["pid"] = int(identifier)
+    else:
+        result["worker_id"] = identifier
+
+    return result
 
 
 def _infer_role_from_content(event: str, message: str | None) -> str | None:
@@ -511,7 +517,8 @@ async def export_logs(
         entries.reverse()
         lines = []
         for entry in entries:
-            line = f"[{entry['timestamp']}] [{entry['pid']}] {entry['event']}"
+            identifier = entry.get("worker_id") or entry.get("pid") or "?"
+            line = f"[{entry['timestamp']}] [{identifier}] {entry['event']}"
             if entry.get("message"):
                 line += f": {entry['message']}"
             lines.append(line)

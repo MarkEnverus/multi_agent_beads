@@ -123,17 +123,29 @@ class TestStreamLogsEndpoint:
 class TestLogParsing:
     """Tests for log parsing functions."""
 
-    def test_parse_valid_log_line(self) -> None:
-        """Test parsing a valid log line."""
+    def test_parse_valid_log_line_with_pid(self) -> None:
+        """Test parsing a valid log line with numeric PID."""
         line = "[2026-01-24 14:00:05] [1001] CLAIM: multi_agent_beads-abc - Test feature"
         result = _parse_log_line(line)
 
         assert result is not None
         assert result["timestamp"] == "2026-01-24 14:00:05"
         assert result["pid"] == 1001
+        assert result["worker_id"] is None
         assert result["event"] == "CLAIM"
         assert result["message"] == "multi_agent_beads-abc - Test feature"
         assert result["bead_id"] == "multi_agent_beads-abc"
+
+    def test_parse_valid_log_line_with_worker_id(self) -> None:
+        """Test parsing a valid log line with worker ID."""
+        line = "[2026-01-24 14:00:05] [worker-dev-abc123] CLAIM: multi_agent_beads-abc - Test"
+        result = _parse_log_line(line)
+
+        assert result is not None
+        assert result["timestamp"] == "2026-01-24 14:00:05"
+        assert result["pid"] is None
+        assert result["worker_id"] == "worker-dev-abc123"
+        assert result["event"] == "CLAIM"
 
     def test_parse_log_line_without_message(self) -> None:
         """Test parsing a log line without message."""

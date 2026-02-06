@@ -102,13 +102,19 @@ async def list_towns() -> dict[str, Any]:
     """List all configured towns.
 
     Returns:
-        Dictionary with towns list and current town info.
+        Dictionary with towns list including active worker counts per role.
     """
     manager = _get_town_manager()
     towns = manager.list_towns()
 
+    town_dicts = []
+    for t in towns:
+        td = t.to_dict()
+        td["active_workers"] = _get_active_worker_counts(t.name)
+        town_dicts.append(td)
+
     return {
-        "towns": [t.to_dict() for t in towns],
+        "towns": town_dicts,
         "current_town": TOWN_NAME,
         "count": len(towns),
     }
