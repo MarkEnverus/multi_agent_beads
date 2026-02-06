@@ -736,12 +736,42 @@ class BeadService:
         )
         done_beads = done_beads[:done_limit]
 
+        # Compute queue depth by role from ready beads' labels
+        queue_depth: dict[str, int] = {}
+        for bead in ready_beads:
+            for label in bead.get("labels", []):
+                queue_depth[label] = queue_depth.get(label, 0) + 1
+
         return {
             "ready_beads": ready_beads,
             "in_progress_beads": in_progress_beads,
             "done_beads": done_beads,
             "total_count": len(all_beads),
+            "queue_depth_by_role": queue_depth,
         }
+
+    @classmethod
+    def queue_depth_by_role(cls, *, use_cache: bool = True) -> dict[str, int]:
+        """Get the count of ready beads per role label.
+
+        Computes queue depth by counting ready beads grouped by their labels.
+        Uses the kanban data cache when available to avoid extra subprocess calls.
+
+        Args:
+            use_cache: Whether to use cached results (default True).
+
+        Returns:
+            Dictionary mapping role labels to their ready bead counts,
+            sorted by count descending.
+
+        Raises:
+            BeadCommandError: If the bd command fails.
+            BeadParseError: If output parsing fails.
+        """
+        kanban = cls.get_kanban_data(use_cache=use_cache)
+        queue_depth = kanban.get("queue_depth_by_role", {})
+        # Sort by count descending for display
+        return dict(sorted(queue_depth.items(), key=lambda x: x[1], reverse=True))
 
     @classmethod
     def invalidate_cache(cls) -> None:
