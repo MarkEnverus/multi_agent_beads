@@ -4,6 +4,7 @@ Tests _build_worker_prompt (polling loop) and _build_single_task_prompt (single 
 """
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -146,38 +147,9 @@ class TestPromptSelection:
     """Tests that spawn methods choose the correct prompt builder."""
 
     def test_spawn_without_bead_uses_polling_prompt(
-        self, spawner: SubprocessSpawner, tmp_path: Path
+        self, spawner: SubprocessSpawner
     ) -> None:
         """Without bead_id, SubprocessSpawner uses _build_worker_prompt."""
-        # Create prompts dir with a role file
-        prompts_dir = tmp_path / "prompts"
-        prompts_dir.mkdir()
-        (prompts_dir / "DEVELOPER.md").write_text("# Dev prompt")
-
-        # Patch to capture the prompt that would be used
-        calls: list[str] = []
-        original_build_worker = spawner._build_worker_prompt
-        original_build_single = spawner._build_single_task_prompt
-
-        def track_worker(*args, **kwargs):
-            calls.append("worker")
-            return original_build_worker(*args, **kwargs)
-
-        def track_single(*args, **kwargs):
-            calls.append("single")
-            return original_build_single(*args, **kwargs)
-
-        spawner._build_worker_prompt = track_worker  # type: ignore[assignment]
-        spawner._build_single_task_prompt = track_single  # type: ignore[assignment]
-
-        # test_mode=True skips actual Claude CLI, but we still test prompt selection
-        # The test_mode bypasses prompt building entirely, so we need to
-        # test the branching logic directly
-        # Instead, just verify the logic via the method itself
-        spawner._build_worker_prompt = original_build_worker  # type: ignore[assignment]
-        spawner._build_single_task_prompt = original_build_single  # type: ignore[assignment]
-
-        # Verify the polling prompt is returned for no bead_id
         worker_prompt = spawner._build_worker_prompt("dev", "# content", "w-1")
         assert "CONTINUOUS POLLING" in worker_prompt
 
@@ -186,6 +158,189 @@ class TestPromptSelection:
         single_prompt = spawner._build_single_task_prompt("dev", "# content", "w-1", "beads-123")
         assert "SINGLE TASK" in single_prompt
         assert "CONTINUOUS POLLING" not in single_prompt
+
+
+class TestPromptTypeSelectionIntegration:
+    """Integration tests for prompt type selection through spawn().
+
+    These tests verify the branching logic at spawn time:
+    - spawn(bead_id=None) -> _build_worker_prompt (polling loop)
+    - spawn(bead_id="...") -> _build_single_task_prompt (single task)
+
+    Since the actual spawn() involves PTY allocation and process forking,
+    we mock the prompt builders to track which one gets called and verify
+    the prompt type selection logic at spawner.py:1043-1049.
+    """
+
+    @pytest.fixture
+    def prod_spawner(self, tmp_path: Path) -> SubprocessSpawner:
+        """Create a non-test-mode SubprocessSpawner for integration testing."""
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir()
+        return SubprocessSpawner(logs_dir=logs_dir, test_mode=False, use_worktrees=False)
+
+    @pytest.fixture
+    def project_with_prompt(self, tmp_path: Path) -> Path:
+        """Create a project directory with a dev prompt file."""
+        project = tmp_path / "project"
+        project.mkdir()
+        prompts_dir = project / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "DEVELOPER.md").write_text("# Dev role instructions")
+        return project
+
+    @pytest.mark.asyncio
+    async def test_spawn_without_bead_id_calls_worker_prompt(
+        self, prod_spawner: SubprocessSpawner, project_with_prompt: Path
+    ) -> None:
+        """spawn() without bead_id invokes _build_worker_prompt, not single-task."""
+        builder_calls: list[str] = []
+
+        original_worker = prod_spawner._build_worker_prompt
+        original_single = prod_spawner._build_single_task_prompt
+
+        def track_worker(*args, **kwargs):
+            builder_calls.append("worker")
+            return original_worker(*args, **kwargs)
+
+        def track_single(*args, **kwargs):
+            builder_calls.append("single")
+            return original_single(*args, **kwargs)
+
+        with patch.object(prod_spawner, "_build_worker_prompt", side_effect=track_worker):
+            with patch.object(prod_spawner, "_build_single_task_prompt", side_effect=track_single):
+                with patch("mab.spawner.shutil.which", return_value="/usr/bin/claude"):
+                    # The spawn will fail at PTY allocation, but prompt selection
+                    # happens before that. We catch the expected error.
+                    try:
+                        await prod_spawner.spawn(
+                            role="dev",
+                            project_path=str(project_with_prompt),
+                            worker_id="worker-test-1",
+                            bead_id=None,
+                        )
+                    except Exception:
+                        pass  # PTY/subprocess errors expected in test env
+
+        assert "worker" in builder_calls
+        assert "single" not in builder_calls
+
+    @pytest.mark.asyncio
+    async def test_spawn_with_bead_id_calls_single_task_prompt(
+        self, prod_spawner: SubprocessSpawner, project_with_prompt: Path
+    ) -> None:
+        """spawn() with bead_id invokes _build_single_task_prompt, not worker."""
+        builder_calls: list[str] = []
+
+        original_worker = prod_spawner._build_worker_prompt
+        original_single = prod_spawner._build_single_task_prompt
+
+        def track_worker(*args, **kwargs):
+            builder_calls.append("worker")
+            return original_worker(*args, **kwargs)
+
+        def track_single(*args, **kwargs):
+            builder_calls.append("single")
+            return original_single(*args, **kwargs)
+
+        with patch.object(prod_spawner, "_build_worker_prompt", side_effect=track_worker):
+            with patch.object(prod_spawner, "_build_single_task_prompt", side_effect=track_single):
+                with patch("mab.spawner.shutil.which", return_value="/usr/bin/claude"):
+                    try:
+                        await prod_spawner.spawn(
+                            role="dev",
+                            project_path=str(project_with_prompt),
+                            worker_id="worker-test-2",
+                            bead_id="beads-dispatch-42",
+                        )
+                    except Exception:
+                        pass
+
+        assert "single" in builder_calls
+        assert "worker" not in builder_calls
+
+    @pytest.mark.asyncio
+    async def test_spawn_single_task_receives_correct_bead_id(
+        self, prod_spawner: SubprocessSpawner, project_with_prompt: Path
+    ) -> None:
+        """spawn() passes the correct bead_id to _build_single_task_prompt."""
+        captured_bead_id: list[str] = []
+
+        original_single = prod_spawner._build_single_task_prompt
+
+        def capture_single(role, content, worker_id, bead_id):
+            captured_bead_id.append(bead_id)
+            return original_single(role, content, worker_id, bead_id)
+
+        with patch.object(prod_spawner, "_build_single_task_prompt", side_effect=capture_single):
+            with patch("mab.spawner.shutil.which", return_value="/usr/bin/claude"):
+                try:
+                    await prod_spawner.spawn(
+                        role="dev",
+                        project_path=str(project_with_prompt),
+                        worker_id="worker-test-3",
+                        bead_id="beads-xyz-99",
+                    )
+                except Exception:
+                    pass
+
+        assert captured_bead_id == ["beads-xyz-99"]
+
+    @pytest.mark.asyncio
+    async def test_spawn_worker_prompt_receives_role_content(
+        self, prod_spawner: SubprocessSpawner, project_with_prompt: Path
+    ) -> None:
+        """spawn() reads prompt file and passes content to _build_worker_prompt."""
+        captured_content: list[str] = []
+
+        original_worker = prod_spawner._build_worker_prompt
+
+        def capture_worker(role, content, worker_id, *args, **kwargs):
+            captured_content.append(content)
+            return original_worker(role, content, worker_id, *args, **kwargs)
+
+        with patch.object(prod_spawner, "_build_worker_prompt", side_effect=capture_worker):
+            with patch("mab.spawner.shutil.which", return_value="/usr/bin/claude"):
+                try:
+                    await prod_spawner.spawn(
+                        role="dev",
+                        project_path=str(project_with_prompt),
+                        worker_id="worker-test-4",
+                        bead_id=None,
+                    )
+                except Exception:
+                    pass
+
+        assert len(captured_content) == 1
+        assert "# Dev role instructions" in captured_content[0]
+
+    @pytest.mark.asyncio
+    async def test_spawn_single_task_receives_role_content(
+        self, prod_spawner: SubprocessSpawner, project_with_prompt: Path
+    ) -> None:
+        """spawn() reads prompt file and passes content to _build_single_task_prompt."""
+        captured_content: list[str] = []
+
+        original_single = prod_spawner._build_single_task_prompt
+
+        def capture_single(role, content, worker_id, bead_id):
+            captured_content.append(content)
+            return original_single(role, content, worker_id, bead_id)
+
+        with patch.object(prod_spawner, "_build_single_task_prompt", side_effect=capture_single):
+            with patch("mab.spawner.shutil.which", return_value="/usr/bin/claude"):
+                try:
+                    await prod_spawner.spawn(
+                        role="dev",
+                        project_path=str(project_with_prompt),
+                        worker_id="worker-test-5",
+                        bead_id="beads-abc",
+                    )
+                except Exception:
+                    pass
+
+        assert len(captured_content) == 1
+        assert "# Dev role instructions" in captured_content[0]
 
 
 class TestWorkerPromptLabelFilters:
