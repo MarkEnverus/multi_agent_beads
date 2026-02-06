@@ -1923,7 +1923,7 @@ def dispatch_start(
     try:
         client = get_default_client()
 
-        result = client.call(
+        client.call(
             "dispatch.start",
             {
                 "project_path": project_path,
