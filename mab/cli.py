@@ -1858,6 +1858,186 @@ def cleanup(
         raise SystemExit(1)
 
 
+# Dispatch command group for daemon-controlled worker polling
+@cli.group()
+@click.pass_context
+def dispatch(ctx: click.Context) -> None:
+    """Manage the worker dispatch loop.
+
+    The dispatch loop polls for available beads and spawns single-task workers
+    to process them. This is more cost-efficient than having Claude poll.
+
+    \b
+    Examples:
+      mab dispatch start           # Start dispatch for current project
+      mab dispatch status          # Check dispatch loop status
+      mab dispatch stop            # Stop the dispatch loop
+    """
+    pass
+
+
+@dispatch.command("start")
+@click.option(
+    "--roles",
+    "-r",
+    multiple=True,
+    default=None,
+    help="Roles to dispatch (can be specified multiple times). Default: dev",
+)
+@click.option(
+    "--interval",
+    "-i",
+    type=float,
+    default=5.0,
+    help="Poll interval in seconds (default: 5)",
+)
+@click.option(
+    "--project",
+    "-p",
+    type=click.Path(exists=True, file_okay=False, resolve_path=True),
+    default=None,
+    help="Project directory (defaults to current directory)",
+)
+@click.pass_context
+def dispatch_start(
+    ctx: click.Context,
+    roles: tuple[str, ...] | None,
+    interval: float,
+    project: str | None,
+) -> None:
+    """Start the worker dispatch loop.
+
+    Begins polling for available beads and spawning single-task workers.
+    Workers are spawned when ready work is found for a role and no worker
+    is currently active for that role.
+
+    \b
+    Examples:
+      mab dispatch start                    # Start with default (dev) role
+      mab dispatch start -r dev -r qa       # Start with dev and qa roles
+      mab dispatch start -i 10              # Poll every 10 seconds
+    """
+    project_path = project or str(ctx.obj["town_path"])
+    roles_list = list(roles) if roles else ["dev"]
+
+    try:
+        client = get_default_client()
+
+        result = client.call(
+            "dispatch.start",
+            {
+                "project_path": project_path,
+                "roles": roles_list,
+                "interval": interval,
+            },
+        )
+
+        click.secho("✓ Dispatch loop started", fg="green")
+        click.echo(f"  Project: {project_path}")
+        click.echo(f"  Roles: {', '.join(roles_list)}")
+        click.echo(f"  Poll interval: {interval}s")
+        click.echo("\nStop with: mab dispatch stop")
+
+    except RPCDaemonNotRunningError:
+        click.secho(
+            "Error: Daemon is not running. Start it with 'mab start -d'",
+            fg="red",
+            err=True,
+        )
+        raise SystemExit(1)
+    except Exception as e:
+        click.secho(f"Error: {e}", fg="red", err=True)
+        raise SystemExit(1)
+
+
+@dispatch.command("stop")
+@click.pass_context
+def dispatch_stop(ctx: click.Context) -> None:
+    """Stop the worker dispatch loop.
+
+    Disables the dispatch loop. Any in-progress workers will complete
+    their current task but no new workers will be spawned.
+    """
+    try:
+        client = get_default_client()
+        client.call("dispatch.stop", {})
+        click.secho("✓ Dispatch loop stopped", fg="green")
+
+    except RPCDaemonNotRunningError:
+        click.secho(
+            "Error: Daemon is not running.",
+            fg="red",
+            err=True,
+        )
+        raise SystemExit(1)
+    except Exception as e:
+        click.secho(f"Error: {e}", fg="red", err=True)
+        raise SystemExit(1)
+
+
+@dispatch.command("status")
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output as JSON",
+)
+@click.pass_context
+def dispatch_status(ctx: click.Context, json_output: bool) -> None:
+    """Show status of the dispatch loop.
+
+    Displays whether the dispatch loop is running, which roles are being
+    polled, and queue depth per role.
+    """
+    import json
+
+    try:
+        client = get_default_client()
+        result = client.call("dispatch.status", {})
+
+        if json_output:
+            click.echo(json.dumps(result, indent=2))
+            return
+
+        enabled = result.get("enabled", False)
+        if enabled:
+            click.secho("Dispatch loop: RUNNING", fg="green", bold=True)
+            click.echo(f"  Project: {result.get('project_path', '-')}")
+            click.echo(f"  Roles: {', '.join(result.get('roles', []))}")
+            click.echo(f"  Poll interval: {result.get('interval_seconds', 5)}s")
+
+            # Show queue depth per role if available
+            queue_depth = result.get("queue_depth", {})
+            if queue_depth:
+                click.echo("\n  Queue depth:")
+                for role, depth in queue_depth.items():
+                    click.echo(f"    {role}: {depth}")
+
+            # Show active workers per role if available
+            active_workers = result.get("active_workers", {})
+            if active_workers:
+                click.echo("\n  Active workers:")
+                for role, workers in active_workers.items():
+                    if workers:
+                        click.echo(f"    {role}: {', '.join(workers)}")
+                    else:
+                        click.echo(f"    {role}: (none)")
+        else:
+            click.secho("Dispatch loop: STOPPED", fg="yellow")
+            click.echo("\nStart with: mab dispatch start")
+
+    except RPCDaemonNotRunningError:
+        click.secho(
+            "Error: Daemon is not running. Start it with 'mab start -d'",
+            fg="red",
+            err=True,
+        )
+        raise SystemExit(1)
+    except Exception as e:
+        click.secho(f"Error: {e}", fg="red", err=True)
+        raise SystemExit(1)
+
+
 @cli.command("cleanup-worktrees")
 @click.option(
     "--project",
