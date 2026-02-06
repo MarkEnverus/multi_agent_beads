@@ -1119,9 +1119,7 @@ class TestDispatchForRoleStaleRecovery:
         # Stale worker is no longer running, so _has_active_worker returns False
         with patch.object(daemon, "_is_worker_still_running", return_value=False):
             with patch.object(daemon, "_run_bd_ready", return_value=beads):
-                with patch.object(
-                    daemon, "_get_project_manager", return_value=mock_manager
-                ):
+                with patch.object(daemon, "_get_project_manager", return_value=mock_manager):
                     await daemon._dispatch_for_role("dev", project_path)
 
         # New worker should have been spawned
@@ -1151,9 +1149,7 @@ class TestDispatchForRoleStaleRecovery:
         mock_proc.returncode = 0
 
         with patch("mab.daemon.shutil.which", return_value="/usr/bin/bd"):
-            with patch(
-                "asyncio.create_subprocess_exec", return_value=mock_proc
-            ) as mock_exec:
+            with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
                 await daemon._run_bd_ready("dev", str(tmp_path))
 
         call_args = mock_exec.call_args[0]

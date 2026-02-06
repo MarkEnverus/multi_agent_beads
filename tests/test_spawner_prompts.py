@@ -146,9 +146,7 @@ class TestBuildSingleTaskPrompt:
 class TestPromptSelection:
     """Tests that spawn methods choose the correct prompt builder."""
 
-    def test_spawn_without_bead_uses_polling_prompt(
-        self, spawner: SubprocessSpawner
-    ) -> None:
+    def test_spawn_without_bead_uses_polling_prompt(self, spawner: SubprocessSpawner) -> None:
         """Without bead_id, SubprocessSpawner uses _build_worker_prompt."""
         worker_prompt = spawner._build_worker_prompt("dev", "# content", "w-1")
         assert "CONTINUOUS POLLING" in worker_prompt
@@ -422,13 +420,13 @@ class TestPromptContentIntegrity:
     def test_worker_prompt_contains_bd_alias(self, spawner: SubprocessSpawner) -> None:
         """Worker prompt sets up bd alias to use BD_ROOT database."""
         result = spawner._build_worker_prompt("dev", "", "worker-1")
-        assert 'alias bd=' in result
+        assert "alias bd=" in result
         assert "BD_ROOT" in result
 
     def test_single_task_prompt_contains_bd_alias(self, spawner: SubprocessSpawner) -> None:
         """Single task prompt also sets up bd alias."""
         result = spawner._build_single_task_prompt("dev", "", "worker-1", "beads-123")
-        assert 'alias bd=' in result
+        assert "alias bd=" in result
         assert "BD_ROOT" in result
 
     def test_worker_prompt_has_idle_exit_logic(self, spawner: SubprocessSpawner) -> None:
@@ -512,9 +510,7 @@ class TestPromptTypeDispatchDifferentiation:
         result = spawner._build_worker_prompt("dev", "", "worker-1")
         assert "5 minutes" in result
 
-    def test_single_task_contains_claim_for_specific_bead(
-        self, spawner: SubprocessSpawner
-    ) -> None:
+    def test_single_task_contains_claim_for_specific_bead(self, spawner: SubprocessSpawner) -> None:
         """Single task prompt embeds the actual bead ID in claim command."""
         result = spawner._build_single_task_prompt("dev", "", "w-1", "beads-test-99")
         assert "bd update beads-test-99 --status=in_progress" in result
