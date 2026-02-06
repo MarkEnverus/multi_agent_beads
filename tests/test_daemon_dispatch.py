@@ -343,6 +343,128 @@ class TestDispatchForRole:
         # Worker should NOT be registered since spawn failed
         assert project_path not in daemon._active_workers_by_role
 
+    @pytest.mark.asyncio
+    async def test_cleans_up_stale_worker_before_dispatching(self, tmp_path: Path) -> None:
+        """Test _dispatch_for_role dispatches when tracked worker is dead."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_path = str(tmp_path / "project")
+
+        # Register a stale (dead) worker
+        daemon._active_workers_by_role[project_path] = {"dev": {"worker-dead"}}
+
+        beads = [{"id": "bead-001", "title": "Fix bug"}]
+        mock_worker = Worker(
+            id="worker-new",
+            role="dev",
+            project_path=project_path,
+            status=WorkerStatus.RUNNING,
+            pid=99999,
+        )
+        mock_manager = AsyncMock()
+        mock_manager.spawn = AsyncMock(return_value=mock_worker)
+
+        # _has_active_worker calls _is_worker_still_running, which returns False for dead worker
+        with patch.object(daemon, "_is_worker_still_running", return_value=False):
+            with patch.object(daemon, "_run_bd_ready", return_value=beads):
+                with patch.object(daemon, "_get_project_manager", return_value=mock_manager):
+                    await daemon._dispatch_for_role("dev", project_path)
+
+        # New worker should have been spawned and registered
+        mock_manager.spawn.assert_called_once()
+        assert "worker-new" in daemon._active_workers_by_role[project_path]["dev"]
+
+
+class TestActiveWorkerTracking:
+    """Tests for active worker registration, unregistration, and staleness checks."""
+
+    def test_register_active_worker(self, tmp_path: Path) -> None:
+        """Test _register_active_worker adds worker to tracking dict."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        daemon._register_active_worker("worker-1", "dev", "/project/a")
+
+        assert "worker-1" in daemon._active_workers_by_role["/project/a"]["dev"]
+
+    def test_register_multiple_workers_same_role(self, tmp_path: Path) -> None:
+        """Test registering multiple workers for the same role."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        daemon._register_active_worker("worker-1", "dev", "/project/a")
+        daemon._register_active_worker("worker-2", "dev", "/project/a")
+
+        assert daemon._active_workers_by_role["/project/a"]["dev"] == {"worker-1", "worker-2"}
+
+    def test_register_workers_different_roles(self, tmp_path: Path) -> None:
+        """Test registering workers for different roles."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        daemon._register_active_worker("worker-1", "dev", "/project/a")
+        daemon._register_active_worker("worker-2", "qa", "/project/a")
+
+        assert "worker-1" in daemon._active_workers_by_role["/project/a"]["dev"]
+        assert "worker-2" in daemon._active_workers_by_role["/project/a"]["qa"]
+
+    def test_unregister_active_worker(self, tmp_path: Path) -> None:
+        """Test _unregister_active_worker removes worker from tracking."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        daemon._register_active_worker("worker-1", "dev", "/project/a")
+        daemon._unregister_active_worker("worker-1", "dev", "/project/a")
+
+        assert "worker-1" not in daemon._active_workers_by_role["/project/a"]["dev"]
+
+    def test_unregister_nonexistent_worker(self, tmp_path: Path) -> None:
+        """Test unregistering a worker that doesn't exist doesn't raise."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        # Should not raise
+        daemon._unregister_active_worker("worker-ghost", "dev", "/project/a")
+
+    def test_unregister_nonexistent_project(self, tmp_path: Path) -> None:
+        """Test unregistering from a nonexistent project doesn't raise."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        daemon._unregister_active_worker("worker-1", "dev", "/no/such/project")
+
+    def test_has_active_worker_returns_true(self, tmp_path: Path) -> None:
+        """Test _has_active_worker returns True when worker is running."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_path = "/project/a"
+        daemon._active_workers_by_role[project_path] = {"dev": {"worker-1"}}
+
+        with patch.object(daemon, "_is_worker_still_running", return_value=True):
+            assert daemon._has_active_worker("dev", project_path) is True
+
+    def test_has_active_worker_returns_false_when_empty(self, tmp_path: Path) -> None:
+        """Test _has_active_worker returns False when no workers tracked."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        assert daemon._has_active_worker("dev", "/project/a") is False
+
+    def test_has_active_worker_cleans_stale_entries(self, tmp_path: Path) -> None:
+        """Test _has_active_worker removes stale (dead) worker entries."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_path = "/project/a"
+        daemon._active_workers_by_role[project_path] = {"dev": {"worker-dead"}}
+
+        with patch.object(daemon, "_is_worker_still_running", return_value=False):
+            result = daemon._has_active_worker("dev", project_path)
+
+        assert result is False
+        # Stale entry should be cleaned up
+        assert "worker-dead" not in daemon._active_workers_by_role[project_path]["dev"]
+
+    def test_has_active_worker_across_all_projects(self, tmp_path: Path) -> None:
+        """Test _has_active_worker without project_path checks all projects."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        daemon._active_workers_by_role["/project/a"] = {"dev": {"worker-1"}}
+        daemon._active_workers_by_role["/project/b"] = {"dev": {"worker-2"}}
+
+        with patch.object(daemon, "_is_worker_still_running", return_value=True):
+            assert daemon._has_active_worker("dev") is True
+
+    def test_has_active_worker_across_all_projects_all_dead(self, tmp_path: Path) -> None:
+        """Test _has_active_worker returns False when all workers are dead."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        daemon._active_workers_by_role["/project/a"] = {"dev": {"worker-1"}}
+        daemon._active_workers_by_role["/project/b"] = {"dev": {"worker-2"}}
+
+        with patch.object(daemon, "_is_worker_still_running", return_value=False):
+            assert daemon._has_active_worker("dev") is False
+
 
 class TestWorkerDispatchLoop:
     """Tests for the _worker_dispatch_loop method."""
@@ -969,3 +1091,74 @@ class TestDispatchStatusWithTask:
         assert result["project_path"] is None
         assert result["roles"] == []
         assert result["task_running"] is False
+
+
+class TestDispatchForRoleStaleRecovery:
+    """Tests for dispatch recovering after stale worker cleanup."""
+
+    @pytest.mark.asyncio
+    async def test_dispatches_after_stale_worker_cleaned(self, tmp_path: Path) -> None:
+        """After stale worker is cleaned up, dispatch spawns a new worker."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_path = str(tmp_path / "project")
+
+        # Register a stale (dead) worker
+        daemon._active_workers_by_role[project_path] = {"dev": {"worker-dead"}}
+
+        beads = [{"id": "bead-001", "title": "Fix bug", "priority": 1}]
+        mock_worker = Worker(
+            id="worker-new",
+            role="dev",
+            project_path=project_path,
+            status=WorkerStatus.RUNNING,
+            pid=99999,
+        )
+        mock_manager = AsyncMock()
+        mock_manager.spawn = AsyncMock(return_value=mock_worker)
+
+        # Stale worker is no longer running, so _has_active_worker returns False
+        with patch.object(daemon, "_is_worker_still_running", return_value=False):
+            with patch.object(daemon, "_run_bd_ready", return_value=beads):
+                with patch.object(
+                    daemon, "_get_project_manager", return_value=mock_manager
+                ):
+                    await daemon._dispatch_for_role("dev", project_path)
+
+        # New worker should have been spawned
+        mock_manager.spawn.assert_called_once_with(
+            role="dev",
+            project_path=project_path,
+            auto_restart=False,
+            bead_id="bead-001",
+        )
+
+        # New worker registered, stale one cleaned
+        active = daemon._active_workers_by_role[project_path]["dev"]
+        assert "worker-new" in active
+        assert "worker-dead" not in active
+
+    @pytest.mark.asyncio
+    async def test_bd_ready_command_includes_db_path(self, tmp_path: Path) -> None:
+        """Verify _run_bd_ready passes --db with correct beads.db path."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+
+        beads_dir = tmp_path / ".beads"
+        beads_dir.mkdir()
+        (beads_dir / "beads.db").touch()
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"[]", b""))
+        mock_proc.returncode = 0
+
+        with patch("mab.daemon.shutil.which", return_value="/usr/bin/bd"):
+            with patch(
+                "asyncio.create_subprocess_exec", return_value=mock_proc
+            ) as mock_exec:
+                await daemon._run_bd_ready("dev", str(tmp_path))
+
+        call_args = mock_exec.call_args[0]
+        assert "--db" in call_args
+        db_idx = list(call_args).index("--db")
+        assert call_args[db_idx + 1] == str(tmp_path / ".beads" / "beads.db")
+        assert "--json" in call_args
+        assert "ready" in call_args
