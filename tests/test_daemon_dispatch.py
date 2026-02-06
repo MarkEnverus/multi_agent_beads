@@ -3,12 +3,12 @@
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from mab.daemon import Daemon
-from mab.workers import Worker, WorkerSpawnError, WorkerStatus
+from mab.workers import Worker, WorkerNotFoundError, WorkerSpawnError, WorkerStatus
 
 
 class TestDispatchLoopState:
@@ -561,3 +561,411 @@ class TestHandleWorkerSpawnBeadId:
             auto_restart=True,
             bead_id=None,
         )
+
+
+class TestHasActiveWorker:
+    """Tests for _has_active_worker method."""
+
+    def test_no_active_workers_returns_false(self, tmp_path: Path) -> None:
+        """Returns False when no workers tracked at all."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        assert daemon._has_active_worker("dev", str(tmp_path)) is False
+
+    def test_active_running_worker_returns_true(self, tmp_path: Path) -> None:
+        """Returns True when a running worker exists for the role."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_path = str(tmp_path / "project")
+
+        daemon._active_workers_by_role[project_path] = {"dev": {"worker-1"}}
+
+        with patch.object(daemon, "_is_worker_still_running", return_value=True):
+            assert daemon._has_active_worker("dev", project_path) is True
+
+    def test_stale_worker_cleaned_up(self, tmp_path: Path) -> None:
+        """Stale workers (no longer running) are cleaned up and return False."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_path = str(tmp_path / "project")
+
+        daemon._active_workers_by_role[project_path] = {"dev": {"worker-stale"}}
+
+        with patch.object(daemon, "_is_worker_still_running", return_value=False):
+            assert daemon._has_active_worker("dev", project_path) is False
+
+        # The stale worker should have been removed
+        assert "worker-stale" not in daemon._active_workers_by_role[project_path].get("dev", set())
+
+    def test_different_role_not_counted(self, tmp_path: Path) -> None:
+        """Worker for a different role doesn't count."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_path = str(tmp_path / "project")
+
+        daemon._active_workers_by_role[project_path] = {"qa": {"worker-qa"}}
+
+        with patch.object(daemon, "_is_worker_still_running", return_value=True):
+            assert daemon._has_active_worker("dev", project_path) is False
+
+    def test_no_project_path_checks_all(self, tmp_path: Path) -> None:
+        """Without project_path, checks across all projects."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_a = str(tmp_path / "project-a")
+        project_b = str(tmp_path / "project-b")
+
+        daemon._active_workers_by_role[project_a] = {"dev": set()}
+        daemon._active_workers_by_role[project_b] = {"dev": {"worker-b"}}
+
+        with patch.object(daemon, "_is_worker_still_running", return_value=True):
+            assert daemon._has_active_worker("dev") is True
+
+    def test_no_project_path_all_stale(self, tmp_path: Path) -> None:
+        """Without project_path, returns False if all workers are stale."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_a = str(tmp_path / "project-a")
+
+        daemon._active_workers_by_role[project_a] = {"dev": {"worker-dead"}}
+
+        with patch.object(daemon, "_is_worker_still_running", return_value=False):
+            assert daemon._has_active_worker("dev") is False
+
+
+class TestRegisterUnregisterWorker:
+    """Tests for _register_active_worker and _unregister_active_worker."""
+
+    def test_register_creates_nested_structure(self, tmp_path: Path) -> None:
+        """Register creates project and role entries when missing."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_path = str(tmp_path / "project")
+
+        daemon._register_active_worker("worker-1", "dev", project_path)
+
+        assert "worker-1" in daemon._active_workers_by_role[project_path]["dev"]
+
+    def test_register_multiple_workers(self, tmp_path: Path) -> None:
+        """Multiple workers can be registered for same role."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_path = str(tmp_path / "project")
+
+        daemon._register_active_worker("worker-1", "dev", project_path)
+        daemon._register_active_worker("worker-2", "dev", project_path)
+
+        assert daemon._active_workers_by_role[project_path]["dev"] == {"worker-1", "worker-2"}
+
+    def test_unregister_removes_worker(self, tmp_path: Path) -> None:
+        """Unregister removes the worker from tracking."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_path = str(tmp_path / "project")
+
+        daemon._register_active_worker("worker-1", "dev", project_path)
+        daemon._unregister_active_worker("worker-1", "dev", project_path)
+
+        assert "worker-1" not in daemon._active_workers_by_role[project_path]["dev"]
+
+    def test_unregister_nonexistent_no_error(self, tmp_path: Path) -> None:
+        """Unregistering a worker that doesn't exist doesn't raise."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_path = str(tmp_path / "project")
+
+        # No error when project doesn't exist
+        daemon._unregister_active_worker("worker-ghost", "dev", project_path)
+
+    def test_register_different_roles(self, tmp_path: Path) -> None:
+        """Different roles are tracked independently."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        project_path = str(tmp_path / "project")
+
+        daemon._register_active_worker("worker-dev", "dev", project_path)
+        daemon._register_active_worker("worker-qa", "qa", project_path)
+
+        assert "worker-dev" in daemon._active_workers_by_role[project_path]["dev"]
+        assert "worker-qa" in daemon._active_workers_by_role[project_path]["qa"]
+
+
+class TestIsWorkerStillRunning:
+    """Tests for _is_worker_still_running method."""
+
+    def test_running_worker_returns_true(self, tmp_path: Path) -> None:
+        """Returns True for a running worker with active process."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        worker = Worker(
+            id="worker-1",
+            role="dev",
+            project_path=str(tmp_path),
+            status=WorkerStatus.RUNNING,
+            pid=12345,
+        )
+        mock_manager = MagicMock()
+        mock_manager.get = MagicMock(return_value=worker)
+
+        with patch.object(daemon, "_find_worker_manager", return_value=mock_manager):
+            with patch.object(daemon, "_is_process_running", return_value=True):
+                assert daemon._is_worker_still_running("worker-1") is True
+
+    def test_no_manager_returns_false(self, tmp_path: Path) -> None:
+        """Returns False when worker's manager can't be found."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+
+        with patch.object(daemon, "_find_worker_manager", return_value=None):
+            assert daemon._is_worker_still_running("worker-ghost") is False
+
+    def test_stopped_worker_returns_false(self, tmp_path: Path) -> None:
+        """Returns False for a worker that's not in RUNNING status."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        worker = Worker(
+            id="worker-1",
+            role="dev",
+            project_path=str(tmp_path),
+            status=WorkerStatus.STOPPED,
+            pid=12345,
+        )
+        mock_manager = MagicMock()
+        mock_manager.get = MagicMock(return_value=worker)
+
+        with patch.object(daemon, "_find_worker_manager", return_value=mock_manager):
+            assert daemon._is_worker_still_running("worker-1") is False
+
+    def test_no_pid_returns_false(self, tmp_path: Path) -> None:
+        """Returns False when worker has no PID."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        worker = Worker(
+            id="worker-1",
+            role="dev",
+            project_path=str(tmp_path),
+            status=WorkerStatus.RUNNING,
+            pid=None,
+        )
+        mock_manager = MagicMock()
+        mock_manager.get = MagicMock(return_value=worker)
+
+        with patch.object(daemon, "_find_worker_manager", return_value=mock_manager):
+            assert daemon._is_worker_still_running("worker-1") is False
+
+    def test_worker_not_found_returns_false(self, tmp_path: Path) -> None:
+        """Returns False when worker lookup raises WorkerNotFoundError."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        mock_manager = MagicMock()
+        mock_manager.get = MagicMock(side_effect=WorkerNotFoundError("not found"))
+
+        with patch.object(daemon, "_find_worker_manager", return_value=mock_manager):
+            assert daemon._is_worker_still_running("worker-gone") is False
+
+    def test_dead_process_returns_false(self, tmp_path: Path) -> None:
+        """Returns False when process is no longer running."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        worker = Worker(
+            id="worker-1",
+            role="dev",
+            project_path=str(tmp_path),
+            status=WorkerStatus.RUNNING,
+            pid=99999,
+        )
+        mock_manager = MagicMock()
+        mock_manager.get = MagicMock(return_value=worker)
+
+        with patch.object(daemon, "_find_worker_manager", return_value=mock_manager):
+            with patch.object(daemon, "_is_process_running", return_value=False):
+                assert daemon._is_worker_still_running("worker-1") is False
+
+
+class TestDispatchLoopCancellation:
+    """Tests for dispatch loop cancellation and edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_cancelled_error_stops_loop(self, tmp_path: Path) -> None:
+        """CancelledError breaks out of the loop cleanly."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        daemon._dispatch_enabled = True
+        daemon._dispatch_project_path = str(tmp_path)
+        daemon._dispatch_roles = ["dev"]
+        daemon._dispatch_interval_seconds = 0.01
+
+        async def raise_cancelled(*args, **kwargs):
+            raise asyncio.CancelledError()
+
+        with patch.object(daemon, "_dispatch_for_role", side_effect=raise_cancelled):
+            # Should not raise - CancelledError is caught
+            await daemon._worker_dispatch_loop()
+
+    @pytest.mark.asyncio
+    async def test_stop_dispatch_cancels_running_task(self, tmp_path: Path) -> None:
+        """stop_dispatch cancels the running asyncio task."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+
+        # Create a mock task that's not done
+        mock_task = MagicMock()
+        mock_task.done.return_value = False
+        daemon._dispatch_task = mock_task
+
+        daemon._dispatch_enabled = True
+        daemon.stop_dispatch()
+
+        assert daemon._dispatch_enabled is False
+        mock_task.cancel.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_stop_dispatch_skips_cancel_if_task_done(self, tmp_path: Path) -> None:
+        """stop_dispatch doesn't cancel an already-finished task."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+
+        mock_task = MagicMock()
+        mock_task.done.return_value = True
+        daemon._dispatch_task = mock_task
+
+        daemon.stop_dispatch()
+
+        mock_task.cancel.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_loop_checks_enabled_between_roles(self, tmp_path: Path) -> None:
+        """Dispatch loop checks enabled flag between role iterations."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        daemon._dispatch_enabled = True
+        daemon._dispatch_project_path = str(tmp_path)
+        daemon._dispatch_roles = ["dev", "qa", "tech_lead"]
+        daemon._dispatch_interval_seconds = 0.01
+
+        dispatched_roles: list[str] = []
+
+        async def mock_dispatch(role, project_path):
+            dispatched_roles.append(role)
+            if role == "dev":
+                # Disable dispatch after first role
+                daemon._dispatch_enabled = False
+
+        with patch.object(daemon, "_dispatch_for_role", side_effect=mock_dispatch):
+            await daemon._worker_dispatch_loop()
+
+        # Should have only dispatched for dev before breaking
+        assert dispatched_roles == ["dev"]
+
+
+class TestRunBdReadyEdgeCases:
+    """Additional edge case tests for _run_bd_ready."""
+
+    @pytest.mark.asyncio
+    async def test_bd_ready_returns_dict_not_list(self, tmp_path: Path) -> None:
+        """Test _run_bd_ready returns empty when JSON output is a dict not list."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+
+        beads_dir = tmp_path / ".beads"
+        beads_dir.mkdir()
+        (beads_dir / "beads.db").touch()
+
+        # bd might return a dict in some error case
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(
+            return_value=(json.dumps({"error": "unexpected"}).encode(), b"")
+        )
+        mock_proc.returncode = 0
+
+        with patch("mab.daemon.shutil.which", return_value="/usr/bin/bd"):
+            with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+                result = await daemon._run_bd_ready("dev", str(tmp_path))
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_bd_ready_generic_exception(self, tmp_path: Path) -> None:
+        """Test _run_bd_ready handles generic exceptions from subprocess."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+
+        beads_dir = tmp_path / ".beads"
+        beads_dir.mkdir()
+        (beads_dir / "beads.db").touch()
+
+        with patch("mab.daemon.shutil.which", return_value="/usr/bin/bd"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                side_effect=OSError("Permission denied"),
+            ):
+                result = await daemon._run_bd_ready("dev", str(tmp_path))
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_bd_ready_tech_lead_label(self, tmp_path: Path) -> None:
+        """Test _run_bd_ready uses 'architecture' label for tech_lead role."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+
+        beads_dir = tmp_path / ".beads"
+        beads_dir.mkdir()
+        (beads_dir / "beads.db").touch()
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"[]", b""))
+        mock_proc.returncode = 0
+
+        with patch("mab.daemon.shutil.which", return_value="/usr/bin/bd"):
+            with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+                await daemon._run_bd_ready("tech_lead", str(tmp_path))
+
+        call_args = mock_exec.call_args[0]
+        assert "-l" in call_args
+        assert "architecture" in call_args
+
+    @pytest.mark.asyncio
+    async def test_bd_ready_reviewer_label(self, tmp_path: Path) -> None:
+        """Test _run_bd_ready uses 'review' label for reviewer role."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+
+        beads_dir = tmp_path / ".beads"
+        beads_dir.mkdir()
+        (beads_dir / "beads.db").touch()
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"[]", b""))
+        mock_proc.returncode = 0
+
+        with patch("mab.daemon.shutil.which", return_value="/usr/bin/bd"):
+            with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+                await daemon._run_bd_ready("reviewer", str(tmp_path))
+
+        call_args = mock_exec.call_args[0]
+        assert "-l" in call_args
+        assert "review" in call_args
+
+
+class TestDispatchStatusWithTask:
+    """Tests for dispatch status reporting with task state."""
+
+    @pytest.mark.asyncio
+    async def test_status_shows_task_running(self, tmp_path: Path) -> None:
+        """dispatch.status reports task_running=True when task is active."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        daemon._dispatch_enabled = True
+        daemon._dispatch_project_path = str(tmp_path)
+        daemon._dispatch_roles = ["dev"]
+
+        mock_task = MagicMock()
+        mock_task.done.return_value = False
+        daemon._dispatch_task = mock_task
+
+        result = await daemon._handle_dispatch_status({})
+
+        assert result["task_running"] is True
+
+    @pytest.mark.asyncio
+    async def test_status_shows_task_not_running_when_done(self, tmp_path: Path) -> None:
+        """dispatch.status reports task_running=False when task is done."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+        daemon._dispatch_enabled = True
+        daemon._dispatch_project_path = str(tmp_path)
+        daemon._dispatch_roles = ["dev"]
+
+        mock_task = MagicMock()
+        mock_task.done.return_value = True
+        daemon._dispatch_task = mock_task
+
+        result = await daemon._handle_dispatch_status({})
+
+        assert result["task_running"] is False
+
+    @pytest.mark.asyncio
+    async def test_status_disabled_defaults(self, tmp_path: Path) -> None:
+        """dispatch.status reports correct defaults when dispatch is disabled."""
+        daemon = Daemon(mab_dir=tmp_path / ".mab")
+
+        result = await daemon._handle_dispatch_status({})
+
+        assert result["enabled"] is False
+        assert result["project_path"] is None
+        assert result["roles"] == []
+        assert result["task_running"] is False
