@@ -22,7 +22,7 @@ from dashboard.config import (
     PROJECT_ROOT,
     STATIC_DIR,
     TEMPLATES_DIR,
-    TOWN_NAME,
+    get_town_name,
     setup_logging,
 )
 from dashboard.exceptions import (
@@ -62,7 +62,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         HOST,
         PORT,
         LOG_LEVEL_STR,
-        TOWN_NAME,
+        get_town_name(),
     )
     logger.info(
         "Routers registered: /api/agents, /api/beads, /api/logs, /api/towns, /api/workers, /ws"
@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     asyncio.create_task(warm_cache())
     yield
     # Shutdown - close all WebSocket connections first
-    logger.info("Dashboard shutting down (town=%s)", TOWN_NAME)
+    logger.info("Dashboard shutting down (town=%s)", get_town_name())
     logger.info("Closing WebSocket connections...")
     try:
         await asyncio.wait_for(ws_manager.shutdown(), timeout=5.0)
@@ -178,7 +178,7 @@ async def admin_page(request: Request) -> HTMLResponse:
         {
             "request": request,
             "project_path": str(PROJECT_ROOT),
-            "town_name": TOWN_NAME,
+            "town_name": get_town_name(),
             "port": PORT,
         },
     )
