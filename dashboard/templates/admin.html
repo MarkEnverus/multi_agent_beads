@@ -1345,10 +1345,34 @@
         refreshWorkers();
     }
 
-    function renderWorkers(workers) {
+    // Defer worker list updates while user is hovering to prevent button destruction mid-click
+    let workerListHovered = false;
+    let pendingWorkerUpdate = null;
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const wlContainer = document.getElementById('workers-list');
+        if (wlContainer) {
+            wlContainer.addEventListener('mouseenter', () => { workerListHovered = true; });
+            wlContainer.addEventListener('mouseleave', () => {
+                workerListHovered = false;
+                if (pendingWorkerUpdate) {
+                    renderWorkers(pendingWorkerUpdate);
+                    pendingWorkerUpdate = null;
+                }
+            });
+        }
+    });
+
+    function renderWorkers(updatedWorkers) {
         const container = document.getElementById('workers-list');
 
-        if (workers.length === 0) {
+        // Defer updates while user is interacting with the worker list
+        if (workerListHovered) {
+            pendingWorkerUpdate = updatedWorkers;
+            return;
+        }
+
+        if (updatedWorkers.length === 0) {
             container.innerHTML = `
                 <div class="px-6 py-8 text-center text-gray-400">
                     <svg class="h-12 w-12 mx-auto mb-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1361,7 +1385,168 @@
             return;
         }
 
-        container.innerHTML = workers.map(worker => renderWorkerRow(worker)).join('');
+        // Build a map of existing worker DOM elements by worker ID
+        const existingRows = container.querySelectorAll('[data-worker-id]');
+        const existingMap = new Map();
+        existingRows.forEach(row => existingMap.set(row.getAttribute('data-worker-id'), row));
+
+        // If there are no existing worker rows (initial load or empty state), do a full render
+        if (existingMap.size === 0) {
+            container.innerHTML = updatedWorkers.map(worker => renderWorkerRow(worker)).join('');
+            return;
+        }
+
+        const updatedIds = new Set(updatedWorkers.map(w => w.id));
+
+        // Remove workers that no longer exist
+        existingMap.forEach((row, id) => {
+            if (!updatedIds.has(id)) {
+                row.remove();
+            }
+        });
+
+        // Clear any non-worker-card placeholder content (e.g. "Loading workers...")
+        container.querySelectorAll(':scope > :not([data-worker-id])').forEach(el => el.remove());
+
+        // Update existing workers or add new ones - using field-level updates to preserve buttons
+        let previousElement = null;
+        for (const worker of updatedWorkers) {
+            const existingRow = existingMap.get(worker.id);
+
+            if (existingRow) {
+                // Field-level update: patch only changed parts, preserving button DOM and event listeners
+                updateWorkerCardFields(existingRow, worker);
+                previousElement = existingRow;
+            } else {
+                // New worker - insert at correct position
+                const temp = document.createElement('div');
+                temp.innerHTML = renderWorkerRow(worker);
+                const newRow = temp.firstElementChild;
+                if (previousElement) {
+                    previousElement.after(newRow);
+                } else {
+                    container.prepend(newRow);
+                }
+                previousElement = newRow;
+            }
+        }
+    }
+
+    // Update individual fields within a worker card without replacing the entire DOM element
+    function updateWorkerCardFields(card, worker) {
+        const statusClass = {
+            'running': 'text-green-400',
+            'stopped': 'text-gray-400',
+            'crashed': 'text-red-400',
+            'failed': 'text-red-400',
+            'restarting': 'text-yellow-400'
+        }[worker.status] || 'text-gray-400';
+
+        const statusBg = {
+            'running': 'bg-green-500',
+            'stopped': 'bg-gray-500',
+            'crashed': 'bg-red-500',
+            'failed': 'bg-red-500',
+            'restarting': 'bg-yellow-500'
+        }[worker.status] || 'bg-gray-500';
+
+        // Update status dot color
+        const statusDot = card.querySelector('.rounded-full');
+        if (statusDot) {
+            statusDot.className = `h-2 w-2 rounded-full ${statusBg}`;
+        }
+
+        // Update status text
+        const statusText = card.querySelector('[data-field="status"]');
+        if (statusText) {
+            statusText.className = `${statusClass} text-sm font-medium`;
+            statusText.textContent = worker.status.toUpperCase();
+        }
+
+        // Update PID and crash count
+        const infoLine = card.querySelector('[data-field="info"]');
+        if (infoLine) {
+            infoLine.innerHTML = `
+                <span class="font-medium">${worker.role}</span>
+                <span class="mx-1">|</span>
+                PID: ${worker.pid || '-'}
+                ${worker.crash_count > 0 ? `<span class="mx-1">|</span> Crashes: <span class="text-red-400">${worker.crash_count}</span>` : ''}
+            `;
+        }
+
+        // Update action buttons only when running state changes - preserve existing button DOM
+        const buttonsContainer = card.querySelector('[data-field="actions"]');
+        if (buttonsContainer) {
+            const shouldShowButtons = worker.status === 'running';
+            const hasButtons = buttonsContainer.children.length > 0;
+            if (shouldShowButtons && !hasButtons) {
+                buttonsContainer.innerHTML = renderActionButtons(worker.id);
+            } else if (!shouldShowButtons && hasButtons) {
+                buttonsContainer.innerHTML = '';
+            }
+        }
+
+        // Update crash info section
+        const hasCrashInfo = worker.status === 'crashed' || worker.status === 'failed';
+        const errorMsg = worker.error_message ? escapeHtml(worker.error_message) : null;
+        const exitCode = worker.exit_code;
+        let crashSection = card.querySelector('[data-field="crash-info"]');
+
+        if (hasCrashInfo) {
+            const crashHtml = renderCrashContent(exitCode, errorMsg);
+            if (crashSection) {
+                crashSection.innerHTML = crashHtml;
+            } else {
+                crashSection = document.createElement('div');
+                crashSection.setAttribute('data-field', 'crash-info');
+                crashSection.className = 'mt-2 ml-6 p-2 bg-red-900/30 border border-red-800/50 rounded text-sm';
+                crashSection.innerHTML = crashHtml;
+                card.appendChild(crashSection);
+            }
+        } else if (crashSection) {
+            crashSection.remove();
+        }
+    }
+
+    function renderActionButtons(workerId) {
+        return `
+            <button onclick="viewWorkerLogs('${workerId}')"
+                    class="p-1.5 text-gray-400 hover:text-primary-400 hover:bg-gray-700 rounded transition-colors"
+                    title="View Logs">
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+            </button>
+            <button onclick="restartWorker('${workerId}')"
+                    class="p-1.5 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 rounded transition-colors"
+                    title="Restart">
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+            </button>
+            <button onclick="stopWorker('${workerId}')"
+                    class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors"
+                    title="Stop">
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                </svg>
+            </button>
+        `;
+    }
+
+    function renderCrashContent(exitCode, errorMsg) {
+        return `
+            <div class="flex items-start space-x-2">
+                <svg class="h-4 w-4 text-red-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div class="text-red-300">
+                    ${exitCode !== null && exitCode !== undefined ? `<span class="text-red-400 font-medium">Exit code: ${exitCode}</span>` : ''}
+                    ${errorMsg ? `<span class="${exitCode !== null && exitCode !== undefined ? 'ml-2' : ''}">${errorMsg}</span>` : '<span class="text-gray-400 italic">No error details available. Check worker log file.</span>'}
+                </div>
+            </div>
+        `;
     }
 
     function renderWorkerRow(worker) {
@@ -1392,13 +1577,13 @@
         const worktreeBranch = worker.worktree_branch;
 
         return `
-            <div class="px-6 py-4 hover:bg-gray-700/50 transition-colors">
+            <div class="px-6 py-4 hover:bg-gray-700/50 transition-colors" data-worker-id="${worker.id}">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center space-x-4">
                         <span class="h-2 w-2 rounded-full ${statusBg}"></span>
                         <div>
                             <p class="text-white font-medium">${worker.id}</p>
-                            <p class="text-sm text-gray-400">
+                            <p data-field="info" class="text-sm text-gray-400">
                                 <span class="font-medium">${worker.role}</span>
                                 <span class="mx-1">|</span>
                                 PID: ${worker.pid || '-'}
@@ -1415,46 +1600,15 @@
                         </div>
                     </div>
                     <div class="flex items-center space-x-4">
-                        <span class="${statusClass} text-sm font-medium">${worker.status.toUpperCase()}</span>
-                        <div class="flex items-center space-x-2">
-                            ${worker.status === 'running' ? `
-                                <button onclick="viewWorkerLogs('${worker.id}')"
-                                        class="p-1.5 text-gray-400 hover:text-primary-400 hover:bg-gray-700 rounded transition-colors"
-                                        title="View Logs">
-                                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                    </svg>
-                                </button>
-                                <button onclick="restartWorker('${worker.id}')"
-                                        class="p-1.5 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 rounded transition-colors"
-                                        title="Restart">
-                                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                    </svg>
-                                </button>
-                                <button onclick="stopWorker('${worker.id}')"
-                                        class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors"
-                                        title="Stop">
-                                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-                                    </svg>
-                                </button>
-                            ` : ''}
+                        <span data-field="status" class="${statusClass} text-sm font-medium">${worker.status.toUpperCase()}</span>
+                        <div data-field="actions" class="flex items-center space-x-2">
+                            ${worker.status === 'running' ? renderActionButtons(worker.id) : ''}
                         </div>
                     </div>
                 </div>
                 ${hasCrashInfo ? `
-                    <div class="mt-2 ml-6 p-2 bg-red-900/30 border border-red-800/50 rounded text-sm">
-                        <div class="flex items-start space-x-2">
-                            <svg class="h-4 w-4 text-red-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                            </svg>
-                            <div class="text-red-300">
-                                ${exitCode !== null && exitCode !== undefined ? `<span class="text-red-400 font-medium">Exit code: ${exitCode}</span>` : ''}
-                                ${errorMsg ? `<span class="${exitCode !== null && exitCode !== undefined ? 'ml-2' : ''}">${errorMsg}</span>` : '<span class="text-gray-400 italic">No error details available. Check worker log file.</span>'}
-                            </div>
-                        </div>
+                    <div data-field="crash-info" class="mt-2 ml-6 p-2 bg-red-900/30 border border-red-800/50 rounded text-sm">
+                        ${renderCrashContent(exitCode, errorMsg)}
                     </div>
                 ` : ''}
             </div>
