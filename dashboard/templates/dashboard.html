@@ -320,5 +320,19 @@
         var el = document.getElementById('kanban-refresh-status');
         if (el) el.textContent = 'Auto-refreshing every 10s';
     });
+
+    // Safety net for HTMX load trigger race condition.
+    // On some first page loads, HTMX's "load" trigger doesn't fire reliably,
+    // leaving the spinner visible. This detects that case and retriggers.
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(function() {
+            ['kanban-board', 'agent-sidebar'].forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el && el.querySelector('.animate-spin') && !el.classList.contains('htmx-request')) {
+                    htmx.trigger(el, 'load');
+                }
+            });
+        }, 500);
+    });
 </script>
 {% endblock %}
