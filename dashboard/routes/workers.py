@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import re
+import sqlite3
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -177,6 +178,121 @@ def _get_worker_from_db(project_path: str, worker_id: str) -> dict[str, Any] | N
     except Exception as e:
         logger.warning("Failed to get worker %s from database: %s", worker_id, e)
         return None
+
+
+_CLAIM_PATTERN = re.compile(r"CLAIM:\s*(\S+)\s*-\s*(.+)$")
+
+
+def _parse_claim_from_log(log_file: str | None) -> tuple[str | None, str | None]:
+    """Parse the most recent CLAIM line from a worker's log file.
+
+    Args:
+        log_file: Path to the worker's log file.
+
+    Returns:
+        Tuple of (bead_id, bead_title), or (None, None) if no claim found.
+    """
+    if not log_file:
+        return None, None
+
+    log_path = Path(log_file)
+    if not log_path.exists():
+        return None, None
+
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+
+        for line in reversed(lines):
+            match = _CLAIM_PATTERN.search(line)
+            if match:
+                return match.group(1), match.group(2).strip()
+
+        return None, None
+    except (OSError, IOError):
+        return None, None
+
+
+def _get_current_bead_for_worker(
+    worker_id: str, log_file: str | None = None
+) -> tuple[str | None, str | None]:
+    """Get the current bead for a worker.
+
+    First tries the worker_events table in mab.db.
+    Falls back to parsing the worker's log file for CLAIM entries.
+
+    Args:
+        worker_id: The worker's unique identifier.
+        log_file: Optional path to the worker's log file for fallback parsing.
+
+    Returns:
+        Tuple of (bead_id, bead_title), or (None, None) if no claim found.
+    """
+    db_path = PROJECT_ROOT / ".mab" / "mab.db"
+    if not db_path.exists():
+        db_path = Path.home() / ".mab" / "mab.db"
+
+    if db_path.exists():
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+
+            has_events = (
+                conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='worker_events'"
+                ).fetchone()
+                is not None
+            )
+
+            if has_events:
+                event = conn.execute(
+                    """
+                    SELECT bead_id, message FROM worker_events
+                    WHERE worker_id = ? AND event_type = 'claim'
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """,
+                    (worker_id,),
+                ).fetchone()
+
+                conn.close()
+
+                if event:
+                    return event["bead_id"], event["message"]
+            else:
+                conn.close()
+
+        except sqlite3.Error:
+            pass
+
+    return _parse_claim_from_log(log_file)
+
+
+def _enrich_workers_with_bead_info(workers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add current_bead and current_bead_title to each worker dict.
+
+    For each worker, checks the spawn-time bead_id first, then looks up
+    claimed beads from worker_events or log files.
+    """
+    for worker in workers:
+        worker_id = worker.get("id", "")
+        bead_id = worker.get("bead_id")
+        bead_title = None
+
+        if not bead_id:
+            log_file = None
+            project_path = worker.get("project_path")
+            if project_path:
+                log_file_path = _get_worker_log_file(project_path, worker_id)
+                if log_file_path:
+                    log_file = str(log_file_path)
+
+            bead_id, bead_title = _get_current_bead_for_worker(worker_id, log_file)
+
+        worker["current_bead"] = bead_id
+        worker["current_bead_title"] = bead_title
+
+    return workers
 
 
 def _get_rpc_client() -> RPCClient:
@@ -788,6 +904,9 @@ async def list_workers(
         # Filter to only recent workers unless active_only=False
         if active_only:
             workers = [w for w in workers if _is_worker_recent(w, max_age_hours)]
+
+        # Enrich with bead info (current_bead, current_bead_title)
+        workers = await asyncio.to_thread(_enrich_workers_with_bead_info, workers)
 
         logger.debug("Listed %d workers (active_only=%s)", len(workers), active_only)
         return {"workers": workers, "total": len(workers)}

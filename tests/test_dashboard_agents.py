@@ -1,13 +1,11 @@
 """Tests for the dashboard agents API endpoints.
 
-Tests the new database-backed implementation that reads from workers.db
-instead of parsing claude.log.
+Tests the RPC-backed implementation that uses the daemon as the
+single source of truth for worker/agent data.
 """
 
-import sqlite3
 from datetime import datetime, timedelta
-from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -16,223 +14,200 @@ from dashboard.routes.agents import (
     ROLE_MAP,
     VALID_ROLES,
     _extract_instance_from_worker_id,
-    _format_db_timestamp,
+    _format_timestamp,
     _get_active_agents,
-    _get_workers_from_db,
-    _map_db_status_to_api,
+    _map_status_to_api,
 )
 
 client = TestClient(app)
 
 
-def create_test_db(db_path: Path) -> sqlite3.Connection:
-    """Create a test database with the workers.db schema."""
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-
-    # Create workers table (workers.db schema from WorkerDatabase)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS workers (
-            id TEXT PRIMARY KEY,
-            role TEXT NOT NULL,
-            project_path TEXT NOT NULL,
-            status TEXT NOT NULL,
-            pid INTEGER,
-            created_at TEXT NOT NULL,
-            started_at TEXT,
-            stopped_at TEXT,
-            crash_count INTEGER DEFAULT 0,
-            last_heartbeat TEXT,
-            exit_code INTEGER,
-            error_message TEXT,
-            town_name TEXT DEFAULT 'default',
-            worktree_path TEXT,
-            worktree_branch TEXT,
-            last_restart_at TEXT,
-            auto_restart_enabled INTEGER DEFAULT 1
-        )
-    """)
-
-    conn.commit()
-    return conn
-
-
-def insert_test_worker(
-    conn: sqlite3.Connection,
-    worker_id: str,
+def _make_worker(
+    worker_id: str = "worker-dev-abc123",
     role: str = "dev",
     status: str = "running",
-    pid: int = 1000,
-    started_at: datetime | None = None,
-    stopped_at: datetime | None = None,
+    pid: int = 1001,
     project_path: str = "/test/project",
-) -> None:
-    """Insert a test worker record."""
-    now = datetime.now()
-    if started_at is None:
-        started_at = now
-
-    conn.execute(
-        """
-        INSERT INTO workers (id, role, project_path, status, pid, created_at, started_at, stopped_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            worker_id,
-            role,
-            project_path,
-            status,
-            pid,
-            now.isoformat(),
-            started_at.isoformat(),
-            stopped_at.isoformat() if stopped_at else None,
-        ),
-    )
-    conn.commit()
-
-
-def insert_test_event(
-    conn: sqlite3.Connection,
-    worker_id: str,
-    event_type: str,
+    started_at: str | None = None,
+    stopped_at: str | None = None,
     bead_id: str | None = None,
-    message: str | None = None,
-    timestamp: datetime | None = None,
-) -> None:
-    """Insert a test worker event.
+) -> dict:
+    """Create a worker dict as returned by the RPC daemon."""
+    if started_at is None:
+        started_at = datetime.now().isoformat()
+    return {
+        "id": worker_id,
+        "role": role,
+        "project_path": project_path,
+        "status": status,
+        "pid": pid,
+        "created_at": started_at,
+        "started_at": started_at,
+        "stopped_at": stopped_at,
+        "crash_count": 0,
+        "last_heartbeat": None,
+        "exit_code": None,
+        "error_message": None,
+        "last_restart_at": None,
+        "auto_restart_enabled": True,
+        "town_name": "default",
+        "worktree_path": None,
+        "worktree_branch": None,
+        "bead_id": bead_id,
+    }
 
-    Note: workers.db doesn't have worker_events table, so this is a no-op.
-    The worker_events table only exists in mab.db (legacy).
-    """
-    pass  # workers.db doesn't track events
+
+def _mock_rpc_workers(workers: list[dict]) -> MagicMock:
+    """Create a mock RPC client that returns the given workers."""
+    mock_client = MagicMock()
+    mock_client.call.return_value = {"workers": workers}
+    return mock_client
 
 
 class TestAgentsEndpoints:
     """Tests for /api/agents endpoints."""
 
-    def test_list_agents_no_database(self, tmp_path: Path) -> None:
-        """Test listing agents when database doesn't exist."""
-        # Patch both PROJECT_ROOT and Path.home to prevent fallback to global db
-        fake_home = tmp_path / "fake_home"
-        fake_home.mkdir()
-        with (
-            patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path),
-            patch("dashboard.routes.agents.Path.home", return_value=fake_home),
-        ):
+    def test_list_agents_daemon_not_running(self) -> None:
+        """Test listing agents when daemon is not running."""
+        from mab.rpc import DaemonNotRunningError
+
+        mock_client = MagicMock()
+        mock_client.call.side_effect = DaemonNotRunningError("not running")
+
+        with patch("dashboard.routes.agents._get_rpc_client", return_value=mock_client):
             response = client.get("/api/agents")
             assert response.status_code == 200
             assert response.json() == []
 
-    def test_list_agents_empty_database(self, tmp_path: Path) -> None:
-        """Test listing agents with empty database."""
-        db_path = tmp_path / ".mab" / "workers.db"
-        create_test_db(db_path)
-
-        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
-            # workers.db exists in tmp_path, so no fallback triggered
+    def test_list_agents_empty(self) -> None:
+        """Test listing agents with no workers running."""
+        mock_client = _mock_rpc_workers([])
+        with patch("dashboard.routes.agents._get_rpc_client", return_value=mock_client):
             response = client.get("/api/agents")
             assert response.status_code == 200
             assert response.json() == []
 
-    def test_list_agents_with_running_workers(self, tmp_path: Path) -> None:
+    def test_list_agents_with_running_workers(self) -> None:
         """Test listing agents with running workers."""
-        db_path = tmp_path / ".mab" / "workers.db"
-        conn = create_test_db(db_path)
+        workers = [_make_worker("worker-dev-abc123", role="dev", status="running", pid=1001)]
+        mock_client = _mock_rpc_workers(workers)
 
-        # Insert running worker
-        insert_test_worker(
-            conn,
-            "worker-dev-abc123",
-            role="dev",
-            status="running",
-            pid=1001,
-            project_path=str(tmp_path),
-        )
-        # Note: workers.db doesn't track bead claims (no worker_events table)
-
-        conn.close()
-
-        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
-            # workers.db exists in tmp_path so no fallback triggered
+        with (
+            patch("dashboard.routes.agents._get_rpc_client", return_value=mock_client),
+            patch(
+                "dashboard.routes.agents._enrich_workers_with_bead_info",
+                side_effect=lambda ws: ws,
+            ),
+        ):
             response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
             assert len(data) == 1
             assert data[0]["pid"] == 1001
             assert data[0]["role"] == "developer"
-            # workers.db doesn't track bead claims, so current_bead is None
-            assert data[0]["current_bead"] is None
-            assert data[0]["current_bead_title"] is None
-            # Without a current bead, status is "idle" not "working"
             assert data[0]["status"] == "idle"
 
-    def test_list_agents_excludes_old_stopped_workers(self, tmp_path: Path) -> None:
-        """Test that workers stopped more than 1 hour ago are excluded."""
-        db_path = tmp_path / ".mab" / "workers.db"
-        conn = create_test_db(db_path)
+    def test_list_agents_with_bead(self) -> None:
+        """Test that agents with a claimed bead show as working."""
+        workers = [_make_worker("worker-dev-abc123", role="dev", status="running", pid=1001)]
+        mock_client = _mock_rpc_workers(workers)
 
-        # Worker stopped 2 hours ago - should be excluded
-        old_stop = datetime.now() - timedelta(hours=2)
-        insert_test_worker(
-            conn,
-            "worker-old",
-            status="stopped",
-            started_at=datetime.now() - timedelta(hours=3),
-            stopped_at=old_stop,
-            project_path=str(tmp_path),
-        )
+        def enrich(ws):
+            for w in ws:
+                w["current_bead"] = "mab-task-123"
+                w["current_bead_title"] = "Fix the bug"
+            return ws
 
-        # Worker stopped 30 minutes ago - should be included
-        recent_stop = datetime.now() - timedelta(minutes=30)
-        insert_test_worker(
-            conn,
-            "worker-recent",
-            status="stopped",
-            started_at=datetime.now() - timedelta(hours=1),
-            stopped_at=recent_stop,
-            project_path=str(tmp_path),
-        )
-
-        conn.close()
-
-        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+        with (
+            patch("dashboard.routes.agents._get_rpc_client", return_value=mock_client),
+            patch(
+                "dashboard.routes.agents._enrich_workers_with_bead_info",
+                side_effect=enrich,
+            ),
+        ):
             response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
-            # Only recent worker should be included
+            assert len(data) == 1
+            assert data[0]["status"] == "working"
+            assert data[0]["current_bead"] == "mab-task-123"
+            assert data[0]["current_bead_title"] == "Fix the bug"
+
+    def test_list_agents_excludes_old_stopped_workers(self) -> None:
+        """Test that workers stopped more than 1 hour ago are excluded."""
+        old_stop = (datetime.now() - timedelta(hours=2)).isoformat()
+        recent_stop = (datetime.now() - timedelta(minutes=30)).isoformat()
+
+        workers = [
+            _make_worker(
+                "worker-old",
+                status="stopped",
+                started_at=(datetime.now() - timedelta(hours=3)).isoformat(),
+                stopped_at=old_stop,
+            ),
+            _make_worker(
+                "worker-recent",
+                status="stopped",
+                started_at=(datetime.now() - timedelta(hours=1)).isoformat(),
+                stopped_at=recent_stop,
+            ),
+        ]
+        mock_client = _mock_rpc_workers(workers)
+
+        with (
+            patch("dashboard.routes.agents._get_rpc_client", return_value=mock_client),
+            patch(
+                "dashboard.routes.agents._enrich_workers_with_bead_info",
+                side_effect=lambda ws: ws,
+            ),
+        ):
+            # Active-only endpoint filters to running/spawning/starting only
+            response = client.get("/api/agents")
+            assert response.status_code == 200
+            data = response.json()
+            assert len(data) == 0  # Both are stopped, not active
+
+            # Recent endpoint shows non-active workers
+            response = client.get("/api/agents/recent")
+            assert response.status_code == 200
+            data = response.json()
+            # Old worker filtered out by _is_worker_recent, recent one included
             assert len(data) == 1
             assert "worker-recent" in data[0]["worker_id"]
 
-    def test_list_agents_includes_spawning_workers(self, tmp_path: Path) -> None:
-        """Test that spawning workers are included."""
-        db_path = tmp_path / ".mab" / "workers.db"
-        conn = create_test_db(db_path)
+    def test_list_agents_includes_spawning_workers(self) -> None:
+        """Test that spawning workers are included as idle."""
+        workers = [_make_worker("worker-spawning", status="spawning")]
+        mock_client = _mock_rpc_workers(workers)
 
-        insert_test_worker(conn, "worker-spawning", status="spawning", project_path=str(tmp_path))
-        conn.close()
-
-        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+        with (
+            patch("dashboard.routes.agents._get_rpc_client", return_value=mock_client),
+            patch(
+                "dashboard.routes.agents._enrich_workers_with_bead_info",
+                side_effect=lambda ws: ws,
+            ),
+        ):
             response = client.get("/api/agents")
             assert response.status_code == 200
             data = response.json()
             assert len(data) == 1
             assert data[0]["status"] == "idle"
 
-    def test_list_agents_by_role(self, tmp_path: Path) -> None:
+    def test_list_agents_by_role(self) -> None:
         """Test filtering agents by role."""
-        db_path = tmp_path / ".mab" / "workers.db"
-        conn = create_test_db(db_path)
+        workers = [
+            _make_worker("worker-dev-1", role="dev", status="running"),
+            _make_worker("worker-qa-1", role="qa", status="running"),
+        ]
+        mock_client = _mock_rpc_workers(workers)
 
-        insert_test_worker(
-            conn, "worker-dev-1", role="dev", status="running", project_path=str(tmp_path)
-        )
-        insert_test_worker(
-            conn, "worker-qa-1", role="qa", status="running", project_path=str(tmp_path)
-        )
-        conn.close()
-
-        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+        with (
+            patch("dashboard.routes.agents._get_rpc_client", return_value=mock_client),
+            patch(
+                "dashboard.routes.agents._enrich_workers_with_bead_info",
+                side_effect=lambda ws: ws,
+            ),
+        ):
             # Filter by developer
             response = client.get("/api/agents/developer")
             assert response.status_code == 200
@@ -254,80 +229,40 @@ class TestAgentsEndpoints:
         assert "Invalid role" in response.json()["detail"]
 
 
-class TestDatabaseFunctions:
-    """Tests for database query functions."""
-
-    def test_get_workers_from_db_empty(self, tmp_path: Path) -> None:
-        """Test getting workers when DB is empty."""
-        db_path = tmp_path / ".mab" / "workers.db"
-        create_test_db(db_path)
-
-        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
-            workers = _get_workers_from_db()
-            assert workers == []
-
-    def test_get_workers_from_db_with_workers(self, tmp_path: Path) -> None:
-        """Test getting workers from database."""
-        db_path = tmp_path / ".mab" / "workers.db"
-        conn = create_test_db(db_path)
-
-        insert_test_worker(conn, "worker-1", status="running", pid=1001, project_path=str(tmp_path))
-        insert_test_worker(
-            conn, "worker-2", status="spawning", pid=1002, project_path=str(tmp_path)
-        )
-        conn.close()
-
-        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
-            workers = _get_workers_from_db()
-            assert len(workers) == 2
-
-    def test_get_workers_from_db_no_database(self, tmp_path: Path) -> None:
-        """Test getting workers when database doesn't exist."""
-        # Patch both PROJECT_ROOT and Path.home to prevent fallback to global db
-        fake_home = tmp_path / "fake_home"
-        fake_home.mkdir()
-        with (
-            patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path),
-            patch("dashboard.routes.agents.Path.home", return_value=fake_home),
-        ):
-            workers = _get_workers_from_db()
-            assert workers == []
-
-
 class TestStatusMapping:
     """Tests for status mapping functions."""
 
-    def test_map_db_status_running_with_bead(self) -> None:
+    def test_map_status_running_with_bead(self) -> None:
         """Test running status with current bead -> working."""
-        assert _map_db_status_to_api("running", "mab-task") == "working"
+        assert _map_status_to_api("running", "mab-task") == "working"
 
-    def test_map_db_status_running_no_bead(self) -> None:
+    def test_map_status_running_no_bead(self) -> None:
         """Test running status without bead -> idle."""
-        assert _map_db_status_to_api("running", None) == "idle"
+        assert _map_status_to_api("running", None) == "idle"
 
-    def test_map_db_status_spawning(self) -> None:
+    def test_map_status_spawning(self) -> None:
         """Test spawning status -> idle."""
-        assert _map_db_status_to_api("spawning", None) == "idle"
-        assert _map_db_status_to_api("spawning", "mab-task") == "idle"
+        assert _map_status_to_api("spawning", None) == "idle"
+        assert _map_status_to_api("spawning", "mab-task") == "idle"
 
-    def test_map_db_status_stopped(self) -> None:
+    def test_map_status_stopped(self) -> None:
         """Test stopped status -> ended."""
-        assert _map_db_status_to_api("stopped", None) == "ended"
-        assert _map_db_status_to_api("stopped", "mab-task") == "ended"
+        assert _map_status_to_api("stopped", None) == "ended"
+        assert _map_status_to_api("stopped", "mab-task") == "ended"
 
-    def test_map_db_status_crashed(self) -> None:
+    def test_map_status_crashed(self) -> None:
         """Test crashed status -> ended."""
-        assert _map_db_status_to_api("crashed", None) == "ended"
+        assert _map_status_to_api("crashed", None) == "ended"
 
-    def test_map_db_status_failed(self) -> None:
+    def test_map_status_failed(self) -> None:
         """Test failed status -> ended."""
-        assert _map_db_status_to_api("failed", None) == "ended"
-        assert _map_db_status_to_api("failed", "mab-task") == "ended"
+        assert _map_status_to_api("failed", None) == "ended"
+        assert _map_status_to_api("failed", "mab-task") == "ended"
 
-    def test_map_db_status_stopping(self) -> None:
+    def test_map_status_stopping(self) -> None:
         """Test stopping status -> ended."""
-        assert _map_db_status_to_api("stopping", None) == "ended"
-        assert _map_db_status_to_api("stopping", "mab-task") == "ended"
+        assert _map_status_to_api("stopping", None) == "ended"
+        assert _map_status_to_api("stopping", "mab-task") == "ended"
 
 
 class TestRoleMapping:
@@ -366,75 +301,65 @@ class TestTimestampFormatting:
 
     def test_format_iso_timestamp(self) -> None:
         """Test formatting ISO timestamp."""
-        assert _format_db_timestamp("2026-01-24T14:30:00") == "2026-01-24T14:30:00Z"
-        assert _format_db_timestamp("2026-01-24T14:30:00Z") == "2026-01-24T14:30:00Z"
+        assert _format_timestamp("2026-01-24T14:30:00") == "2026-01-24T14:30:00Z"
+        assert _format_timestamp("2026-01-24T14:30:00Z") == "2026-01-24T14:30:00Z"
 
     def test_format_space_separated_timestamp(self) -> None:
         """Test formatting space-separated timestamp."""
-        assert _format_db_timestamp("2026-01-24 14:30:00") == "2026-01-24T14:30:00Z"
+        assert _format_timestamp("2026-01-24 14:30:00") == "2026-01-24T14:30:00Z"
 
     def test_format_empty_timestamp(self) -> None:
         """Test formatting empty/None timestamp."""
-        assert _format_db_timestamp(None) == ""
-        assert _format_db_timestamp("") == ""
+        assert _format_timestamp(None) == ""
+        assert _format_timestamp("") == ""
 
 
 class TestGetActiveAgents:
     """Integration tests for _get_active_agents function."""
 
-    def test_get_active_agents_full_workflow(self, tmp_path: Path) -> None:
-        """Test full workflow of getting active agents from DB."""
-        db_path = tmp_path / ".mab" / "workers.db"
-        conn = create_test_db(db_path)
+    def test_get_active_agents_full_workflow(self) -> None:
+        """Test full workflow of getting active agents from RPC daemon."""
+        now = datetime.now()
+        workers = [
+            _make_worker(
+                "worker-dev-1-abc",
+                role="dev",
+                status="running",
+                pid=1001,
+            ),
+            _make_worker(
+                "worker-qa-2-xyz",
+                role="qa",
+                status="spawning",
+                pid=1002,
+            ),
+            _make_worker(
+                "worker-dev-3-def",
+                role="dev",
+                status="stopped",
+                pid=1003,
+                stopped_at=(now - timedelta(minutes=30)).isoformat(),
+            ),
+        ]
+        mock_client = _mock_rpc_workers(workers)
 
-        # Create workers with various states
-        insert_test_worker(
-            conn,
-            "worker-dev-1-abc",
-            role="dev",
-            status="running",
-            pid=1001,
-            project_path=str(tmp_path),
-        )
-        # Note: workers.db doesn't track bead claims (no worker_events table)
-
-        insert_test_worker(
-            conn,
-            "worker-qa-2-xyz",
-            role="qa",
-            status="spawning",
-            pid=1002,
-            project_path=str(tmp_path),
-        )
-
-        # Stopped recently - should be included
-        insert_test_worker(
-            conn,
-            "worker-dev-3-def",
-            role="dev",
-            status="stopped",
-            pid=1003,
-            stopped_at=datetime.now() - timedelta(minutes=30),
-            project_path=str(tmp_path),
-        )
-
-        conn.close()
-
-        with patch("dashboard.routes.agents.PROJECT_ROOT", tmp_path):
+        with (
+            patch("dashboard.routes.agents._get_rpc_client", return_value=mock_client),
+            patch(
+                "dashboard.routes.agents._enrich_workers_with_bead_info",
+                side_effect=lambda ws: ws,
+            ),
+        ):
             agents = _get_active_agents()
 
-            assert len(agents) == 3
+            # Only running and spawning are "active"
+            assert len(agents) == 2
 
             # Find specific agents
             dev1 = next(a for a in agents if "dev-1" in a["worker_id"])
-            # workers.db doesn't track bead claims, so status is "idle" not "working"
             assert dev1["status"] == "idle"
-            assert dev1["current_bead"] is None
             assert dev1["role"] == "developer"
 
             qa = next(a for a in agents if "qa-2" in a["worker_id"])
             assert qa["status"] == "idle"
             assert qa["role"] == "qa"
-
-            stopped = next(a for a in agents if "dev-3" in a["worker_id"])
-            assert stopped["status"] == "ended"

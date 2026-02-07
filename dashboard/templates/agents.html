@@ -236,11 +236,10 @@
         setInterval(refreshAgents, 5000);
     });
 
-    // Fetch and display agents (using workers API merged with agents API for claimed beads)
+    // Fetch and display agents (single data source: /api/workers with bead info)
     async function refreshAgents() {
         const roleFilter = document.getElementById('filter-role').value;
         let workersUrl = '/api/workers';
-        let agentsUrl = '/api/agents';
         const params = new URLSearchParams();
         if (roleFilter) {
             params.append('role', roleFilter);
@@ -250,37 +249,19 @@
         }
 
         try {
-            // Fetch both workers and agents data in parallel
-            const [workersResponse, agentsResponse] = await Promise.all([
-                fetch(workersUrl),
-                fetch(agentsUrl).catch(() => ({ ok: false, status: 500 }))  // Agent API may fail if log file missing
-            ]);
-
-            // Build a PID -> agent lookup for claimed beads
-            let agentsByPid = {};
-            if (agentsResponse.ok) {
-                try {
-                    const agentsData = await agentsResponse.json();
-                    agentsData.forEach(agent => {
-                        if (agent.pid) {
-                            agentsByPid[agent.pid] = agent;
-                        }
-                    });
-                } catch (e) {
-                    console.warn('Failed to parse agents data:', e);
-                }
-            }
+            const workersResponse = await fetch(workersUrl);
 
             if (workersResponse.ok) {
-                daemonRunning = true;  // Daemon is running if we got a successful response
+                daemonRunning = true;
                 const data = await workersResponse.json();
-                // Transform worker data to agent format, merging claimed bead info from agents API
+                // Transform worker data to display format
+                // Bead info (current_bead, current_bead_title) is included in worker data
                 agents = (data.workers || []).map(worker => {
-                    // Map worker status to display status - preserve actual status
+                    // Map worker status to display status
                     let displayStatus;
                     switch (worker.status) {
                         case 'running':
-                            displayStatus = 'working';
+                            displayStatus = worker.current_bead ? 'working' : 'working';
                             break;
                         case 'crashed':
                             displayStatus = 'crashed';
@@ -292,27 +273,20 @@
                             displayStatus = 'idle';
                     }
 
-                    // Look up claimed bead info from agents API by PID
-                    const agentInfo = worker.pid ? agentsByPid[worker.pid] : null;
-                    const currentBead = agentInfo ? agentInfo.current_bead : null;
-                    const currentBeadTitle = agentInfo ? agentInfo.current_bead_title : null;
-
-                    // If agent is working on a bead, show as working
-                    if (currentBead && displayStatus === 'working') {
-                        displayStatus = 'working';
-                    } else if (currentBead) {
+                    // If worker has a claimed bead, show as working
+                    if (worker.current_bead && displayStatus !== 'crashed' && displayStatus !== 'stopped') {
                         displayStatus = 'working';
                     }
 
                     return {
-                        role: worker.role || (agentInfo ? agentInfo.role : 'unknown'),
+                        role: worker.role || 'unknown',
                         instance: 1,
-                        current_bead: currentBead,
-                        current_bead_title: currentBeadTitle,
+                        current_bead: worker.current_bead || null,
+                        current_bead_title: worker.current_bead_title || null,
                         status: displayStatus,
-                        last_activity: (agentInfo ? agentInfo.last_activity : null) || worker.started_at || new Date().toISOString(),
+                        last_activity: worker.stopped_at || worker.started_at || new Date().toISOString(),
                         pid: worker.pid || null,
-                        worker_id: worker.id,  // Keep worker ID for reference
+                        worker_id: worker.id,
                         worktree_path: worker.worktree_path || null,
                         worktree_branch: worker.worktree_branch || null
                     };
