@@ -33,7 +33,7 @@ class TestCurrentTownEndpoint:
 
         with patch("dashboard.routes.towns._get_town_manager", return_value=mock_manager):
             with patch("dashboard.routes.towns._get_active_worker_counts", return_value={}):
-                with patch("dashboard.config.TOWN_NAME","default"):
+                with patch("dashboard.config.TOWN_NAME", "default"):
                     response = client.get("/api/towns/current")
 
         assert response.status_code == 200
@@ -79,7 +79,7 @@ class TestCurrentTownEndpoint:
 
         with patch("dashboard.routes.towns._get_town_manager", return_value=mock_manager):
             with patch("dashboard.routes.towns._get_active_worker_counts", return_value={}):
-                with patch("dashboard.config.TOWN_NAME","mytown"):
+                with patch("dashboard.config.TOWN_NAME", "mytown"):
                     response = client.get("/api/towns/current")
 
         data = response.json()
@@ -136,7 +136,7 @@ class TestListTownsEndpoint:
         mock_manager.list_towns.return_value = []
 
         with patch("dashboard.routes.towns._get_town_manager", return_value=mock_manager):
-            with patch("dashboard.config.TOWN_NAME","mytown"):
+            with patch("dashboard.config.TOWN_NAME", "mytown"):
                 response = client.get("/api/towns")
 
         data = response.json()
