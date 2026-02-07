@@ -277,6 +277,7 @@ async def kanban_partial(
     queue_depth: dict[str, int] = {}
     error_message: str | None = None
     is_stale = False
+    cached_at = ""
 
     try:
         # Run blocking subprocess call in thread pool to avoid blocking event loop
