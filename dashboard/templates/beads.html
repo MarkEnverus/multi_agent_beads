@@ -196,9 +196,14 @@
                     <h3 class="text-lg font-semibold text-white">Beads</h3>
                     <span id="bead-count" class="text-sm text-gray-400">0 beads</span>
                 </div>
-                <div class="flex items-center space-x-2 text-sm text-gray-400">
-                    <span>Last updated:</span>
-                    <span id="last-updated">-</span>
+                <div class="flex items-center space-x-3 text-sm">
+                    <span id="beads-freshness-dot" class="relative flex h-2.5 w-2.5">
+                        <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+                    </span>
+                    <span class="text-gray-400">Updated <span id="last-updated">-</span></span>
+                    <button onclick="refreshBeads()" class="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">
+                        Refresh
+                    </button>
                 </div>
             </div>
 
@@ -335,6 +340,32 @@
     let currentPage = 1;
     const pageSize = 20;
     let searchTimeout = null;
+    let beadsLastFetchedAt = null;
+
+    // Update freshness indicator for beads list
+    function updateBeadsFreshness() {
+        if (!beadsLastFetchedAt) return;
+        var now = new Date();
+        var diffSec = Math.floor((now - beadsLastFetchedAt) / 1000);
+        var dot = document.getElementById('beads-freshness-dot');
+        var label = document.getElementById('last-updated');
+        if (!dot || !label) return;
+
+        // Format relative time
+        var text;
+        if (diffSec < 5) text = 'just now';
+        else if (diffSec < 60) text = diffSec + 's ago';
+        else text = Math.floor(diffSec / 60) + 'm ago';
+        label.textContent = text;
+
+        // Show yellow dot when data is older than 30 seconds
+        if (diffSec > 30) {
+            dot.innerHTML = '<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>' +
+                '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-500"></span>';
+        } else {
+            dot.innerHTML = '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>';
+        }
+    }
 
     // Fetch with timeout (10s default)
     function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
@@ -386,6 +417,8 @@
         refreshGraph();
         // Auto-refresh every 30 seconds
         setInterval(function() { loadStats(); refreshBeads(); }, 30000);
+        // Update freshness display every 5 seconds
+        setInterval(updateBeadsFreshness, 5000);
     }
 
     // Check if DOM is already ready (common when scripts are at end of body)
@@ -439,7 +472,8 @@
             updateLabelsFilter();
             updateWithDepsCount();
             applyFilters();
-            document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+            beadsLastFetchedAt = new Date();
+            updateBeadsFreshness();
         } catch (error) {
             console.error('Failed to fetch beads:', error);
             if (allBeads.length === 0) {

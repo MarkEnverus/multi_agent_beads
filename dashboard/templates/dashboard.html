@@ -8,7 +8,7 @@
     <div class="flex items-center justify-between">
         <h1 class="text-2xl font-bold text-white">Kanban Board</h1>
         <div class="flex items-center space-x-4">
-            <span class="text-sm text-gray-400">Auto-refreshing every 10s</span>
+            <span id="kanban-refresh-status" class="text-sm text-gray-400">Auto-refreshing every 10s</span>
             <button
                 id="depgraph-toggle"
                 class="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-md transition-colors flex items-center space-x-2"
@@ -224,6 +224,40 @@
             if (graphViewActive) {
                 toggleGraphView();
             }
+        }
+    });
+
+    // Update relative timestamps for data freshness indicators
+    function formatRelativeTime(isoString) {
+        var date = new Date(isoString);
+        var now = new Date();
+        var diffSec = Math.floor((now - date) / 1000);
+        if (diffSec < 5) return 'just now';
+        if (diffSec < 60) return diffSec + 's ago';
+        var diffMin = Math.floor(diffSec / 60);
+        if (diffMin < 60) return diffMin + 'm ago';
+        return Math.floor(diffMin / 60) + 'h ago';
+    }
+
+    function updateFreshnessTimestamps() {
+        var els = document.querySelectorAll('[data-freshness-ts]');
+        els.forEach(function(el) {
+            var cachedAt = el.getAttribute('data-cached-at');
+            if (cachedAt) {
+                var timeEl = el.querySelector('time');
+                if (timeEl) {
+                    timeEl.textContent = formatRelativeTime(cachedAt);
+                }
+            }
+        });
+    }
+
+    // Update timestamps every 5 seconds
+    setInterval(updateFreshnessTimestamps, 5000);
+    // Also update after htmx content swaps
+    document.body.addEventListener('htmx:afterSwap', function(event) {
+        if (event.detail.target && event.detail.target.id === 'kanban-board') {
+            updateFreshnessTimestamps();
         }
     });
 </script>

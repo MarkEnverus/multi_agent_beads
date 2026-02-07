@@ -277,6 +277,7 @@ async def kanban_partial(
     queue_depth: dict[str, int] = {}
     error_message: str | None = None
     is_stale = False
+    cached_at = ""
 
     try:
         # Run blocking subprocess call in thread pool to avoid blocking event loop
@@ -289,6 +290,7 @@ async def kanban_partial(
         total_count = kanban_data["total_count"]
         queue_depth = kanban_data.get("queue_depth_by_role", {})
         is_stale = kanban_data.get("_stale", False)
+        cached_at = kanban_data.get("_cached_at", "")
 
     except BeadError as e:
         logger.warning("Failed to fetch beads for kanban: %s", e.message)
@@ -305,6 +307,7 @@ async def kanban_partial(
             "queue_depth": queue_depth,
             "error_message": error_message,
             "is_stale": is_stale,
+            "cached_at": cached_at,
         },
     )
 

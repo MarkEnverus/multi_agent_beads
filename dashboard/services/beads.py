@@ -17,6 +17,7 @@ import re
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from dashboard.config import CACHE_STALE_TTL_SECONDS, CACHE_TTL_SECONDS
@@ -685,9 +686,11 @@ class BeadService:
 
         # No cache or beyond stale TTL - must fetch fresh data
         logger.debug("Cache miss for get_kanban_data - fetching fresh data")
+        now = datetime.now(timezone.utc).isoformat()
         result = cls._fetch_kanban_data(done_limit)
         result["_cached"] = False
         result["_stale"] = False
+        result["_cached_at"] = now
         _cache.set(cache_key, result)
         return result
 
