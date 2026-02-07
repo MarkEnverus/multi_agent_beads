@@ -227,6 +227,40 @@
         </footer>
     </div>
 
+    <!-- Global Toast Notification Container -->
+    <div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
+
+    <!-- Global Toast Notification Function -->
+    <script>
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const id = 'toast-' + Date.now();
+
+            const bgColor = {
+                'success': 'bg-green-600',
+                'error': 'bg-red-600',
+                'warning': 'bg-yellow-600',
+                'info': 'bg-primary-600'
+            }[type] || 'bg-gray-600';
+
+            const toast = document.createElement('div');
+            toast.id = id;
+            toast.className = `${bgColor} text-white px-4 py-2 rounded-lg shadow-lg transform transition-all duration-300 translate-x-full`;
+            toast.textContent = message;
+
+            container.appendChild(toast);
+
+            // Animate in
+            setTimeout(() => toast.classList.remove('translate-x-full'), 10);
+
+            // Remove after 3 seconds
+            setTimeout(() => {
+                toast.classList.add('translate-x-full');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+    </script>
+
     <!-- Town Switcher Script (always loaded) -->
     <script>
         // Town switcher functionality
@@ -477,13 +511,14 @@
 
                 if (!response.ok) {
                     const err = await response.json();
-                    console.error('Failed to switch town:', err.detail);
+                    showToast(err.detail || 'Failed to switch town', 'error');
                     return;
                 }
 
                 const currentPort = parseInt(window.location.port) || (window.location.protocol === 'https:' ? 443 : 80);
 
                 if (port !== currentPort) {
+                    showToast(`Switching to town '${townName}'...`, 'info');
                     // Different port - navigate to the town's dashboard instance
                     const protocol = window.location.protocol;
                     const hostname = window.location.hostname;
@@ -492,11 +527,12 @@
                 } else {
                     // Same port - refresh page data in place
                     document.getElementById('town-dropdown').classList.add('hidden');
+                    showToast(`Switched to town '${townName}'`, 'success');
                     await loadTowns();
                     await loadCurrentTownInfo();
                 }
             } catch (error) {
-                console.error('Failed to switch town:', error);
+                showToast('Failed to switch town', 'error');
             }
         }
 
@@ -514,13 +550,13 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    // Refresh towns list after starting
+                    showToast(`Town '${townName}' started`, 'success');
                     loadTowns();
                 } else {
-                    console.error('Failed to start town:', data.message);
+                    showToast(data.message || 'Failed to start town', 'error');
                 }
             } catch (error) {
-                console.error('Failed to start town:', error);
+                showToast('Failed to start town', 'error');
             }
         }
 
@@ -533,13 +569,13 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    // Refresh towns list after stopping
+                    showToast(`Town '${townName}' stopped`, 'success');
                     loadTowns();
                 } else {
-                    console.error('Failed to stop town:', data.message);
+                    showToast(data.message || 'Failed to stop town', 'error');
                 }
             } catch (error) {
-                console.error('Failed to stop town:', error);
+                showToast('Failed to stop town', 'error');
             }
         }
 

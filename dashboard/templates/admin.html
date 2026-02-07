@@ -422,9 +422,6 @@
     </div>
 </div>
 
-{# Toast Notifications Container #}
-<div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
-
 {# Create Bead Modal #}
 <div id="create-bead-modal" class="fixed inset-0 z-50 hidden">
     <div class="fixed inset-0 bg-gray-900/80" onclick="closeCreateBeadModal()"></div>
@@ -1554,34 +1551,6 @@
         } else {
             return `${secs}s`;
         }
-    }
-
-    function showToast(message, type = 'info') {
-        const container = document.getElementById('toast-container');
-        const id = 'toast-' + Date.now();
-
-        const bgColor = {
-            'success': 'bg-green-600',
-            'error': 'bg-red-600',
-            'warning': 'bg-yellow-600',
-            'info': 'bg-primary-600'
-        }[type] || 'bg-gray-600';
-
-        const toast = document.createElement('div');
-        toast.id = id;
-        toast.className = `${bgColor} text-white px-4 py-2 rounded-lg shadow-lg transform transition-all duration-300 translate-x-full`;
-        toast.textContent = message;
-
-        container.appendChild(toast);
-
-        // Animate in
-        setTimeout(() => toast.classList.remove('translate-x-full'), 10);
-
-        // Remove after 3 seconds
-        setTimeout(() => {
-            toast.classList.add('translate-x-full');
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
     }
 
     // Log viewer functionality
