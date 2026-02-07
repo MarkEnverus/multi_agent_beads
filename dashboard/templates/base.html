@@ -360,6 +360,13 @@
                     throw new Error('Failed to fetch current town info');
                 }
                 currentTownData = await response.json();
+
+                // Backend auto-switched to a valid town - update displayed name
+                if (currentTownData.auto_switched && currentTownData.name) {
+                    document.getElementById('current-town-name').textContent = currentTownData.name;
+                    loadTowns();
+                }
+
                 updateTownInfo(currentTownData);
             } catch (error) {
                 console.error('Failed to load current town info:', error);
