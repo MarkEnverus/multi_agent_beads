@@ -1,19 +1,22 @@
 """REST API endpoints for agent status monitoring.
 
-All file I/O operations are wrapped with asyncio.to_thread() to avoid blocking the event loop.
+Uses the RPC daemon as the single source of truth for worker data,
+enriched with bead information from worker_events/log files.
 """
 
 import asyncio
 import logging
-import re
-import sqlite3
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from dashboard.config import PROJECT_ROOT
+from dashboard.routes.workers import (
+    DASHBOARD_RPC_TIMEOUT,
+    _enrich_workers_with_bead_info,
+    _get_rpc_client,
+    _is_worker_recent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,191 +47,15 @@ ROLE_MAP = {
 VALID_ROLES = {"developer", "qa", "reviewer", "tech_lead", "manager", "unknown"}
 
 
-def _get_workers_from_db() -> list[dict[str, Any]]:
-    """Get worker state from workers.db.
+def _map_status_to_api(worker_status: str, current_bead: str | None) -> str:
+    """Map worker status to agent API status.
 
-    Returns running/spawning workers and recently stopped workers (last hour).
-    Checks both per-project database (.mab/workers.db) and falls back to
-    global database (~/.mab/workers.db) if project-local doesn't exist.
+    Worker statuses: spawning, running, stopped, crashed, failed, stopping
+    Agent API statuses: working, idle, ended
     """
-    # Try per-project database first
-    db_path = PROJECT_ROOT / ".mab" / "workers.db"
-    if not db_path.exists():
-        # Fall back to global database
-        db_path = Path.home() / ".mab" / "workers.db"
-    if not db_path.exists():
-        logger.debug("Database does not exist: %s", db_path)
-        return []
-
-    try:
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-
-        # Note: Python ISO timestamps use 'T' separator while SQLite datetime uses space.
-        # Use REPLACE to normalize the comparison.
-        one_hour_ago = conn.execute("SELECT datetime('now', 'localtime', '-1 hour')").fetchone()[0]
-
-        # Check if worker_events table exists (mab.db has it, workers.db doesn't)
-        has_events_table = (
-            conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='worker_events'"
-            ).fetchone()
-            is not None
-        )
-
-        # Filter to current project only
-        project_path = str(PROJECT_ROOT)
-
-        if has_events_table:
-            workers = conn.execute(
-                """
-                SELECT w.*,
-                       (SELECT COUNT(*) FROM worker_events e
-                        WHERE e.worker_id = w.id AND e.event_type = 'claim') as beads_claimed
-                FROM workers w
-                WHERE w.project_path = ?
-                  AND (w.status IN ('running', 'spawning', 'starting')
-                       OR REPLACE(w.stopped_at, 'T', ' ') > ?)
-                ORDER BY w.started_at DESC
-            """,
-                (project_path, one_hour_ago),
-            ).fetchall()
-        else:
-            # workers.db schema - no worker_events table
-            workers = conn.execute(
-                """
-                SELECT w.*, 0 as beads_claimed
-                FROM workers w
-                WHERE w.project_path = ?
-                  AND (w.status IN ('running', 'spawning', 'starting')
-                       OR REPLACE(COALESCE(w.stopped_at, ''), 'T', ' ') > ?)
-                ORDER BY w.started_at DESC
-            """,
-                (project_path, one_hour_ago),
-            ).fetchall()
-
-        result = [dict(w) for w in workers]
-        conn.close()
-
-        logger.debug("Found %d workers in database", len(result))
-        return result
-
-    except sqlite3.Error as e:
-        logger.error("Database error: %s", e)
-        return []
-
-
-def _parse_claim_from_log(log_file: str | None) -> tuple[str | None, str | None]:
-    """Parse the most recent CLAIM line from a worker's log file.
-
-    Workers log claims as: CLAIM: <bead-id> - <title>
-    This function reads the log file and extracts the most recent claim.
-
-    Args:
-        log_file: Path to the worker's log file.
-
-    Returns:
-        Tuple of (bead_id, bead_title), or (None, None) if no claim found.
-    """
-    if not log_file:
-        return None, None
-
-    log_path = Path(log_file)
-    if not log_path.exists():
-        return None, None
-
-    try:
-        # Read the log file and find CLAIM lines
-        # Pattern: [timestamp] [worker_id] CLAIM: <bead-id> - <title>
-        claim_pattern = re.compile(r"CLAIM:\s*(\S+)\s*-\s*(.+)$")
-
-        # Read from the end to find the most recent claim
-        with open(log_path, encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-
-        # Search from most recent to oldest
-        for line in reversed(lines):
-            match = claim_pattern.search(line)
-            if match:
-                bead_id = match.group(1)
-                title = match.group(2).strip()
-                return bead_id, title
-
-        return None, None
-    except (OSError, IOError) as e:
-        logger.debug("Could not read log file %s: %s", log_file, e)
-        return None, None
-
-
-def _get_current_bead_for_worker(
-    worker_id: str, log_file: str | None = None
-) -> tuple[str | None, str | None]:
-    """Get the current bead for a worker.
-
-    First tries to find claims in the worker_events table (mab.db).
-    Falls back to parsing the worker's log file for CLAIM entries.
-
-    Args:
-        worker_id: The worker's unique identifier.
-        log_file: Optional path to the worker's log file for fallback parsing.
-
-    Returns:
-        Tuple of (bead_id, bead_title), or (None, None) if no claim found.
-    """
-    # Try mab.db first (has worker_events table)
-    db_path = PROJECT_ROOT / ".mab" / "mab.db"
-    if not db_path.exists():
-        # Try global mab.db
-        db_path = Path.home() / ".mab" / "mab.db"
-
-    if db_path.exists():
-        try:
-            conn = sqlite3.connect(str(db_path))
-            conn.row_factory = sqlite3.Row
-
-            # Check if worker_events table exists
-            has_events = (
-                conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='worker_events'"
-                ).fetchone()
-                is not None
-            )
-
-            if has_events:
-                # Get the most recent claim event for this worker
-                event = conn.execute(
-                    """
-                    SELECT bead_id, message FROM worker_events
-                    WHERE worker_id = ? AND event_type = 'claim'
-                    ORDER BY timestamp DESC
-                    LIMIT 1
-                """,
-                    (worker_id,),
-                ).fetchone()
-
-                conn.close()
-
-                if event:
-                    return event["bead_id"], event["message"]
-            else:
-                conn.close()
-
-        except sqlite3.Error:
-            pass
-
-    # Fall back to parsing the worker's log file
-    return _parse_claim_from_log(log_file)
-
-
-def _map_db_status_to_api(db_status: str, current_bead: str | None) -> str:
-    """Map database status to API status.
-
-    DB statuses: spawning, running, stopped, crashed, failed, stopping
-    API statuses: working, idle, ended
-    """
-    if db_status in ("stopped", "crashed", "failed", "stopping"):
+    if worker_status in ("stopped", "crashed", "failed", "stopping"):
         return "ended"
-    if db_status == "spawning":
+    if worker_status == "spawning":
         return "idle"
     # running status - check if working on a bead
     if current_bead:
@@ -249,30 +76,28 @@ def _extract_instance_from_worker_id(worker_id: str) -> int:
     return 1
 
 
-def _format_db_timestamp(timestamp_str: str | None) -> str:
-    """Convert database timestamp to ISO format for API response."""
+def _format_timestamp(timestamp_str: str | None) -> str:
+    """Convert timestamp to ISO format for API response."""
     if not timestamp_str:
         return ""
-    # DB timestamps are already in ISO format
     if "T" in timestamp_str:
         return timestamp_str if timestamp_str.endswith("Z") else timestamp_str + "Z"
-    # Convert space-separated format
     return timestamp_str.replace(" ", "T") + "Z"
 
 
 def _worker_to_agent(worker: dict[str, Any]) -> dict[str, Any]:
-    """Convert a worker DB row to an agent dict for the API."""
-    worker_id = worker["id"]
-    log_file = worker.get("log_file")
-    current_bead, bead_title = _get_current_bead_for_worker(worker_id, log_file)
+    """Convert an RPC worker dict (enriched with bead info) to an agent dict."""
+    worker_id = worker.get("id", "")
+    current_bead = worker.get("current_bead")
+    bead_title = worker.get("current_bead_title")
 
     db_role = worker.get("role", "unknown")
     role = ROLE_MAP.get(db_role, db_role)
     if role not in VALID_ROLES:
         role = "unknown"
 
-    db_status = worker.get("status", "unknown")
-    api_status = _map_db_status_to_api(db_status, current_bead)
+    worker_status = worker.get("status", "unknown")
+    api_status = _map_status_to_api(worker_status, current_bead)
     last_activity = worker.get("stopped_at") or worker.get("started_at", "")
 
     return {
@@ -283,37 +108,61 @@ def _worker_to_agent(worker: dict[str, Any]) -> dict[str, Any]:
         "current_bead": current_bead,
         "current_bead_title": bead_title,
         "status": api_status,
-        "last_activity": _format_db_timestamp(last_activity),
+        "last_activity": _format_timestamp(last_activity),
     }
 
 
 def _get_active_agents() -> list[dict[str, Any]]:
-    """Get list of currently active agents from mab.db.
+    """Get list of currently active agents.
 
-    Returns only agents with status 'running', 'spawning', or 'starting'.
+    Convenience wrapper used by app.py for the dashboard page.
     """
-    workers = _get_workers_from_db()
-    agents = [
-        _worker_to_agent(w)
-        for w in workers
-        if w.get("status", "unknown") in ("running", "spawning", "starting")
-    ]
-    agents.sort(key=lambda a: a["last_activity"], reverse=True)
-    logger.debug("Found %d active agents from database", len(agents))
-    return agents
+    return _get_agents_from_rpc(active_only=True)
 
 
 def _get_recent_agents() -> list[dict[str, Any]]:
-    """Get recently stopped/crashed agents (last hour, not currently running)."""
-    workers = _get_workers_from_db()
-    agents = [
-        _worker_to_agent(w)
-        for w in workers
-        if w.get("status", "unknown") not in ("running", "spawning", "starting")
-    ]
-    agents.sort(key=lambda a: a["last_activity"], reverse=True)
-    logger.debug("Found %d recent agents from database", len(agents))
-    return agents
+    """Get recently stopped/crashed agents.
+
+    Convenience wrapper used by app.py for the dashboard page.
+    """
+    return _get_agents_from_rpc(active_only=False)
+
+
+def _get_agents_from_rpc(active_only: bool = True) -> list[dict[str, Any]]:
+    """Get agent data from the RPC daemon.
+
+    Uses the same data source as /api/workers for consistency.
+    """
+    try:
+        client = _get_rpc_client()
+        result = client.call("worker.list", {}, DASHBOARD_RPC_TIMEOUT)
+        workers = result.get("workers", [])
+
+        # Filter to recent workers
+        workers = [w for w in workers if _is_worker_recent(w)]
+
+        # Enrich with bead info
+        workers = _enrich_workers_with_bead_info(workers)
+
+        # Convert to agent format
+        agents = []
+        for w in workers:
+            status = w.get("status", "unknown")
+            is_active = status in ("running", "spawning", "starting")
+
+            if active_only and not is_active:
+                continue
+            if not active_only and is_active:
+                continue
+
+            agents.append(_worker_to_agent(w))
+
+        agents.sort(key=lambda a: a["last_activity"], reverse=True)
+        return agents
+
+    except Exception as e:
+        logger.warning("RPC call failed for agents, returning empty list: %s", e)
+        return []
 
 
 @router.get("", response_model=list[AgentStatus])
@@ -321,14 +170,15 @@ async def list_agents() -> list[dict[str, Any]]:
     """List all active agent sessions.
 
     Returns only workers that are currently running/spawning/starting.
+    Data is sourced from the RPC daemon for consistency with /api/workers.
     """
-    return await asyncio.to_thread(_get_active_agents)
+    return await asyncio.to_thread(_get_agents_from_rpc, True)
 
 
 @router.get("/recent", response_model=list[AgentStatus])
 async def list_recent_agents() -> list[dict[str, Any]]:
     """List recently stopped/crashed agent sessions (last hour)."""
-    return await asyncio.to_thread(_get_recent_agents)
+    return await asyncio.to_thread(_get_agents_from_rpc, False)
 
 
 @router.get("/{role}", response_model=list[AgentStatus])
@@ -353,8 +203,7 @@ async def list_agents_by_role(role: str) -> list[dict[str, Any]]:
             detail=f"Invalid role: {role}. Valid roles: {', '.join(sorted(VALID_ROLES))}",
         )
 
-    # Run blocking DB I/O in thread pool to avoid blocking event loop
-    agents = await asyncio.to_thread(_get_active_agents)
+    agents = await asyncio.to_thread(_get_agents_from_rpc, True)
     filtered = [a for a in agents if a["role"] == role_normalized]
     logger.debug("Found %d agents with role %s", len(filtered), role_normalized)
     return filtered
