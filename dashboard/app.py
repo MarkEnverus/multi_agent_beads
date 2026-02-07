@@ -31,7 +31,7 @@ from dashboard.exceptions import (
     DashboardError,
     LogFileError,
 )
-from dashboard.routes.agents import _get_active_agents
+from dashboard.routes.agents import _get_active_agents, _get_recent_agents
 from dashboard.routes.agents import router as agents_router
 from dashboard.routes.beads import router as beads_router
 from dashboard.routes.logs import router as logs_router
@@ -313,11 +313,14 @@ async def kanban_partial(
 async def agents_partial(request: Request) -> HTMLResponse:
     """Render the agent sidebar partial with current agent data."""
     agents: list[dict[str, Any]] = []
+    recent_agents: list[dict[str, Any]] = []
     error_message: str | None = None
 
     try:
-        # Run blocking file I/O in thread pool to avoid blocking event loop
-        agents = await asyncio.to_thread(_get_active_agents)
+        agents, recent_agents = await asyncio.gather(
+            asyncio.to_thread(_get_active_agents),
+            asyncio.to_thread(_get_recent_agents),
+        )
     except LogFileError as e:
         logger.warning("Failed to get active agents: %s", e.message)
         error_message = e.message
@@ -330,6 +333,7 @@ async def agents_partial(request: Request) -> HTMLResponse:
         {
             "request": request,
             "agents": agents,
+            "recent_agents": recent_agents,
             "error_message": error_message,
         },
     )
