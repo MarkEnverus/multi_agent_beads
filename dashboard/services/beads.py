@@ -713,9 +713,7 @@ class BeadService:
         # Run all 4 subprocess calls in parallel - each takes ~5s with large
         # bead counts, so parallel execution cuts total time by ~4x
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="kanban-fetch") as pool:
-            active_future = pool.submit(
-                cls.list_beads, use_cache=False, include_all=False
-            )
+            active_future = pool.submit(cls.list_beads, use_cache=False, include_all=False)
             closed_future = pool.submit(
                 cls.list_beads,
                 use_cache=False,
