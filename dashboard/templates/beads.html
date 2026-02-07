@@ -194,13 +194,13 @@
             <div class="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
                 <div class="flex items-center space-x-4">
                     <h3 class="text-lg font-semibold text-white">Beads</h3>
-                    <span id="bead-count" class="text-sm text-gray-400">0 beads</span>
+                    <span id="bead-count" class="text-sm text-gray-400 hidden"></span>
                 </div>
                 <div class="flex items-center space-x-3 text-sm">
-                    <span id="beads-freshness-dot" class="relative flex h-2.5 w-2.5">
+                    <span id="beads-freshness-dot" class="relative flex h-2.5 w-2.5 hidden">
                         <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
                     </span>
-                    <span class="text-gray-400">Updated <span id="last-updated">-</span></span>
+                    <span id="beads-freshness-text" class="text-gray-400 hidden">Updated <span id="last-updated">-</span></span>
                     <button onclick="refreshBeads()" class="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">
                         Refresh
                     </button>
@@ -350,7 +350,12 @@
         var diffSec = Math.floor((now - beadsLastFetchedAt) / 1000);
         var dot = document.getElementById('beads-freshness-dot');
         var label = document.getElementById('last-updated');
+        var freshnessText = document.getElementById('beads-freshness-text');
         if (!dot || !label) return;
+
+        // Reveal freshness indicators on first data load
+        dot.classList.remove('hidden');
+        if (freshnessText) freshnessText.classList.remove('hidden');
 
         // Format relative time
         var text;
@@ -621,6 +626,8 @@
         const count = document.getElementById('bead-count');
 
         loading.classList.add('hidden');
+        // Reveal bead count now that data is loaded
+        count.classList.remove('hidden');
 
         if (filteredBeads.length === 0) {
             list.classList.add('hidden');
