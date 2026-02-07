@@ -458,15 +458,39 @@
             }
         }
 
-        // Switch to a different town (navigate to its port)
-        function switchToTown(townName, port) {
-            const protocol = window.location.protocol;
-            const hostname = window.location.hostname;
-            const path = window.location.pathname;
+        // Switch to a different town via API, then navigate if needed
+        async function switchToTown(townName, port) {
+            try {
+                // Update server-side town context
+                const response = await fetch('/api/towns/switch', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({town_name: townName})
+                });
 
-            // Navigate to the same path on the different port
-            const newUrl = `${protocol}//${hostname}:${port}${path}`;
-            window.location.href = newUrl;
+                if (!response.ok) {
+                    const err = await response.json();
+                    console.error('Failed to switch town:', err.detail);
+                    return;
+                }
+
+                const currentPort = parseInt(window.location.port) || (window.location.protocol === 'https:' ? 443 : 80);
+
+                if (port !== currentPort) {
+                    // Different port - navigate to the town's dashboard instance
+                    const protocol = window.location.protocol;
+                    const hostname = window.location.hostname;
+                    const path = window.location.pathname;
+                    window.location.href = `${protocol}//${hostname}:${port}${path}`;
+                } else {
+                    // Same port - refresh page data in place
+                    document.getElementById('town-dropdown').classList.add('hidden');
+                    await loadTowns();
+                    await loadCurrentTownInfo();
+                }
+            } catch (error) {
+                console.error('Failed to switch town:', error);
+            }
         }
 
         // Periodically refresh worker counts (every 10 seconds)

@@ -68,6 +68,29 @@ def _auto_detect_town(configured: str) -> str:
 
 TOWN_NAME = _auto_detect_town(_CONFIGURED_TOWN)
 
+
+def get_town_name() -> str:
+    """Get the current town name.
+
+    Returns the runtime-mutable town name, which may have been changed
+    via the /api/towns/switch endpoint.
+    """
+    return TOWN_NAME
+
+
+def set_town_name(name: str) -> None:
+    """Set the current town name at runtime.
+
+    Used by the /api/towns/switch endpoint to change which town
+    the dashboard considers 'current' without restarting.
+
+    Args:
+        name: The new town name to switch to.
+    """
+    global TOWN_NAME
+    TOWN_NAME = name
+
+
 # CORS allowed origins (localhost only for development)
 # Dynamically include configured port plus common development ports
 CORS_ORIGINS = [

@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from dashboard.config import PROJECT_ROOT, TOWN_NAME
+from dashboard.config import PROJECT_ROOT, get_town_name, set_town_name
 
 # Try to import town management - gracefully handle if mab package not installed
 try:
@@ -115,7 +115,7 @@ async def list_towns() -> dict[str, Any]:
 
     return {
         "towns": town_dicts,
-        "current_town": TOWN_NAME,
+        "current_town": get_town_name(),
         "count": len(towns),
     }
 
@@ -134,14 +134,15 @@ async def get_current_town() -> dict[str, Any]:
         - active_workers: Currently running workers per role
     """
     manager = _get_town_manager()
-    active_workers = _get_active_worker_counts(TOWN_NAME)
+    town_name = get_town_name()
+    active_workers = _get_active_worker_counts(town_name)
 
     try:
-        town = manager.get(TOWN_NAME)
+        town = manager.get(town_name)
         return {
             "exists": True,
             "town": town.to_dict(),
-            "name": TOWN_NAME,
+            "name": town_name,
             "template": town.template,
             "workflow": town.workflow,
             "worker_counts": town.get_effective_roles(),
@@ -152,13 +153,56 @@ async def get_current_town() -> dict[str, Any]:
         return {
             "exists": False,
             "town": None,
-            "name": TOWN_NAME,
+            "name": town_name,
             "template": None,
             "workflow": None,
             "worker_counts": {},
             "active_workers": active_workers,
-            "message": f"Town '{TOWN_NAME}' does not exist. Create it with: mab town create {TOWN_NAME}",
+            "message": f"Town '{town_name}' does not exist. Create it with: mab town create {town_name}",
         }
+
+
+class SwitchTownRequest(BaseModel):
+    """Request body for switching the current town context."""
+
+    town_name: str = Field(..., description="Name of the town to switch to")
+
+
+@router.post("/switch")
+async def switch_town(request: SwitchTownRequest) -> dict[str, Any]:
+    """Switch the dashboard's current town context.
+
+    Updates the server-side town name so subsequent API calls
+    (e.g., /api/towns/current, bead filtering) use the new town.
+
+    Args:
+        request: Contains the town_name to switch to.
+
+    Returns:
+        Success status with the new town details.
+
+    Raises:
+        HTTPException: 404 if town not found.
+    """
+    manager = _get_town_manager()
+
+    try:
+        town = manager.get(request.town_name)
+    except TownNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Town '{request.town_name}' not found",
+        )
+
+    set_town_name(request.town_name)
+    logger.info(f"Switched current town to '{request.town_name}'")
+
+    return {
+        "success": True,
+        "current_town": request.town_name,
+        "town": town.to_dict(),
+        "message": f"Switched to town '{request.town_name}'",
+    }
 
 
 @router.get("/{town_name}")
