@@ -210,6 +210,21 @@
                 </svg>
             </div>
 
+            {# Error state #}
+            <div id="beads-error" class="hidden flex flex-col items-center justify-center py-12">
+                <svg class="h-12 w-12 text-red-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <p class="text-gray-300 font-medium">Failed to load beads</p>
+                <p id="beads-error-msg" class="text-sm text-gray-500 mt-1">Could not connect to the server</p>
+                <button onclick="refreshBeads()" class="mt-4 px-4 py-2 text-sm bg-primary-600 hover:bg-primary-700 text-white rounded-md transition-colors flex items-center space-x-2">
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <span>Retry</span>
+                </button>
+            </div>
+
             {# Bead list container #}
             <div id="beads-list" class="hidden divide-y divide-gray-700"></div>
 
@@ -264,6 +279,16 @@
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
                 </div>
+                {# Graph error state #}
+                <div id="graph-error" class="hidden flex flex-col items-center justify-center h-full">
+                    <svg class="h-10 w-10 text-red-400 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <p class="text-sm text-gray-400">Failed to load graph</p>
+                    <button onclick="refreshGraph()" class="mt-2 px-3 py-1.5 text-xs bg-primary-600 hover:bg-primary-700 text-white rounded-md transition-colors">
+                        Retry
+                    </button>
+                </div>
                 {# Graph content #}
                 <div id="graph-content" class="hidden h-full">
                     <pre id="mermaid-graph" class="mermaid"></pre>
@@ -310,6 +335,14 @@
     let currentPage = 1;
     const pageSize = 20;
     let searchTimeout = null;
+
+    // Fetch with timeout (10s default)
+    function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        return fetch(url, { ...options, signal: controller.signal })
+            .finally(() => clearTimeout(timeout));
+    }
 
     // Priority and type configurations
     const priorityColors = {
@@ -366,7 +399,7 @@
     // Load stats from dedicated lightweight endpoint (no full bead fetch needed)
     async function loadStats() {
         try {
-            const res = await fetch('/api/beads/stats');
+            const res = await fetchWithTimeout('/api/beads/stats');
             if (res.ok) {
                 const data = await res.json();
                 const summary = data.summary || {};
@@ -383,20 +416,40 @@
 
     // Fetch beads for the list (with limit to avoid loading thousands)
     async function refreshBeads() {
+        const loading = document.getElementById('beads-loading');
+        const errorEl = document.getElementById('beads-error');
+
+        // Show loading on first load or retry (when no data yet)
+        if (allBeads.length === 0) {
+            loading.classList.remove('hidden');
+            errorEl.classList.add('hidden');
+            document.getElementById('beads-list').classList.add('hidden');
+            document.getElementById('beads-empty').classList.add('hidden');
+        }
+
         try {
-            const beadsRes = await fetch('/api/beads?include_all=true&limit=500');
+            const beadsRes = await fetchWithTimeout('/api/beads?include_all=true&limit=500');
 
-            if (beadsRes.ok) {
-                allBeads = await beadsRes.json();
-
-                updateLabelsFilter();
-                updateWithDepsCount();
-                applyFilters();
-                document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+            if (!beadsRes.ok) {
+                throw new Error('Server returned ' + beadsRes.status);
             }
+
+            allBeads = await beadsRes.json();
+            errorEl.classList.add('hidden');
+            updateLabelsFilter();
+            updateWithDepsCount();
+            applyFilters();
+            document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
         } catch (error) {
             console.error('Failed to fetch beads:', error);
-            showToast('Failed to fetch beads', 'error');
+            if (allBeads.length === 0) {
+                loading.classList.add('hidden');
+                var msg = error.name === 'AbortError' ? 'Request timed out' : 'Could not connect to the server';
+                document.getElementById('beads-error-msg').textContent = msg;
+                errorEl.classList.remove('hidden');
+            } else {
+                showToast('Failed to refresh beads', 'error');
+            }
         }
     }
 
@@ -680,49 +733,53 @@
         const loading = document.getElementById('graph-loading');
         const content = document.getElementById('graph-content');
         const empty = document.getElementById('graph-empty');
+        const errorEl = document.getElementById('graph-error');
         const stats = document.getElementById('graph-stats');
 
         loading.classList.remove('hidden');
         content.classList.add('hidden');
         empty.classList.add('hidden');
+        errorEl.classList.add('hidden');
 
         try {
-            const response = await fetch('/partials/depgraph');
-            if (response.ok) {
-                const html = await response.text();
+            const response = await fetchWithTimeout('/partials/depgraph');
+            if (!response.ok) {
+                throw new Error('Server returned ' + response.status);
+            }
 
-                // Parse mermaid code from the partial
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(html, 'text/html');
-                const mermaidEl = doc.querySelector('.mermaid');
+            const html = await response.text();
 
-                if (mermaidEl && mermaidEl.textContent.trim() && mermaidEl.textContent.includes('graph TD')) {
-                    const mermaidCode = mermaidEl.textContent.trim();
+            // Parse mermaid code from the partial
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const mermaidEl = doc.querySelector('.mermaid');
 
-                    // Count nodes and edges
-                    const nodeMatches = mermaidCode.match(/\[[^\]]+\]/g) || [];
-                    const edgeMatches = mermaidCode.match(/-->/g) || [];
-                    stats.textContent = `${nodeMatches.length} nodes, ${edgeMatches.length} edges`;
+            if (mermaidEl && mermaidEl.textContent.trim() && mermaidEl.textContent.includes('graph TD')) {
+                const mermaidCode = mermaidEl.textContent.trim();
 
-                    // Render graph
-                    const graphEl = document.getElementById('mermaid-graph');
-                    graphEl.textContent = mermaidCode;
-                    graphEl.removeAttribute('data-processed');
+                // Count nodes and edges
+                const nodeMatches = mermaidCode.match(/\[[^\]]+\]/g) || [];
+                const edgeMatches = mermaidCode.match(/-->/g) || [];
+                stats.textContent = `${nodeMatches.length} nodes, ${edgeMatches.length} edges`;
 
-                    loading.classList.add('hidden');
-                    content.classList.remove('hidden');
+                // Render graph
+                const graphEl = document.getElementById('mermaid-graph');
+                graphEl.textContent = mermaidCode;
+                graphEl.removeAttribute('data-processed');
 
-                    await mermaid.run({ nodes: [graphEl] });
-                } else {
-                    loading.classList.add('hidden');
-                    empty.classList.remove('hidden');
-                    stats.textContent = '0 nodes, 0 edges';
-                }
+                loading.classList.add('hidden');
+                content.classList.remove('hidden');
+
+                await mermaid.run({ nodes: [graphEl] });
+            } else {
+                loading.classList.add('hidden');
+                empty.classList.remove('hidden');
+                stats.textContent = '0 nodes, 0 edges';
             }
         } catch (error) {
             console.error('Failed to refresh graph:', error);
             loading.classList.add('hidden');
-            empty.classList.remove('hidden');
+            errorEl.classList.remove('hidden');
         }
     }
 

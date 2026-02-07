@@ -139,6 +139,20 @@
                 </div>
                 {# Agent cards will be rendered here grouped by role #}
                 <div id="agents-list" class="hidden space-y-6"></div>
+                {# Error state #}
+                <div id="agents-error" class="hidden flex flex-col items-center justify-center py-12">
+                    <svg class="h-12 w-12 text-red-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <p class="text-gray-300 font-medium">Failed to load agents</p>
+                    <p id="agents-error-msg" class="text-sm text-gray-500 mt-1">Could not connect to the server</p>
+                    <button onclick="refreshAgents()" class="mt-4 px-4 py-2 text-sm bg-primary-600 hover:bg-primary-700 text-white rounded-md transition-colors flex items-center space-x-2">
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        <span>Retry</span>
+                    </button>
+                </div>
                 {# Empty state #}
                 <div id="agents-empty" class="hidden text-center py-12">
                     <svg class="mx-auto h-12 w-12 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -198,6 +212,17 @@
     let logEntryCount = 0;
     let daemonRunning = true;  // Track daemon status for spawn button state
 
+    // Fetch with timeout (10s default)
+    function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        return fetch(url, { ...options, signal: controller.signal })
+            .finally(() => clearTimeout(timeout));
+    }
+
+    // Track whether we've ever loaded agents successfully
+    let hasLoadedAgents = false;
+
     // Role configuration
     const roleConfig = {
         dev: { bg: 'bg-green-900', text: 'text-green-300', border: 'border-green-600', dot: 'bg-green-500', icon: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />' },
@@ -248,11 +273,24 @@
             workersUrl += '?' + params.toString();
         }
 
+        const loading = document.getElementById('agents-loading');
+        const errorEl = document.getElementById('agents-error');
+
+        // Show loading on first load or retry
+        if (!hasLoadedAgents) {
+            loading.classList.remove('hidden');
+            errorEl.classList.add('hidden');
+            document.getElementById('agents-list').classList.add('hidden');
+            document.getElementById('agents-empty').classList.add('hidden');
+        }
+
         try {
-            const workersResponse = await fetch(workersUrl);
+            const workersResponse = await fetchWithTimeout(workersUrl);
 
             if (workersResponse.ok) {
+                hasLoadedAgents = true;
                 daemonRunning = true;
+                errorEl.classList.add('hidden');
                 const data = await workersResponse.json();
                 // Transform worker data to display format
                 // Bead info (current_bead, current_bead_title) is included in worker data
@@ -296,15 +334,26 @@
                 document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
             } else if (workersResponse.status === 503) {
                 // Daemon not running - show empty state and disable spawn buttons
+                hasLoadedAgents = true;
                 daemonRunning = false;
+                errorEl.classList.add('hidden');
                 agents = [];
                 renderAgents(agents);
                 updateStats(agents);
                 document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+            } else {
+                throw new Error('Server returned ' + workersResponse.status);
             }
         } catch (error) {
             console.error('Failed to fetch agents:', error);
-            showToast('Failed to fetch agents', 'error');
+            if (!hasLoadedAgents) {
+                loading.classList.add('hidden');
+                var msg = error.name === 'AbortError' ? 'Request timed out' : 'Could not connect to the server';
+                document.getElementById('agents-error-msg').textContent = msg;
+                errorEl.classList.remove('hidden');
+            } else {
+                showToast('Failed to refresh agents', 'error');
+            }
         }
     }
 
