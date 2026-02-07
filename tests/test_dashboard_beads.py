@@ -730,9 +730,7 @@ class TestKanbanQueueDepth:
         stats_data = {"summary": {"total_issues": 6}}
 
         with (
-            patch.object(
-                BeadService, "list_beads", side_effect=[active_beads, closed_beads]
-            ),
+            patch.object(BeadService, "list_beads", side_effect=[active_beads, closed_beads]),
             patch.object(BeadService, "list_blocked", return_value=[]),
             patch.object(BeadService, "get_stats", return_value=stats_data),
         ):
@@ -756,9 +754,7 @@ class TestKanbanQueueDepth:
         stats_data = {"summary": {"total_issues": 2}}
 
         with (
-            patch.object(
-                BeadService, "list_beads", side_effect=[active_beads, []]
-            ),
+            patch.object(BeadService, "list_beads", side_effect=[active_beads, []]),
             patch.object(BeadService, "list_blocked", return_value=blocked_data),
             patch.object(BeadService, "get_stats", return_value=stats_data),
         ):
