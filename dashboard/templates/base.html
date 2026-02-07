@@ -228,48 +228,45 @@
     </div>
 
     <!-- Global Toast Notifications Container -->
-    <div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
+    <div id="toast-container" class="fixed top-4 right-4 space-y-2 z-50"></div>
 
-    <!-- Global Toast + Town Switcher Scripts (always loaded) -->
+    <!-- Global Toast Notification Function -->
     <script>
-    // Global toast notification system
-    function showToast(message, type = 'info') {
-        const container = document.getElementById('toast-container');
-        if (!container) return;
-        const id = 'toast-' + Date.now();
-
-        const bgColor = {
-            'success': 'bg-green-600',
-            'error': 'bg-red-600',
-            'warning': 'bg-yellow-600',
-            'info': 'bg-primary-600'
-        }[type] || 'bg-gray-600';
-
-        const iconSvg = {
-            'success': '<svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>',
-            'error': '<svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>',
-            'warning': '<svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>',
-            'info': '<svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>'
-        }[type] || '';
-
-        const toast = document.createElement('div');
-        toast.id = id;
-        toast.className = `${bgColor} text-white px-4 py-2 rounded-lg shadow-lg transform transition-all duration-300 translate-x-full flex items-center space-x-2 max-w-sm`;
-        toast.innerHTML = `${iconSvg}<span>${message}</span>`;
-
-        container.appendChild(toast);
-
-        // Animate in
-        requestAnimationFrame(() => toast.classList.remove('translate-x-full'));
-
-        // Remove after 3 seconds
-        setTimeout(() => {
-            toast.classList.add('translate-x-full');
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
-    }
+        function showToast(message, type) {
+            type = type || 'info';
+            var container = document.getElementById('toast-container');
+            if (!container) return;
+            var id = 'toast-' + Date.now();
+            var colors = {
+                'success': 'bg-green-600',
+                'error': 'bg-red-600',
+                'warning': 'bg-yellow-600',
+                'info': 'bg-primary-600'
+            };
+            var bgColor = colors[type] || 'bg-gray-600';
+            var icons = {
+                'success': '<svg class="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>',
+                'error': '<svg class="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>',
+                'warning': '<svg class="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>',
+                'info': '<svg class="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>'
+            };
+            var icon = icons[type] || icons['info'];
+            var toast = document.createElement('div');
+            toast.id = id;
+            toast.className = bgColor + ' text-white px-4 py-3 rounded-lg shadow-lg flex items-center space-x-2 transform transition-all duration-300 translate-x-full opacity-0 max-w-sm';
+            toast.innerHTML = icon + '<span class="text-sm">' + message + '</span>';
+            container.appendChild(toast);
+            requestAnimationFrame(function() {
+                toast.classList.remove('translate-x-full', 'opacity-0');
+            });
+            setTimeout(function() {
+                toast.classList.add('translate-x-full', 'opacity-0');
+                setTimeout(function() { toast.remove(); }, 300);
+            }, 3000);
+        }
     </script>
 
+    <!-- Town Switcher Script (always loaded) -->
     <script>
         // Town switcher functionality
         let townsData = [];
@@ -526,6 +523,7 @@
                 const currentPort = parseInt(window.location.port) || (window.location.protocol === 'https:' ? 443 : 80);
 
                 if (port !== currentPort) {
+                    showToast('Switching to ' + townName + '...', 'info');
                     // Different port - navigate to the town's dashboard instance
                     const protocol = window.location.protocol;
                     const hostname = window.location.hostname;
@@ -536,6 +534,7 @@
                     document.getElementById('town-dropdown').classList.add('hidden');
                     await loadTowns();
                     await loadCurrentTownInfo();
+                    showToast('Switched to ' + townName, 'success');
                 }
             } catch (error) {
                 console.error('Failed to switch town:', error);
