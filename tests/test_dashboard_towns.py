@@ -33,7 +33,8 @@ class TestCurrentTownEndpoint:
 
         with patch("dashboard.routes.towns._get_town_manager", return_value=mock_manager):
             with patch("dashboard.routes.towns._get_active_worker_counts", return_value={}):
-                response = client.get("/api/towns/current")
+                with patch("dashboard.routes.towns.TOWN_NAME", "default"):
+                    response = client.get("/api/towns/current")
 
         assert response.status_code == 200
         data = response.json()

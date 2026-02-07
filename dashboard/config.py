@@ -23,7 +23,50 @@ STATIC_DIR = DASHBOARD_DIR / "static"
 # Server configuration
 HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
 PORT = int(os.environ.get("DASHBOARD_PORT", "8000"))
-TOWN_NAME = os.environ.get("DASHBOARD_TOWN", "default")
+_CONFIGURED_TOWN = os.environ.get("DASHBOARD_TOWN", "default")
+
+
+def _auto_detect_town(configured: str) -> str:
+    """Auto-detect the current town if the configured one doesn't exist.
+
+    When no DASHBOARD_TOWN env var is set, the default 'default' often doesn't
+    match any real town. This function checks whether the configured town exists
+    and, if not, falls back to the first available town.
+
+    Args:
+        configured: The configured town name (from env or default).
+
+    Returns:
+        A valid town name, or the original configured name if detection fails.
+    """
+    try:
+        from mab.towns import TownManager
+
+        mab_home = Path.home() / ".mab"
+        manager = TownManager(mab_home)
+        towns = manager.list_towns()
+
+        if not towns:
+            return configured
+
+        # Check if configured town exists
+        town_names = [t.name for t in towns]
+        if configured in town_names:
+            return configured
+
+        # Configured town doesn't exist - pick the best alternative
+        # Prefer a running town, otherwise take the first one
+        for t in towns:
+            if t.status.value == "running":
+                return t.name
+        return towns[0].name
+
+    except Exception:
+        # mab not installed, no towns DB, or any other error - use configured value
+        return configured
+
+
+TOWN_NAME = _auto_detect_town(_CONFIGURED_TOWN)
 
 # CORS allowed origins (localhost only for development)
 # Dynamically include configured port plus common development ports
