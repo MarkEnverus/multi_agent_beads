@@ -283,9 +283,6 @@
     </div>
 </div>
 
-{# Toast Notifications Container #}
-<div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
-
 {# Export Modal #}
 <div id="export-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-gray-900/80">
     <div class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-700">
@@ -946,35 +943,6 @@
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
-    }
-
-    // Show toast notification
-    function showToast(message, type = 'info') {
-        const container = document.getElementById('toast-container');
-        const id = 'toast-' + Date.now();
-
-        const bgColor = {
-            'success': 'bg-green-600',
-            'error': 'bg-red-600',
-            'warning': 'bg-yellow-600',
-            'info': 'bg-primary-600'
-        }[type] || 'bg-gray-600';
-
-        const toast = document.createElement('div');
-        toast.id = id;
-        toast.className = `${bgColor} text-white px-4 py-2 rounded-lg shadow-lg transform transition-all duration-300 translate-x-full`;
-        toast.textContent = message;
-
-        container.appendChild(toast);
-
-        // Animate in
-        setTimeout(() => toast.classList.remove('translate-x-full'), 10);
-
-        // Remove after 3 seconds
-        setTimeout(() => {
-            toast.classList.add('translate-x-full');
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
     }
 
     // Cleanup on page unload
