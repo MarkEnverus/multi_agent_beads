@@ -695,31 +695,36 @@ class BeadService:
     def _fetch_kanban_data(cls, done_limit: int) -> dict[str, Any]:
         """Internal method to fetch and partition kanban data.
 
+        Only fetches active (non-closed) beads to avoid loading thousands of
+        closed beads. Uses the stats endpoint for total count.
+
         Args:
             done_limit: Maximum number of closed beads to return.
 
         Returns:
             Dictionary with ready, in_progress, and done beads.
         """
-        # Fetch all beads in a single call (include_all=True to include closed)
-        all_beads = cls.list_beads(use_cache=False, include_all=True)
+        # Fetch only active beads (open + in_progress) - avoids loading all closed beads
+        active_beads = cls.list_beads(use_cache=False, include_all=False)
+
+        # Fetch limited closed beads for the "Done" column
+        closed_beads = cls.list_beads(
+            use_cache=False, include_all=True, status="closed", limit=done_limit
+        )
 
         # Also fetch blocked info to determine what's ready
         blocked_beads = cls.list_blocked(use_cache=False)
         blocked_ids = {b["id"] for b in blocked_beads}
 
-        # Partition beads by status
+        # Partition active beads by status
         ready_beads: list[dict[str, Any]] = []
         in_progress_beads: list[dict[str, Any]] = []
-        done_beads: list[dict[str, Any]] = []
 
-        for bead in all_beads:
+        for bead in active_beads:
             status = bead.get("status", "").lower()
             bead_id = bead.get("id", "")
 
-            if status == "closed":
-                done_beads.append(bead)
-            elif status == "in_progress":
+            if status == "in_progress":
                 in_progress_beads.append(bead)
             elif status == "open" and bead_id not in blocked_ids:
                 # Open and not blocked = ready
@@ -729,12 +734,19 @@ class BeadService:
         ready_beads = cls.sort_by_priority(ready_beads)
         in_progress_beads = cls.sort_by_priority(in_progress_beads)
 
-        # Sort done by updated_at desc, limit results
-        done_beads.sort(
+        # Sort done by updated_at desc
+        done_beads = sorted(
+            closed_beads,
             key=lambda b: b.get("updated_at", ""),
             reverse=True,
         )
-        done_beads = done_beads[:done_limit]
+
+        # Get total count from lightweight stats query
+        try:
+            stats = cls.get_stats(use_cache=False)
+            total_count = stats.get("summary", {}).get("total_issues", 0)
+        except Exception:
+            total_count = len(active_beads) + len(closed_beads)
 
         # Compute queue depth by role from ready beads' labels
         queue_depth: dict[str, int] = {}
@@ -746,7 +758,7 @@ class BeadService:
             "ready_beads": ready_beads,
             "in_progress_beads": in_progress_beads,
             "done_beads": done_beads,
-            "total_count": len(all_beads),
+            "total_count": total_count,
             "queue_depth_by_role": queue_depth,
         }
 

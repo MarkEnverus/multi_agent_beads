@@ -348,10 +348,11 @@
     // Initialize on page load
     // Use a function that handles both cases: DOM already loaded or not yet loaded
     function initPage() {
+        loadStats();
         refreshBeads();
         refreshGraph();
         // Auto-refresh every 30 seconds
-        setInterval(refreshBeads, 30000);
+        setInterval(function() { loadStats(); refreshBeads(); }, 30000);
     }
 
     // Check if DOM is already ready (common when scripts are at end of body)
@@ -362,28 +363,35 @@
         initPage();
     }
 
-    // Fetch all beads
+    // Load stats from dedicated lightweight endpoint (no full bead fetch needed)
+    async function loadStats() {
+        try {
+            const res = await fetch('/api/beads/stats');
+            if (res.ok) {
+                const data = await res.json();
+                const summary = data.summary || {};
+                document.getElementById('stat-total').textContent = summary.total_issues || 0;
+                document.getElementById('stat-ready').textContent = summary.ready_issues || 0;
+                document.getElementById('stat-in-progress').textContent = summary.in_progress_issues || 0;
+                document.getElementById('stat-blocked').textContent = summary.blocked_issues || 0;
+                document.getElementById('stat-closed').textContent = summary.closed_issues || 0;
+            }
+        } catch (error) {
+            console.error('Failed to load stats:', error);
+        }
+    }
+
+    // Fetch beads for the list (with limit to avoid loading thousands)
     async function refreshBeads() {
         try {
-            const [beadsRes, blockedRes] = await Promise.all([
-                fetch('/api/beads?include_all=true'),
-                fetch('/api/beads?status=blocked').catch(() => ({ ok: false }))
-            ]);
+            const beadsRes = await fetch('/api/beads?include_all=true&limit=500');
 
             if (beadsRes.ok) {
                 allBeads = await beadsRes.json();
 
-                // Try to get blocked beads for status identification
-                try {
-                    const blockedData = await (await fetch('/partials/depgraph')).text();
-                    // Parse blocked IDs from response if available
-                } catch (e) {
-                    // Blocked info not critical
-                }
-
                 updateLabelsFilter();
+                updateWithDepsCount();
                 applyFilters();
-                updateStats();
                 document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
             }
         } catch (error) {
@@ -392,23 +400,12 @@
         }
     }
 
-    // Update statistics
-    function updateStats() {
-        const total = allBeads.length;
-        const ready = allBeads.filter(b => b.status === 'open' && !blockedIds.has(b.id)).length;
-        const inProgress = allBeads.filter(b => b.status === 'in_progress').length;
-        const blocked = blockedIds.size;
-        const closed = allBeads.filter(b => b.status === 'closed').length;
+    // Update "With Deps" stat from bead list data (not available from stats API)
+    function updateWithDepsCount() {
         const withDeps = allBeads.filter(b =>
             (b.dependencies && b.dependencies.length > 0) ||
             (b.dependents && b.dependents.length > 0)
         ).length;
-
-        document.getElementById('stat-total').textContent = total;
-        document.getElementById('stat-ready').textContent = ready;
-        document.getElementById('stat-in-progress').textContent = inProgress;
-        document.getElementById('stat-blocked').textContent = blocked;
-        document.getElementById('stat-closed').textContent = closed;
         document.getElementById('stat-with-deps').textContent = withDeps;
     }
 
