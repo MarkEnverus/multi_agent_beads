@@ -149,7 +149,37 @@ async def get_current_town() -> dict[str, Any]:
             "active_workers": active_workers,
         }
     except TownNotFoundError:
-        # Clearly indicate town doesn't exist - don't fake defaults
+        # Current town doesn't exist - try to auto-select an available one
+        towns = manager.list_towns()
+        if towns:
+            running = [t for t in towns if t.status == TownStatus.RUNNING]
+            fallback = running[0] if running else towns[0]
+
+            set_town_name(fallback.name)
+            logger.info(
+                "Auto-switched from non-existent town '%s' to '%s'",
+                town_name,
+                fallback.name,
+            )
+
+            try:
+                town = manager.get(fallback.name)
+                fallback_workers = _get_active_worker_counts(fallback.name)
+                return {
+                    "exists": True,
+                    "auto_switched": True,
+                    "previous_town": town_name,
+                    "town": town.to_dict(),
+                    "name": fallback.name,
+                    "template": town.template,
+                    "workflow": town.workflow,
+                    "worker_counts": town.get_effective_roles(),
+                    "active_workers": fallback_workers,
+                }
+            except TownNotFoundError:
+                pass  # Fall through to "no towns" response
+
+        # No towns exist at all
         return {
             "exists": False,
             "town": None,
