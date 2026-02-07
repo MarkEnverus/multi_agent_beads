@@ -826,5 +826,47 @@
             logEventSource.close();
         }
     });
+
+    // --- WebSocket real-time updates ---
+    let wsAgentRefreshTimer = null;
+
+    function wsRefreshAgentsDebounced() {
+        clearTimeout(wsAgentRefreshTimer);
+        wsAgentRefreshTimer = setTimeout(refreshAgents, 300);
+    }
+
+    // Worker events → immediate refresh
+    document.addEventListener('mab:ws:worker.spawned', function(e) {
+        wsRefreshAgentsDebounced();
+        showToast('Worker spawned: ' + (e.detail.role || ''), 'success');
+    });
+    document.addEventListener('mab:ws:worker.stopped', function(e) {
+        wsRefreshAgentsDebounced();
+        showToast('Worker stopped: ' + (e.detail.worker_id || ''), 'info');
+    });
+    document.addEventListener('mab:ws:worker.crashed', function(e) {
+        wsRefreshAgentsDebounced();
+        showToast('Worker crashed: ' + (e.detail.worker_id || ''), 'error');
+    });
+    document.addEventListener('mab:ws:worker.status', wsRefreshAgentsDebounced);
+
+    // Agent session events → immediate refresh
+    document.addEventListener('mab:ws:agent.session_start', wsRefreshAgentsDebounced);
+    document.addEventListener('mab:ws:agent.session_end', wsRefreshAgentsDebounced);
+    document.addEventListener('mab:ws:agent.claim', wsRefreshAgentsDebounced);
+
+    // Update status indicator when WS connected
+    document.addEventListener('mab:ws:connected', function() {
+        var el = document.getElementById('ws-status');
+        if (el) {
+            el.innerHTML = '<span class="relative flex h-3 w-3"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span></span><span class="text-sm text-gray-400">Live</span>';
+        }
+    });
+    document.addEventListener('mab:ws:disconnected', function() {
+        var el = document.getElementById('ws-status');
+        if (el) {
+            el.innerHTML = '<span class="relative flex h-3 w-3"><span class="relative inline-flex rounded-full h-3 w-3 bg-yellow-500"></span></span><span class="text-sm text-gray-400">Polling (5s)</span>';
+        }
+    });
 </script>
 {% endblock %}

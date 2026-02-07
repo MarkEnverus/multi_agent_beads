@@ -593,6 +593,139 @@
             loadCurrentTownInfo();
             startWorkerCountRefresh();
         });
+
+        // Instant worker count updates via WebSocket
+        document.addEventListener('mab:ws:worker.spawned', loadCurrentTownInfo);
+        document.addEventListener('mab:ws:worker.stopped', loadCurrentTownInfo);
+        document.addEventListener('mab:ws:worker.crashed', loadCurrentTownInfo);
+    </script>
+
+    <!-- Shared WebSocket Client -->
+    <script>
+        (function() {
+            const MAX_RECONNECT_ATTEMPTS = 10;
+            const BASE_RECONNECT_DELAY = 1000;
+
+            let ws = null;
+            let reconnectAttempts = 0;
+            let reconnectTimer = null;
+            let intentionalClose = false;
+
+            function getWsUrl() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                return `${protocol}//${window.location.host}/ws`;
+            }
+
+            function updateConnectionIndicator(state) {
+                const el = document.getElementById('connection-status');
+                if (!el) return;
+
+                const configs = {
+                    connected: {
+                        dot: '<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>',
+                        text: 'Connected',
+                        textClass: 'text-gray-400'
+                    },
+                    disconnected: {
+                        dot: '<span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>',
+                        text: 'Disconnected',
+                        textClass: 'text-red-400'
+                    },
+                    connecting: {
+                        dot: '<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span><span class="relative inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>',
+                        text: 'Reconnecting...',
+                        textClass: 'text-yellow-400'
+                    }
+                };
+
+                const cfg = configs[state] || configs.disconnected;
+                el.title = cfg.text;
+                el.innerHTML = `
+                    <span class="relative flex h-3 w-3">${cfg.dot}</span>
+                    <span class="text-sm ${cfg.textClass} ml-2 opacity-0 group-hover:opacity-100 transition-opacity">${cfg.text}</span>
+                `;
+            }
+
+            function connect() {
+                if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                    return;
+                }
+
+                intentionalClose = false;
+                updateConnectionIndicator('connecting');
+
+                try {
+                    ws = new WebSocket(getWsUrl());
+                } catch (e) {
+                    console.error('WebSocket creation failed:', e);
+                    scheduleReconnect();
+                    return;
+                }
+
+                ws.onopen = function() {
+                    reconnectAttempts = 0;
+                    updateConnectionIndicator('connected');
+                    document.dispatchEvent(new CustomEvent('mab:ws:connected'));
+                };
+
+                ws.onclose = function() {
+                    updateConnectionIndicator('disconnected');
+                    document.dispatchEvent(new CustomEvent('mab:ws:disconnected'));
+                    if (!intentionalClose) {
+                        scheduleReconnect();
+                    }
+                };
+
+                ws.onerror = function() {
+                    updateConnectionIndicator('disconnected');
+                };
+
+                ws.onmessage = function(event) {
+                    try {
+                        const message = JSON.parse(event.data);
+                        // Dispatch a custom DOM event for each message type
+                        document.dispatchEvent(new CustomEvent('mab:ws:message', { detail: message }));
+                        // Also dispatch a type-specific event (e.g. mab:ws:worker.spawned)
+                        document.dispatchEvent(new CustomEvent('mab:ws:' + message.type, { detail: message.data }));
+                    } catch (e) {
+                        console.error('Failed to parse WebSocket message:', e);
+                    }
+                };
+            }
+
+            function scheduleReconnect() {
+                if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                    console.warn('WebSocket max reconnect attempts reached');
+                    updateConnectionIndicator('disconnected');
+                    return;
+                }
+                reconnectAttempts++;
+                const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(1.5, reconnectAttempts - 1), 30000);
+                clearTimeout(reconnectTimer);
+                reconnectTimer = setTimeout(connect, delay);
+            }
+
+            // Expose for pages that need to send messages
+            window.mabWs = {
+                send: function(data) {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(typeof data === 'string' ? data : JSON.stringify(data));
+                    }
+                },
+                isConnected: function() {
+                    return ws && ws.readyState === WebSocket.OPEN;
+                }
+            };
+
+            // Connect on page load
+            document.addEventListener('DOMContentLoaded', connect);
+
+            // Clean up on page unload
+            window.addEventListener('beforeunload', function() {
+                intentionalClose = true;
+                if (ws) ws.close();
+            });
+        })();
     </script>
 
     <!-- Page-specific scripts -->
