@@ -645,11 +645,6 @@
 
 {% block scripts %}
 <script>
-    // WebSocket connection
-    let ws = null;
-    let wsReconnectAttempts = 0;
-    const maxReconnectAttempts = 5;
-
     // Store worker data
     let workers = [];
 
@@ -683,7 +678,7 @@
 
     // Initialize on page load
     document.addEventListener('DOMContentLoaded', function() {
-        connectWebSocket();
+        // WebSocket is handled by shared client in base.html
         refreshAllImmediate();  // Initial refresh immediately
         refreshProjectStatus();
         // Start adaptive polling
@@ -715,39 +710,7 @@
         }
     }
 
-    // WebSocket connection management
-    function connectWebSocket() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-
-        ws.onopen = function() {
-            console.log('WebSocket connected');
-            wsReconnectAttempts = 0;
-            updateWsStatus('connected');
-        };
-
-        ws.onclose = function() {
-            console.log('WebSocket disconnected');
-            updateWsStatus('disconnected');
-
-            // Try to reconnect
-            if (wsReconnectAttempts < maxReconnectAttempts) {
-                wsReconnectAttempts++;
-                setTimeout(connectWebSocket, 2000 * wsReconnectAttempts);
-            }
-        };
-
-        ws.onerror = function(error) {
-            console.error('WebSocket error:', error);
-            updateWsStatus('error');
-        };
-
-        ws.onmessage = function(event) {
-            const message = JSON.parse(event.data);
-            handleWebSocketMessage(message);
-        };
-    }
-
+    // WebSocket events via shared base.html connection
     function updateWsStatus(status) {
         const statusEl = document.getElementById('ws-status');
         let html = '';
@@ -780,28 +743,29 @@
         statusEl.innerHTML = html;
     }
 
-    function handleWebSocketMessage(message) {
-        switch (message.type) {
-            case 'connected':
-                showToast('Connected to real-time updates', 'success');
-                break;
-            case 'worker.spawned':
-                showToast(`Worker spawned: ${message.data.role}`, 'success');
-                refreshWorkers();
-                break;
-            case 'worker.stopped':
-                showToast(`Worker stopped: ${message.data.worker_id}`, 'info');
-                refreshWorkers();
-                break;
-            case 'worker.crashed':
-                showToast(`Worker crashed: ${message.data.worker_id}`, 'error');
-                refreshWorkers();
-                break;
-            case 'daemon.status':
-                updateDaemonStatus(message.data);
-                break;
-        }
-    }
+    // Listen to shared WebSocket events from base.html
+    document.addEventListener('mab:ws:connected', function() {
+        updateWsStatus('connected');
+        showToast('Connected to real-time updates', 'success');
+    });
+    document.addEventListener('mab:ws:disconnected', function() {
+        updateWsStatus('disconnected');
+    });
+    document.addEventListener('mab:ws:worker.spawned', function(e) {
+        showToast('Worker spawned: ' + (e.detail.role || ''), 'success');
+        refreshWorkers();
+    });
+    document.addEventListener('mab:ws:worker.stopped', function(e) {
+        showToast('Worker stopped: ' + (e.detail.worker_id || ''), 'info');
+        refreshWorkers();
+    });
+    document.addEventListener('mab:ws:worker.crashed', function(e) {
+        showToast('Worker crashed: ' + (e.detail.worker_id || ''), 'error');
+        refreshWorkers();
+    });
+    document.addEventListener('mab:ws:daemon.status', function(e) {
+        updateDaemonStatus(e.detail);
+    });
 
     // API calls - use debounced versions for event handlers
     function refreshAll() {

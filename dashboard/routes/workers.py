@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from dashboard.config import PROJECT_ROOT
+from dashboard.routes.ws import broadcast_worker_spawned, broadcast_worker_stopped
 from mab.daemon import (
     MAB_HOME,
     Daemon,
@@ -971,6 +972,8 @@ async def spawn_worker(request: WorkerSpawnRequest) -> dict[str, Any]:
         # Transform worker_id to id for WorkerResponse model compatibility
         if "worker_id" in result and "id" not in result:
             result["id"] = result.pop("worker_id")
+        # Broadcast to WebSocket clients
+        await broadcast_worker_spawned({"role": request.role, **result})
         return result
     except Exception as e:
         _handle_rpc_error(e, f"spawn_worker({request.role})")
@@ -1031,6 +1034,8 @@ async def add_workers(request: WorkerAddRequest) -> dict[str, Any]:
                     result.get("id"),
                     request.role,
                 )
+                # Broadcast to WebSocket clients
+                await broadcast_worker_spawned({"role": request.role, **result})
             except Exception as e:
                 error_msg = f"Failed to spawn worker {i + 1}: {str(e)}"
                 errors.append(error_msg)
@@ -1075,6 +1080,8 @@ async def stop_worker(
         )
         worker: dict[str, Any] = result.get("worker", {})
         logger.info("Stopped worker: %s", worker_id)
+        # Broadcast to WebSocket clients
+        await broadcast_worker_stopped(worker_id, reason="stopped via API")
         return worker
     except Exception as e:
         _handle_rpc_error(e, f"stop_worker({worker_id})")

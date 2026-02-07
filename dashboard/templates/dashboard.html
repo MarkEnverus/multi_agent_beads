@@ -260,5 +260,65 @@
             updateFreshnessTimestamps();
         }
     });
+
+    // --- WebSocket real-time updates ---
+    // Debounce helper to avoid rapid-fire refreshes
+    let kanbanRefreshTimer = null;
+    let agentRefreshTimer = null;
+
+    function wsRefreshKanban() {
+        clearTimeout(kanbanRefreshTimer);
+        kanbanRefreshTimer = setTimeout(function() {
+            var board = document.getElementById('kanban-board');
+            if (board && !board.classList.contains('hidden')) {
+                htmx.trigger(board, 'load');
+            }
+        }, 300);
+    }
+
+    function wsRefreshAgentSidebar() {
+        clearTimeout(agentRefreshTimer);
+        agentRefreshTimer = setTimeout(function() {
+            var sidebar = document.getElementById('agent-sidebar');
+            if (sidebar) {
+                htmx.trigger(sidebar, 'load');
+            }
+        }, 300);
+    }
+
+    // Bead events → refresh kanban
+    document.addEventListener('mab:ws:bead.created', wsRefreshKanban);
+    document.addEventListener('mab:ws:bead.updated', wsRefreshKanban);
+    document.addEventListener('mab:ws:bead.closed', wsRefreshKanban);
+
+    // Worker/agent events → refresh agent sidebar
+    document.addEventListener('mab:ws:worker.spawned', function(e) {
+        wsRefreshAgentSidebar();
+        showToast('Worker spawned: ' + (e.detail.role || ''), 'success');
+    });
+    document.addEventListener('mab:ws:worker.stopped', function(e) {
+        wsRefreshAgentSidebar();
+        showToast('Worker stopped', 'info');
+    });
+    document.addEventListener('mab:ws:worker.crashed', function(e) {
+        wsRefreshAgentSidebar();
+        showToast('Worker crashed', 'error');
+    });
+    document.addEventListener('mab:ws:agent.session_start', wsRefreshAgentSidebar);
+    document.addEventListener('mab:ws:agent.session_end', wsRefreshAgentSidebar);
+    document.addEventListener('mab:ws:agent.claim', function() {
+        wsRefreshAgentSidebar();
+        wsRefreshKanban();
+    });
+
+    // Update refresh status text when WS connected
+    document.addEventListener('mab:ws:connected', function() {
+        var el = document.getElementById('kanban-refresh-status');
+        if (el) el.textContent = 'Live updates active';
+    });
+    document.addEventListener('mab:ws:disconnected', function() {
+        var el = document.getElementById('kanban-refresh-status');
+        if (el) el.textContent = 'Auto-refreshing every 10s';
+    });
 </script>
 {% endblock %}
