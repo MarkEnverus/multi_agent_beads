@@ -260,49 +260,59 @@ def _format_db_timestamp(timestamp_str: str | None) -> str:
     return timestamp_str.replace(" ", "T") + "Z"
 
 
+def _worker_to_agent(worker: dict[str, Any]) -> dict[str, Any]:
+    """Convert a worker DB row to an agent dict for the API."""
+    worker_id = worker["id"]
+    log_file = worker.get("log_file")
+    current_bead, bead_title = _get_current_bead_for_worker(worker_id, log_file)
+
+    db_role = worker.get("role", "unknown")
+    role = ROLE_MAP.get(db_role, db_role)
+    if role not in VALID_ROLES:
+        role = "unknown"
+
+    db_status = worker.get("status", "unknown")
+    api_status = _map_db_status_to_api(db_status, current_bead)
+    last_activity = worker.get("stopped_at") or worker.get("started_at", "")
+
+    return {
+        "pid": worker.get("pid") or None,
+        "worker_id": worker_id,
+        "role": role,
+        "instance": _extract_instance_from_worker_id(worker_id),
+        "current_bead": current_bead,
+        "current_bead_title": bead_title,
+        "status": api_status,
+        "last_activity": _format_db_timestamp(last_activity),
+    }
+
+
 def _get_active_agents() -> list[dict[str, Any]]:
     """Get list of currently active agents from mab.db.
 
-    Returns:
-        List of active agent dictionaries.
+    Returns only agents with status 'running', 'spawning', or 'starting'.
     """
     workers = _get_workers_from_db()
-
-    agents = []
-    for worker in workers:
-        worker_id = worker["id"]
-        log_file = worker.get("log_file")
-        current_bead, bead_title = _get_current_bead_for_worker(worker_id, log_file)
-
-        # Map DB role to API role
-        db_role = worker.get("role", "unknown")
-        role = ROLE_MAP.get(db_role, db_role)
-        if role not in VALID_ROLES:
-            role = "unknown"
-
-        db_status = worker.get("status", "unknown")
-        api_status = _map_db_status_to_api(db_status, current_bead)
-
-        # Use stopped_at if available, otherwise started_at
-        last_activity = worker.get("stopped_at") or worker.get("started_at", "")
-
-        agents.append(
-            {
-                "pid": worker.get("pid") or None,
-                "worker_id": worker_id,
-                "role": role,
-                "instance": _extract_instance_from_worker_id(worker_id),
-                "current_bead": current_bead,
-                "current_bead_title": bead_title,
-                "status": api_status,
-                "last_activity": _format_db_timestamp(last_activity),
-            }
-        )
-
-    # Sort by last activity (most recent first)
+    agents = [
+        _worker_to_agent(w)
+        for w in workers
+        if w.get("status", "unknown") in ("running", "spawning", "starting")
+    ]
     agents.sort(key=lambda a: a["last_activity"], reverse=True)
-
     logger.debug("Found %d active agents from database", len(agents))
+    return agents
+
+
+def _get_recent_agents() -> list[dict[str, Any]]:
+    """Get recently stopped/crashed agents (last hour, not currently running)."""
+    workers = _get_workers_from_db()
+    agents = [
+        _worker_to_agent(w)
+        for w in workers
+        if w.get("status", "unknown") not in ("running", "spawning", "starting")
+    ]
+    agents.sort(key=lambda a: a["last_activity"], reverse=True)
+    logger.debug("Found %d recent agents from database", len(agents))
     return agents
 
 
@@ -310,12 +320,15 @@ def _get_active_agents() -> list[dict[str, Any]]:
 async def list_agents() -> list[dict[str, Any]]:
     """List all active agent sessions.
 
-    Returns workers from mab.db that are currently running/spawning,
-    plus recently stopped workers (last hour).
-    Each agent shows their current bead (if claimed) and status.
+    Returns only workers that are currently running/spawning/starting.
     """
-    # Run blocking DB I/O in thread pool to avoid blocking event loop
     return await asyncio.to_thread(_get_active_agents)
+
+
+@router.get("/recent", response_model=list[AgentStatus])
+async def list_recent_agents() -> list[dict[str, Any]]:
+    """List recently stopped/crashed agent sessions (last hour)."""
+    return await asyncio.to_thread(_get_recent_agents)
 
 
 @router.get("/{role}", response_model=list[AgentStatus])

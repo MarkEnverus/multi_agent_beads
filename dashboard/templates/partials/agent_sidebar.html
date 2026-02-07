@@ -108,4 +108,35 @@
         {% endfor %}
     </div>
     {% endif %}
+
+    {# Recent History - collapsed section for stopped/crashed workers #}
+    {% if recent_agents is defined and recent_agents %}
+    <details class="mt-4">
+        <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-400 select-none">
+            Recent History ({{ recent_agents|length }})
+        </summary>
+        <div class="mt-2 space-y-2">
+            {% for agent in recent_agents %}
+            {% set status_colors = {
+                'ended': {'bg': 'bg-gray-900', 'text': 'text-gray-400', 'border': 'border-gray-700'}
+            } %}
+            {% set colors = status_colors.get(agent.status, status_colors.ended) %}
+            <div class="{{ colors.bg }} rounded-lg p-2 border {{ colors.border }} opacity-60">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs {{ colors.text }}">
+                        {{ agent.role|replace('_', ' ')|title }}
+                    </span>
+                    <span class="text-xs text-gray-600">{{ agent.status }}</span>
+                </div>
+                <div class="mt-1 flex items-center justify-between">
+                    <span class="text-xs text-gray-600" title="{{ agent.last_activity }}">
+                        {{ agent.last_activity[:16] if agent.last_activity else '' }}
+                    </span>
+                    <span class="text-xs font-mono text-gray-700">PID {{ agent.pid }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </details>
+    {% endif %}
 </div>
