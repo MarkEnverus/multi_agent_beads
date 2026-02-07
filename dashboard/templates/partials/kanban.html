@@ -1,16 +1,34 @@
 {# Kanban board partial - shows 3 columns with bead cards #}
-{% if is_stale %}
-<div class="mb-4 px-3 py-2 bg-yellow-900/30 border border-yellow-700 rounded-lg flex items-center justify-between">
+{# Data freshness indicator - always visible #}
+<div class="mb-4 px-3 py-2 rounded-lg flex items-center justify-between {{ 'bg-yellow-900/30 border border-yellow-700' if is_stale else 'bg-gray-800/50 border border-gray-700' }}">
     <div class="flex items-center space-x-2">
-        <svg class="h-4 w-4 text-yellow-400 animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-        </svg>
+        {% if is_stale %}
+        <span class="relative flex h-2.5 w-2.5">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-500"></span>
+        </span>
         <span class="text-sm text-yellow-200">Refreshing data in background...</span>
+        {% else %}
+        <span class="relative flex h-2.5 w-2.5">
+            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+        </span>
+        <span class="text-sm text-gray-400">Data is current</span>
+        {% endif %}
     </div>
-    <span class="text-xs text-yellow-400">Showing cached data</span>
+    <div class="flex items-center space-x-3">
+        {% if cached_at %}
+        <span class="text-xs {{ 'text-yellow-400' if is_stale else 'text-gray-500' }}" data-cached-at="{{ cached_at }}" data-freshness-ts>
+            Updated <time datetime="{{ cached_at }}">just now</time>
+        </span>
+        {% endif %}
+        <button class="text-xs px-2 py-1 rounded {{ 'bg-yellow-800 hover:bg-yellow-700 text-yellow-200' if is_stale else 'bg-gray-700 hover:bg-gray-600 text-gray-300' }} transition-colors"
+                hx-get="/partials/kanban?refresh=true"
+                hx-target="#kanban-board"
+                hx-swap="innerHTML">
+            Refresh
+        </button>
+    </div>
 </div>
-{% endif %}
 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
     {# Ready Column #}
     <div class="flex flex-col">
