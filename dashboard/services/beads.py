@@ -701,22 +701,35 @@ class BeadService:
         Only fetches active (non-closed) beads to avoid loading thousands of
         closed beads. Uses the stats endpoint for total count.
 
+        Runs all 4 bd CLI subprocess calls in parallel to reduce cold-cache
+        latency from ~20s (sequential) to ~5s (parallel).
+
         Args:
             done_limit: Maximum number of closed beads to return.
 
         Returns:
             Dictionary with ready, in_progress, and done beads.
         """
-        # Fetch only active beads (open + in_progress) - avoids loading all closed beads
-        active_beads = cls.list_beads(use_cache=False, include_all=False)
+        # Run all 4 subprocess calls in parallel - each takes ~5s with large
+        # bead counts, so parallel execution cuts total time by ~4x
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="kanban-fetch") as pool:
+            active_future = pool.submit(
+                cls.list_beads, use_cache=False, include_all=False
+            )
+            closed_future = pool.submit(
+                cls.list_beads,
+                use_cache=False,
+                include_all=True,
+                status="closed",
+                limit=done_limit,
+            )
+            blocked_future = pool.submit(cls.list_blocked, use_cache=False)
+            stats_future = pool.submit(cls.get_stats, use_cache=False)
 
-        # Fetch limited closed beads for the "Done" column
-        closed_beads = cls.list_beads(
-            use_cache=False, include_all=True, status="closed", limit=done_limit
-        )
+            active_beads = active_future.result()
+            closed_beads = closed_future.result()
+            blocked_beads = blocked_future.result()
 
-        # Also fetch blocked info to determine what's ready
-        blocked_beads = cls.list_blocked(use_cache=False)
         blocked_ids = {b["id"] for b in blocked_beads}
 
         # Partition active beads by status
@@ -744,9 +757,9 @@ class BeadService:
             reverse=True,
         )
 
-        # Get total count from lightweight stats query
+        # Get total count from stats (already fetched in parallel)
         try:
-            stats = cls.get_stats(use_cache=False)
+            stats = stats_future.result()
             total_count = stats.get("summary", {}).get("total_issues", 0)
         except Exception:
             total_count = len(active_beads) + len(closed_beads)
