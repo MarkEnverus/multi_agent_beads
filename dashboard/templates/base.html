@@ -556,7 +556,7 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    showToast("Town '" + townName + "' started", 'success');
+                    showToast(`Town '${townName}' started`, 'success');
                     loadTowns();
                 } else {
                     showToast(data.message || 'Failed to start town', 'error');
@@ -576,7 +576,7 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    showToast("Town '" + townName + "' stopped", 'success');
+                    showToast(`Town '${townName}' stopped`, 'success');
                     loadTowns();
                 } else {
                     showToast(data.message || 'Failed to stop town', 'error');
