@@ -1390,6 +1390,14 @@
         // If there are no existing worker rows (initial load or empty state), do a full render
         if (existingMap.size === 0) {
             container.innerHTML = updatedWorkers.map(worker => renderWorkerRow(worker)).join('');
+            // Fetch crash logs for any crashed/failed workers after DOM insertion
+            updatedWorkers.forEach(worker => {
+                if (worker.status === 'crashed' || worker.status === 'failed') {
+                    const card = container.querySelector(`[data-worker-id="${worker.id}"]`);
+                    const crashSection = card?.querySelector('[data-field="crash-info"]');
+                    if (crashSection) fetchCrashLogs(worker.id, crashSection);
+                }
+            });
             return;
         }
 
@@ -1425,6 +1433,11 @@
                     container.prepend(newRow);
                 }
                 previousElement = newRow;
+                // Fetch crash logs for newly inserted crashed workers
+                if (worker.status === 'crashed' || worker.status === 'failed') {
+                    const crashSection = newRow.querySelector('[data-field="crash-info"]');
+                    if (crashSection) fetchCrashLogs(worker.id, crashSection);
+                }
             }
         }
     }
@@ -1471,14 +1484,17 @@
             `;
         }
 
-        // Update action buttons only when running state changes - preserve existing button DOM
+        // Update action buttons - show for running, crashed, and failed workers
         const buttonsContainer = card.querySelector('[data-field="actions"]');
         if (buttonsContainer) {
-            const shouldShowButtons = worker.status === 'running';
+            const shouldShowRunning = worker.status === 'running';
+            const shouldShowCrashed = worker.status === 'crashed' || worker.status === 'failed';
             const hasButtons = buttonsContainer.children.length > 0;
-            if (shouldShowButtons && !hasButtons) {
+            if (shouldShowRunning && !hasButtons) {
                 buttonsContainer.innerHTML = renderActionButtons(worker.id);
-            } else if (!shouldShowButtons && hasButtons) {
+            } else if (shouldShowCrashed) {
+                buttonsContainer.innerHTML = renderCrashedActionButtons(worker.id);
+            } else if (!shouldShowRunning && !shouldShowCrashed && hasButtons) {
                 buttonsContainer.innerHTML = '';
             }
         }
@@ -1490,7 +1506,7 @@
         let crashSection = card.querySelector('[data-field="crash-info"]');
 
         if (hasCrashInfo) {
-            const crashHtml = renderCrashContent(exitCode, errorMsg);
+            const crashHtml = renderCrashContent(exitCode, errorMsg, worker.id);
             if (crashSection) {
                 crashSection.innerHTML = crashHtml;
             } else {
@@ -1500,6 +1516,8 @@
                 crashSection.innerHTML = crashHtml;
                 card.appendChild(crashSection);
             }
+            // Fetch recent log lines for the crash preview
+            fetchCrashLogs(worker.id, crashSection);
         } else if (crashSection) {
             crashSection.remove();
         }
@@ -1532,18 +1550,99 @@
         `;
     }
 
-    function renderCrashContent(exitCode, errorMsg) {
+    function renderCrashedActionButtons(workerId) {
+        return `
+            <button onclick="viewWorkerLogs('${workerId}')"
+                    class="p-1.5 text-gray-400 hover:text-primary-400 hover:bg-gray-700 rounded transition-colors"
+                    title="View Logs">
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+            </button>
+            <button onclick="restartWorker('${workerId}')"
+                    class="p-1.5 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 rounded transition-colors"
+                    title="Restart">
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+            </button>
+        `;
+    }
+
+    function renderCrashContent(exitCode, errorMsg, workerId) {
+        const hasExitCode = exitCode !== null && exitCode !== undefined;
         return `
             <div class="flex items-start space-x-2">
                 <svg class="h-4 w-4 text-red-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
-                <div class="text-red-300">
-                    ${exitCode !== null && exitCode !== undefined ? `<span class="text-red-400 font-medium">Exit code: ${exitCode}</span>` : ''}
-                    ${errorMsg ? `<span class="${exitCode !== null && exitCode !== undefined ? 'ml-2' : ''}">${errorMsg}</span>` : '<span class="text-gray-400 italic">No error details available. Check worker log file.</span>'}
+                <div class="flex-1">
+                    <div class="text-red-300">
+                        ${hasExitCode ? `<span class="text-red-400 font-medium">Exit code: ${exitCode}</span>` : ''}
+                        ${errorMsg ? `<span class="${hasExitCode ? 'ml-2' : ''}">${errorMsg}</span>` : ''}
+                    </div>
+                    ${workerId ? `
+                        <div data-field="crash-log-preview" class="mt-2 bg-gray-900/80 rounded p-2 font-mono text-xs text-gray-400 max-h-32 overflow-y-auto">
+                            <div class="text-gray-600 italic">Loading recent logs...</div>
+                        </div>
+                        <div class="mt-2 flex items-center space-x-3">
+                            <button onclick="viewWorkerLogs('${workerId}')"
+                                    class="text-xs text-primary-400 hover:text-primary-300 hover:underline flex items-center space-x-1">
+                                <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                <span>View Full Logs</span>
+                            </button>
+                        </div>
+                    ` : ''}
                 </div>
             </div>
         `;
+    }
+
+    // Track in-flight crash log fetches to avoid duplicate requests
+    const _crashLogFetching = new Set();
+
+    function fetchCrashLogs(workerId, crashSection) {
+        const preview = crashSection.querySelector('[data-field="crash-log-preview"]');
+        if (!preview) return;
+
+        // Avoid duplicate fetches for the same worker
+        if (_crashLogFetching.has(workerId)) return;
+        _crashLogFetching.add(workerId);
+
+        fetch(`/api/workers/${workerId}/logs/recent?limit=5`)
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response.json();
+            })
+            .then(entries => {
+                _crashLogFetching.delete(workerId);
+                if (!entries || entries.length === 0) {
+                    preview.innerHTML = '<div class="text-gray-600 italic">No log entries found.</div>';
+                    return;
+                }
+                // entries are most-recent-first from API, reverse to show chronological order
+                const reversed = entries.slice().reverse();
+                preview.innerHTML = reversed.map(entry => {
+                    const eventColors = {
+                        'ERROR': 'text-red-400',
+                        'TESTS_FAILED': 'text-red-400',
+                        'BLOCKED': 'text-orange-400',
+                        'SESSION_END': 'text-green-400',
+                        'CLOSE': 'text-purple-400',
+                    };
+                    const color = eventColors[entry.event] || 'text-gray-400';
+                    const ts = entry.timestamp || '';
+                    const evt = entry.event || '';
+                    const msg = entry.message ? escapeHtml(entry.message) : '';
+                    return `<div class="py-0.5"><span class="text-gray-600">${escapeHtml(ts)}</span> <span class="${color} font-medium">${escapeHtml(evt)}</span>${msg ? ` <span class="text-gray-500">${msg}</span>` : ''}</div>`;
+                }).join('');
+            })
+            .catch(err => {
+                _crashLogFetching.delete(workerId);
+                preview.innerHTML = `<div class="text-gray-600 italic">Failed to load logs: ${escapeHtml(err.message)}</div>`;
+            });
     }
 
     function renderWorkerRow(worker) {
@@ -1599,13 +1698,13 @@
                     <div class="flex items-center space-x-4">
                         <span data-field="status" class="${statusClass} text-sm font-medium">${worker.status.toUpperCase()}</span>
                         <div data-field="actions" class="flex items-center space-x-2">
-                            ${worker.status === 'running' ? renderActionButtons(worker.id) : ''}
+                            ${worker.status === 'running' ? renderActionButtons(worker.id) : (hasCrashInfo ? renderCrashedActionButtons(worker.id) : '')}
                         </div>
                     </div>
                 </div>
                 ${hasCrashInfo ? `
                     <div data-field="crash-info" class="mt-2 ml-6 p-2 bg-red-900/30 border border-red-800/50 rounded text-sm">
-                        ${renderCrashContent(exitCode, errorMsg)}
+                        ${renderCrashContent(exitCode, errorMsg, worker.id)}
                     </div>
                 ` : ''}
             </div>
