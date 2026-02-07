@@ -711,7 +711,7 @@ class TestKanbanQueueDepth:
 
     def test_kanban_data_includes_queue_depth(self) -> None:
         """Test that _fetch_kanban_data computes queue depth from ready beads."""
-        ready_beads_data = [
+        active_beads = [
             {"id": "b1", "title": "T1", "status": "open", "priority": 2, "labels": ["dev"]},
             {"id": "b2", "title": "T2", "status": "open", "priority": 2, "labels": ["dev"]},
             {"id": "b3", "title": "T3", "status": "open", "priority": 2, "labels": ["qa"]},
@@ -722,15 +722,17 @@ class TestKanbanQueueDepth:
                 "priority": 2,
                 "labels": ["dev", "frontend"],
             },
-        ]
-        all_beads_data = ready_beads_data + [
             {"id": "b5", "title": "T5", "status": "in_progress", "priority": 1, "labels": ["dev"]},
+        ]
+        closed_beads = [
             {"id": "b6", "title": "T6", "status": "closed", "priority": 3, "labels": ["qa"]},
         ]
+        stats_data = {"summary": {"total_issues": 6}}
 
         with (
-            patch.object(BeadService, "list_beads", return_value=all_beads_data),
+            patch.object(BeadService, "list_beads", side_effect=[active_beads, closed_beads]),
             patch.object(BeadService, "list_blocked", return_value=[]),
+            patch.object(BeadService, "get_stats", return_value=stats_data),
         ):
             result = BeadService._fetch_kanban_data(done_limit=20)
 
@@ -742,17 +744,19 @@ class TestKanbanQueueDepth:
 
     def test_kanban_queue_depth_excludes_blocked(self) -> None:
         """Test that queue depth only counts ready (non-blocked) beads."""
-        all_beads_data = [
+        active_beads = [
             {"id": "b1", "title": "T1", "status": "open", "priority": 2, "labels": ["dev"]},
             {"id": "b2", "title": "T2", "status": "open", "priority": 2, "labels": ["dev"]},
         ]
         blocked_data = [
             {"id": "b2", "title": "T2", "status": "open", "priority": 2, "labels": ["dev"]},
         ]
+        stats_data = {"summary": {"total_issues": 2}}
 
         with (
-            patch.object(BeadService, "list_beads", return_value=all_beads_data),
+            patch.object(BeadService, "list_beads", side_effect=[active_beads, []]),
             patch.object(BeadService, "list_blocked", return_value=blocked_data),
+            patch.object(BeadService, "get_stats", return_value=stats_data),
         ):
             result = BeadService._fetch_kanban_data(done_limit=20)
 
