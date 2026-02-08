@@ -96,10 +96,11 @@ class TestBeadClaimWorkflow:
         kanban = dashboard_page.locator("#kanban-board")
         expect(kanban).to_be_visible()
 
-        # Check for all three column headers
-        ready_col = dashboard_page.locator("text=Ready")
-        in_progress_col = dashboard_page.locator("text=In Progress")
-        done_col = dashboard_page.locator("text=Done")
+        # Check for all three column headers (use h2 selector to avoid
+        # matching the stats row labels which also contain these texts)
+        ready_col = dashboard_page.locator("h2", has_text="Ready")
+        in_progress_col = dashboard_page.locator("h2", has_text="In Progress")
+        done_col = dashboard_page.locator("h2", has_text="Done")
 
         expect(ready_col).to_be_visible()
         expect(in_progress_col).to_be_visible()
