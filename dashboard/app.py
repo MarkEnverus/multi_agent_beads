@@ -4,8 +4,10 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -44,6 +46,10 @@ from dashboard.services import BeadService
 # Configure logging using centralized setup
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# Server start time tracking for /api/ping uptime reporting
+SERVER_START_TIME = time.monotonic()
+SERVER_START_DATETIME = datetime.now(timezone.utc)
 
 
 @asynccontextmanager
@@ -156,6 +162,16 @@ app.include_router(ws_router)
 async def health_check() -> JSONResponse:
     """Health check endpoint."""
     return JSONResponse(content={"status": "ok"})
+
+
+@app.get("/api/ping")
+async def ping() -> dict[str, Any]:
+    """Return server status and uptime."""
+    return {
+        "status": "ok",
+        "started_at": SERVER_START_DATETIME.isoformat(),
+        "uptime_seconds": round(time.monotonic() - SERVER_START_TIME, 2),
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
