@@ -594,10 +594,11 @@
             startWorkerCountRefresh();
         });
 
-        // Instant worker count updates via WebSocket
-        document.addEventListener('mab:ws:worker.spawned', loadCurrentTownInfo);
-        document.addEventListener('mab:ws:worker.stopped', loadCurrentTownInfo);
-        document.addEventListener('mab:ws:worker.crashed', loadCurrentTownInfo);
+        // Refresh worker counts in the navbar whenever a worker lifecycle event occurs.
+        // Each event triggers a re-fetch of /api/towns/current to update the active/configured worker badges.
+        document.addEventListener('mab:ws:worker.spawned', loadCurrentTownInfo);  // New worker started
+        document.addEventListener('mab:ws:worker.stopped', loadCurrentTownInfo);  // Worker stopped gracefully
+        document.addEventListener('mab:ws:worker.crashed', loadCurrentTownInfo);  // Worker crashed unexpectedly
     </script>
 
     <!-- Shared WebSocket Client -->
@@ -662,12 +663,14 @@
                     return;
                 }
 
+                // Fires mab:ws:connected — pages listen on this to refresh data that went stale while offline
                 ws.onopen = function() {
                     reconnectAttempts = 0;
                     updateConnectionIndicator('connected');
                     document.dispatchEvent(new CustomEvent('mab:ws:connected'));
                 };
 
+                // Fires mab:ws:disconnected — pages listen on this to show offline banners or pause polling
                 ws.onclose = function() {
                     updateConnectionIndicator('disconnected');
                     document.dispatchEvent(new CustomEvent('mab:ws:disconnected'));
@@ -680,12 +683,15 @@
                     updateConnectionIndicator('disconnected');
                 };
 
+                // Central message dispatcher: parses each JSON message from the server and re-broadcasts
+                // it as DOM custom events so individual pages can subscribe to only the events they need.
+                //   - mab:ws:message        → raw envelope for debug/logging listeners
+                //   - mab:ws:<message.type>  → type-specific (e.g. mab:ws:worker.spawned, mab:ws:bead.updated,
+                //                              mab:ws:log.entry, mab:ws:dispatch.event)
                 ws.onmessage = function(event) {
                     try {
                         const message = JSON.parse(event.data);
-                        // Dispatch a custom DOM event for each message type
                         document.dispatchEvent(new CustomEvent('mab:ws:message', { detail: message }));
-                        // Also dispatch a type-specific event (e.g. mab:ws:worker.spawned)
                         document.dispatchEvent(new CustomEvent('mab:ws:' + message.type, { detail: message.data }));
                     } catch (e) {
                         console.error('Failed to parse WebSocket message:', e);
