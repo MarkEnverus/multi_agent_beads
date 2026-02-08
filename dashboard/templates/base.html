@@ -594,10 +594,10 @@
             startWorkerCountRefresh();
         });
 
-        // Instant worker count updates via WebSocket
-        document.addEventListener('mab:ws:worker.spawned', loadCurrentTownInfo);
-        document.addEventListener('mab:ws:worker.stopped', loadCurrentTownInfo);
-        document.addEventListener('mab:ws:worker.crashed', loadCurrentTownInfo);
+        // Refresh worker counts in the town switcher whenever a worker lifecycle event occurs
+        document.addEventListener('mab:ws:worker.spawned', loadCurrentTownInfo);  // New worker started
+        document.addEventListener('mab:ws:worker.stopped', loadCurrentTownInfo);  // Worker gracefully stopped
+        document.addEventListener('mab:ws:worker.crashed', loadCurrentTownInfo);  // Worker exited unexpectedly
     </script>
 
     <!-- Shared WebSocket Client -->
@@ -616,6 +616,7 @@
                 return `${protocol}//${window.location.host}/ws`;
             }
 
+            // Update the header's connection dot (green/yellow/red) to reflect WebSocket state
             function updateConnectionIndicator(state) {
                 const el = document.getElementById('connection-status');
                 if (!el) return;
@@ -646,6 +647,7 @@
                 `;
             }
 
+            // Establish WebSocket connection to the server's /ws endpoint for real-time updates
             function connect() {
                 if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
                     return;
@@ -662,12 +664,14 @@
                     return;
                 }
 
+                // Reset reconnect backoff on successful connection and update UI indicator
                 ws.onopen = function() {
                     reconnectAttempts = 0;
                     updateConnectionIndicator('connected');
                     document.dispatchEvent(new CustomEvent('mab:ws:connected'));
                 };
 
+                // Trigger automatic reconnect with exponential backoff unless page is unloading
                 ws.onclose = function() {
                     updateConnectionIndicator('disconnected');
                     document.dispatchEvent(new CustomEvent('mab:ws:disconnected'));
@@ -676,16 +680,18 @@
                     }
                 };
 
+                // Show disconnected state on transport-level errors (onclose also fires after this)
                 ws.onerror = function() {
                     updateConnectionIndicator('disconnected');
                 };
 
+                // Route incoming messages to page-specific handlers via DOM custom events
                 ws.onmessage = function(event) {
                     try {
                         const message = JSON.parse(event.data);
-                        // Dispatch a custom DOM event for each message type
+                        // Broadcast raw message for generic listeners (e.g. debug panels)
                         document.dispatchEvent(new CustomEvent('mab:ws:message', { detail: message }));
-                        // Also dispatch a type-specific event (e.g. mab:ws:worker.spawned)
+                        // Dispatch type-specific event so pages can listen for e.g. 'mab:ws:bead.updated'
                         document.dispatchEvent(new CustomEvent('mab:ws:' + message.type, { detail: message.data }));
                     } catch (e) {
                         console.error('Failed to parse WebSocket message:', e);
@@ -693,6 +699,7 @@
                 };
             }
 
+            // Retry connection with exponential backoff (1s base, 1.5x multiplier, 30s max)
             function scheduleReconnect() {
                 if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
                     console.warn('WebSocket max reconnect attempts reached');
@@ -705,7 +712,7 @@
                 reconnectTimer = setTimeout(connect, delay);
             }
 
-            // Expose for pages that need to send messages
+            // Public API for pages to send messages back to the server (e.g. subscribing to channels)
             window.mabWs = {
                 send: function(data) {
                     if (ws && ws.readyState === WebSocket.OPEN) {
