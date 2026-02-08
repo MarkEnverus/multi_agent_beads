@@ -4,8 +4,10 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -45,6 +47,10 @@ from dashboard.services import BeadService
 setup_logging()
 logger = logging.getLogger(__name__)
 
+# Server start time for /api/ping uptime tracking
+SERVER_START_TIME = time.monotonic()
+SERVER_START_DATETIME = datetime.now(timezone.utc)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -65,7 +71,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         get_town_name(),
     )
     logger.info(
-        "Routers registered: /api/agents, /api/beads, /api/logs, /api/towns, /api/workers, /ws"
+        "Routers registered: /api/agents, /api/beads, /api/logs, /api/ping, /api/towns, /api/workers, /ws"
     )
 
     # Warm the bead cache in background to avoid blocking startup
@@ -156,6 +162,18 @@ app.include_router(ws_router)
 async def health_check() -> JSONResponse:
     """Health check endpoint."""
     return JSONResponse(content={"status": "ok"})
+
+
+@app.get("/api/ping")
+async def ping() -> JSONResponse:
+    """Ping endpoint that returns server uptime."""
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "started_at": SERVER_START_DATETIME.isoformat(),
+            "uptime_seconds": round(time.monotonic() - SERVER_START_TIME, 2),
+        }
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
