@@ -96,14 +96,15 @@ class TestBeadClaimWorkflow:
         kanban = dashboard_page.locator("#kanban-board")
         expect(kanban).to_be_visible()
 
-        # Check for all three column headers
-        ready_col = dashboard_page.locator("text=Ready")
-        in_progress_col = dashboard_page.locator("text=In Progress")
-        done_col = dashboard_page.locator("text=Done")
+        # Check for all three column headers using scoped h2 selectors
+        # (avoids matching bead content text that may contain "Ready" etc.)
+        ready_heading = kanban.locator("h2").filter(has_text="Ready")
+        in_progress_heading = kanban.locator("h2").filter(has_text="In Progress")
+        done_heading = kanban.locator("h2").filter(has_text="Done")
 
-        expect(ready_col).to_be_visible()
-        expect(in_progress_col).to_be_visible()
-        expect(done_col).to_be_visible()
+        expect(ready_heading).to_be_visible(timeout=10_000)
+        expect(in_progress_heading).to_be_visible(timeout=10_000)
+        expect(done_heading).to_be_visible(timeout=10_000)
 
     def test_new_bead_appears_in_ready_column(
         self,
