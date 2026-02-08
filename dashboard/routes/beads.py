@@ -5,9 +5,11 @@ All BeadService calls are wrapped with asyncio.to_thread() to avoid blocking the
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from dashboard.services import BeadService
@@ -128,18 +130,25 @@ async def queue_depth_by_role() -> dict[str, int]:
 
 
 @router.get("/stats")
-async def get_stats() -> dict[str, Any]:
+async def get_stats() -> JSONResponse:
     """Get project statistics.
 
     Returns summary counts (total, open, closed, in-progress, blocked) and
     recent activity metrics (commits, issues created/closed in last 24h).
+    Includes X-Response-Time header reporting query duration in milliseconds.
 
     Raises:
         BeadCommandError: If the bd command fails.
         BeadParseError: If output parsing fails.
     """
     logger.debug("Getting project stats")
-    return await asyncio.to_thread(BeadService.get_stats)
+    start = time.monotonic()
+    stats = await asyncio.to_thread(BeadService.get_stats)
+    elapsed_ms = (time.monotonic() - start) * 1000
+    return JSONResponse(
+        content=stats,
+        headers={"X-Response-Time": f"{elapsed_ms:.0f}ms"},
+    )
 
 
 @router.get("/cache-health")
